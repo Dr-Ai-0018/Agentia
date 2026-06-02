@@ -77,6 +77,8 @@ type streamingEvent struct {
 }
 
 func main() {
+	loadDotEnvIfPresent(".env")
+
 	var (
 		baseURL = flag.String("base-url", envOrDefault("OPENAI_BASE_URL", defaultBaseURL), "OpenAI API base URL")
 		model   = flag.String("model", envOrDefault("OPENAI_MODEL", defaultModel), "OpenAI model ID")
@@ -344,6 +346,36 @@ func envOrDefaultInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func loadDotEnvIfPresent(path string) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		line = strings.TrimPrefix(line, "export ")
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" || os.Getenv(key) != "" {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		os.Setenv(key, value)
+	}
 }
 
 func exitf(format string, args ...any) {

@@ -17,17 +17,25 @@
 
 ## 运行方式
 
-先设置环境变量：
+默认会优先读取项目根目录 `.env`。
+
+先编辑：
 
 ```bash
-export OPENAI_API_KEY=your_key
+vim .env
 ```
 
-可选变量：
+至少填这三个字段：
 
 ```bash
-export OPENAI_MODEL=gpt-5.4-mini
-export OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=your_key
+OPENAI_MODEL=gpt-5.4-mini
+```
+
+也可以继续用 shell 环境变量覆盖 `.env`：
+
+```bash
 export OPENAI_CACHE_TURNS=5
 ```
 
