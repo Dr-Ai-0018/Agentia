@@ -2128,7 +2128,7 @@ func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary str
 
 func extractMergeTargetID(resolution string) string {
 	text := strings.TrimSpace(resolution)
-	if !strings.HasPrefix(text, "merge_existing:") {
+	if !strings.HasPrefix(text, "merge_existing") {
 		return ""
 	}
 	if strings.Contains(text, "id=") {
