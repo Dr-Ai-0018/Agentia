@@ -6,6 +6,7 @@ docs/
 .codex/
 
 # Go build outputs
+.cache/
 bin/
 dist/
 *.exe
