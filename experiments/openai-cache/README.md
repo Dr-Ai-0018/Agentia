@@ -14,6 +14,8 @@
   - 完整历史手工回放
   - 固定 `prompt_cache_key`
   - 输出 `cached_tokens`、`instructions_hash`、`input_prefix_hash`
+  - 支持单模型或多模型批量跑
+  - 自动落 `jsonl` 日志文件
 
 ## 运行方式
 
@@ -37,6 +39,7 @@ OPENAI_MODEL=gpt-5.4-mini
 
 ```bash
 export OPENAI_CACHE_TURNS=5
+export OPENAI_MODELS=gpt-5.4,gpt-5.5,gpt-5.4-mini
 ```
 
 运行：
@@ -49,6 +52,18 @@ go run ./experiments/openai-cache
 
 ```bash
 go run ./experiments/openai-cache --verbose
+```
+
+如果要一次跑多个模型：
+
+```bash
+go run ./experiments/openai-cache --models gpt-5.4,gpt-5.5,gpt-5.4-mini
+```
+
+日志默认写到：
+
+```bash
+experiments/openai-cache/logs/
 ```
 
 ## 输出字段

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -81,9 +82,11 @@ func main() {
 
 	var (
 		baseURL = flag.String("base-url", envOrDefault("OPENAI_BASE_URL", defaultBaseURL), "OpenAI API base URL")
-		model   = flag.String("model", envOrDefault("OPENAI_MODEL", defaultModel), "OpenAI model ID")
+		model   = flag.String("model", envOrDefault("OPENAI_MODEL", defaultModel), "Single OpenAI model ID")
+		models  = flag.String("models", envOrDefault("OPENAI_MODELS", ""), "Comma-separated OpenAI model IDs")
 		turns   = flag.Int("turns", envOrDefaultInt("OPENAI_CACHE_TURNS", 5), "Number of replay turns")
 		verbose = flag.Bool("verbose", false, "Print streamed text as it arrives")
+		logDir  = flag.String("log-dir", "experiments/openai-cache/logs", "Directory to store JSONL run logs")
 	)
 	flag.Parse()
 
@@ -92,20 +95,46 @@ func main() {
 		exitf("OPENAI_API_KEY is required")
 	}
 
-	instructions := makeInstructions()
-	promptCacheKey := fmt.Sprintf("arena-openai-cache-%s-v1", *model)
-	history := make([]message, 0, *turns*2)
-
 	client := &http.Client{Timeout: 5 * time.Minute}
+	modelList := resolveModels(*model, *models)
+	if len(modelList) == 0 {
+		exitf("no models resolved")
+	}
 
-	for turn := 1; turn <= *turns; turn++ {
+	for _, modelID := range modelList {
+		if err := runExperiment(client, *baseURL, apiKey, modelID, *turns, *verbose, *logDir); err != nil {
+			exitf("model %s failed: %v", modelID, err)
+		}
+	}
+}
+
+func runExperiment(client *http.Client, baseURL, apiKey, model string, turns int, verbose bool, logDir string) error {
+	instructions := makeInstructions()
+	promptCacheKey := fmt.Sprintf("arena-openai-cache-%s-v1", model)
+	history := make([]message, 0, turns*2)
+
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return fmt.Errorf("create log dir: %w", err)
+	}
+
+	logPath := filepath.Join(logDir, fmt.Sprintf("%s-%s.jsonl", sanitizeFileName(model), time.Now().UTC().Format("20060102T150405Z")))
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	defer logFile.Close()
+
+	fmt.Printf("== model: %s ==\n", model)
+	fmt.Printf("log_file=%s\n", logPath)
+
+	for turn := 1; turn <= turns; turn++ {
 		history = append(history, message{
 			Role:    "user",
 			Content: makeHeavyUserTurn(turn),
 		})
 
 		payload := requestPayload{
-			Model:          *model,
+			Model:          model,
 			Instructions:   instructions,
 			PromptCacheKey: promptCacheKey,
 			Input:          append([]message(nil), history...),
@@ -114,9 +143,9 @@ func main() {
 		}
 
 		started := time.Now()
-		result, err := postStream(client, *baseURL, apiKey, payload, *verbose)
+		result, err := postStream(client, baseURL, apiKey, payload, verbose)
 		if err != nil {
-			exitf("turn %d failed: %v", turn, err)
+			return fmt.Errorf("turn %d: %w", turn, err)
 		}
 
 		duration := time.Since(started).Milliseconds()
@@ -124,7 +153,7 @@ func main() {
 
 		logLine := map[string]any{
 			"turn":                      turn,
-			"model":                     *model,
+			"model":                     model,
 			"response_id":               result.ResponseID,
 			"x_request_id":              result.RequestID,
 			"prompt_cache_key_sent":     promptCacheKey,
@@ -141,12 +170,17 @@ func main() {
 
 		out, _ := json.Marshal(logLine)
 		fmt.Println(string(out))
+		if _, err := logFile.Write(append(out, '\n')); err != nil {
+			return fmt.Errorf("write log file: %w", err)
+		}
 
 		history = append(history, message{
 			Role:    "assistant",
 			Content: result.OutputText,
 		})
 	}
+
+	return nil
 }
 
 func postStream(client *http.Client, baseURL, apiKey string, payload requestPayload, verbose bool) (streamResult, error) {
@@ -348,6 +382,31 @@ func envOrDefaultInt(key string, fallback int) int {
 	return parsed
 }
 
+func resolveModels(singleModel, multiModels string) []string {
+	if strings.TrimSpace(multiModels) == "" {
+		if strings.TrimSpace(singleModel) == "" {
+			return nil
+		}
+		return []string{strings.TrimSpace(singleModel)}
+	}
+
+	raw := strings.Split(multiModels, ",")
+	models := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, item := range raw {
+		model := strings.TrimSpace(item)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		models = append(models, model)
+	}
+	return models
+}
+
 func loadDotEnvIfPresent(path string) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -376,6 +435,11 @@ func loadDotEnvIfPresent(path string) {
 		value = strings.Trim(value, `"'`)
 		os.Setenv(key, value)
 	}
+}
+
+func sanitizeFileName(s string) string {
+	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-", "\t", "-")
+	return replacer.Replace(strings.TrimSpace(s))
 }
 
 func exitf(format string, args ...any) {
