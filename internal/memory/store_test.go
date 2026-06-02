@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,11 +26,11 @@ func TestApplyDecisionPromotion(t *testing.T) {
 	}
 }
 
-func TestMemoryStoreUpsertAndSnapshot(t *testing.T) {
+func TestMemoryStoreUpsertAbstractMemoryAndSnapshot(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Now()
 
-	err := store.Upsert(StoreRecord{
+	err := store.UpsertAbstractMemory(AbstractMemory{
 		Record: Record{
 			ID:        "a",
 			Layer:     LayerLong,
@@ -39,12 +41,13 @@ func TestMemoryStoreUpsertAndSnapshot(t *testing.T) {
 		Resident:       "onyx",
 		Summary:        "long-term leverage lesson",
 		DecisionAction: ActionCreate,
+		SourceGroupIDs: []string{"group-1"},
 	})
 	if err != nil {
-		t.Fatalf("upsert failed: %v", err)
+		t.Fatalf("upsert abstract memory failed: %v", err)
 	}
 
-	err = store.Upsert(StoreRecord{
+	err = store.UpsertAbstractMemory(AbstractMemory{
 		Record: Record{
 			ID:        "b",
 			Layer:     LayerShort,
@@ -57,10 +60,10 @@ func TestMemoryStoreUpsertAndSnapshot(t *testing.T) {
 		DecisionAction: ActionDelete,
 	})
 	if err != nil {
-		t.Fatalf("upsert failed: %v", err)
+		t.Fatalf("upsert abstract memory failed: %v", err)
 	}
 
-	records, err := store.List("onyx")
+	records, err := store.ListAbstractMemories("onyx")
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
@@ -77,49 +80,234 @@ func TestMemoryStoreUpsertAndSnapshot(t *testing.T) {
 	}
 }
 
-func TestFileStoreRoundTrip(t *testing.T) {
+func TestMemoryStoreUpsertHistoryGroup(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Now()
+
+	err := store.UpsertHistoryGroup(HistoryGroup{
+		GroupUUID:       "group-1",
+		Resident:        "amber",
+		CreatedAt:       now,
+		ClosedAt:        now.Add(time.Hour),
+		LastEventAt:     now.Add(time.Hour),
+		SourceKind:      "dialogue_window",
+		State:           HistoryGroupClosed,
+		CloseReason:     "event_count_threshold",
+		EventCount:      8,
+		Tags:            []string{"failure", "admin_feedback"},
+		SummaryHint:     "handoff structure changed",
+		RawEventRefs:    []string{"evt-1", "evt-2"},
+		ExtractedLayers: []string{"long"},
+	})
+	if err != nil {
+		t.Fatalf("upsert history group failed: %v", err)
+	}
+
+	groups, err := store.ListHistoryGroups("amber")
+	if err != nil {
+		t.Fatalf("list history groups failed: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 history group, got %d", len(groups))
+	}
+	if groups[0].GroupUUID != "group-1" {
+		t.Fatalf("unexpected history group uuid: %s", groups[0].GroupUUID)
+	}
+}
+
+func TestFileStoreRoundTripBundle(t *testing.T) {
 	root := t.TempDir()
 	store := NewFileStore(root)
 	now := time.Now()
 
-	record := StoreRecord{
+	am := AbstractMemory{
 		Record: Record{
-			ID:        "jade-1",
+			ID:        "jade-memory-1",
 			Layer:     LayerPermanent,
 			Status:    StatusActive,
 			CreatedAt: now,
 			UpdatedAt: now,
 		},
-		Resident:       "jade",
-		Summary:        "stable engineering law",
-		DecisionAction: ActionCreate,
+		Resident:        "jade",
+		Summary:         "stable engineering law",
+		DecisionAction:  ActionCreate,
+		SourceGroupIDs:  []string{"group-1"},
+		ParentMemoryIDs: []string{},
+	}
+	if err := store.UpsertAbstractMemory(am); err != nil {
+		t.Fatalf("file upsert abstract memory failed: %v", err)
 	}
 
-	if err := store.Upsert(record); err != nil {
-		t.Fatalf("file upsert failed: %v", err)
+	group := HistoryGroup{
+		GroupUUID:       "group-1",
+		Resident:        "jade",
+		CreatedAt:       now.Add(-time.Hour),
+		ClosedAt:        now,
+		LastEventAt:     now,
+		SourceKind:      "dialogue_window",
+		State:           HistoryGroupClosed,
+		CloseReason:     "event_count_threshold",
+		EventCount:      10,
+		Tags:            []string{"failure"},
+		SummaryHint:     "root cause discovered",
+		RawEventRefs:    []string{"evt-1"},
+		ExtractedLayers: []string{"permanent"},
+	}
+	if err := store.UpsertHistoryGroup(group); err != nil {
+		t.Fatalf("file upsert history group failed: %v", err)
 	}
 
-	got, ok, err := store.Get("jade", "jade-1")
+	memories, err := store.ListAbstractMemories("jade")
 	if err != nil {
-		t.Fatalf("file get failed: %v", err)
+		t.Fatalf("file list abstract memories failed: %v", err)
 	}
-	if !ok {
-		t.Fatal("expected record to exist")
-	}
-	if got.Summary != record.Summary {
-		t.Fatalf("unexpected summary: %s", got.Summary)
+	if len(memories) != 1 || memories[0].ID != "jade-memory-1" {
+		t.Fatalf("unexpected abstract memories: %#v", memories)
 	}
 
-	records, err := store.List("jade")
+	groups, err := store.ListHistoryGroups("jade")
 	if err != nil {
-		t.Fatalf("file list failed: %v", err)
+		t.Fatalf("file list history groups failed: %v", err)
 	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(records))
+	if len(groups) != 1 || groups[0].GroupUUID != "group-1" {
+		t.Fatalf("unexpected history groups: %#v", groups)
+	}
+}
+
+func TestFileStoreNormalizesLegacyHistoryGroup(t *testing.T) {
+	root := t.TempDir()
+	raw := `{
+  "history_groups": [
+    {
+      "group_uuid": "legacy-group",
+      "resident": "jade",
+      "created_at": "2026-06-02T10:30:00Z",
+      "closed_at": "2026-06-02T18:00:00Z",
+      "source_kind": "dialogue_window",
+      "event_count": 5,
+      "tags": ["scenario:baseline"],
+      "summary_hint": "legacy group",
+      "raw_event_refs": ["evt-1", "evt-2"]
+    }
+  ],
+  "abstract_memories": []
+}`
+	if err := os.WriteFile(filepath.Join(root, "jade.json"), []byte(raw), 0o644); err != nil {
+		t.Fatalf("write legacy bundle: %v", err)
 	}
 
-	expectedPath := filepath.Join(root, "jade.json")
-	if _, err := filepath.Abs(expectedPath); err != nil {
-		t.Fatalf("abs path failed: %v", err)
+	store := NewFileStore(root)
+	groups, err := store.ListHistoryGroups("jade")
+	if err != nil {
+		t.Fatalf("list groups failed: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(groups))
+	}
+	if groups[0].State != HistoryGroupClosed {
+		t.Fatalf("expected normalized closed state, got %q", groups[0].State)
+	}
+	if groups[0].CloseReason == "" {
+		t.Fatal("expected normalized close reason")
+	}
+	if groups[0].LastEventAt.IsZero() {
+		t.Fatal("expected normalized last_event_at")
+	}
+
+	out, err := json.Marshal(groups[0])
+	if err != nil {
+		t.Fatalf("marshal normalized group: %v", err)
+	}
+	if len(out) == 0 {
+		t.Fatal("expected normalized group to marshal")
+	}
+}
+
+func TestCompactResidentMergesDuplicateHistoryGroupsAndRemapsMemory(t *testing.T) {
+	root := t.TempDir()
+	store := NewFileStore(root)
+	now := time.Date(2026, 6, 2, 18, 0, 0, 0, time.UTC)
+
+	g1 := HistoryGroup{
+		GroupUUID:       "group-a",
+		Resident:        "onyx",
+		CreatedAt:       now.Add(-2 * time.Hour),
+		ClosedAt:        now,
+		LastEventAt:     now,
+		SourceKind:      "dialogue_window",
+		State:           HistoryGroupClosed,
+		CloseReason:     "legacy_closed_group",
+		EventCount:      5,
+		Tags:            []string{"scenario:baseline", "layer:permanent"},
+		SummaryHint:     "",
+		RawEventRefs:    []string{"evt-1", "evt-2"},
+		ExtractedLayers: nil,
+	}
+	g2 := HistoryGroup{
+		GroupUUID:       "group-b",
+		Resident:        "onyx",
+		CreatedAt:       now.Add(-2 * time.Hour),
+		ClosedAt:        now,
+		LastEventAt:     now,
+		SourceKind:      "dialogue_window",
+		State:           HistoryGroupClosed,
+		CloseReason:     "event_count_threshold",
+		EventCount:      5,
+		Tags:            []string{"category:failure"},
+		SummaryHint:     "stronger summary",
+		RawEventRefs:    []string{"evt-1", "evt-2"},
+		ExtractedLayers: []string{"permanent"},
+	}
+	if err := store.UpsertHistoryGroup(g1); err != nil {
+		t.Fatalf("upsert g1: %v", err)
+	}
+	if err := store.UpsertHistoryGroup(g2); err != nil {
+		t.Fatalf("upsert g2: %v", err)
+	}
+
+	record := AbstractMemory{
+		Record: Record{
+			ID:        "m1",
+			Layer:     LayerPermanent,
+			Status:    StatusActive,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident:       "onyx",
+		Summary:        "memory",
+		DecisionAction: ActionUpdate,
+		SourceGroupIDs: []string{"group-a", "group-b"},
+	}
+	if err := store.UpsertAbstractMemory(record); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	if err := store.CompactResident("onyx"); err != nil {
+		t.Fatalf("compact resident: %v", err)
+	}
+
+	groups, err := store.ListHistoryGroups("onyx")
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 compacted group, got %d", len(groups))
+	}
+	if groups[0].GroupUUID != "group-b" {
+		t.Fatalf("expected stronger group-b to survive, got %q", groups[0].GroupUUID)
+	}
+	if groups[0].SummaryHint != "stronger summary" {
+		t.Fatalf("expected summary to survive merge, got %q", groups[0].SummaryHint)
+	}
+
+	memories, err := store.ListAbstractMemories("onyx")
+	if err != nil {
+		t.Fatalf("list memories: %v", err)
+	}
+	if len(memories) != 1 {
+		t.Fatalf("expected 1 memory, got %d", len(memories))
+	}
+	if len(memories[0].SourceGroupIDs) != 1 || memories[0].SourceGroupIDs[0] != "group-b" {
+		t.Fatalf("expected remapped source_group_ids to group-b, got %#v", memories[0].SourceGroupIDs)
 	}
 }

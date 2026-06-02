@@ -31,15 +31,15 @@ type event struct {
 }
 
 type requestPayload struct {
-	Model          string         `json:"model"`
-	Instructions   string         `json:"instructions"`
-	PromptCacheKey string         `json:"prompt_cache_key"`
-	Input          []inputMessage `json:"input"`
-	Tools          []responseTool `json:"tools,omitempty"`
-	ToolChoice     any            `json:"tool_choice,omitempty"`
-	ParallelToolCalls *bool       `json:"parallel_tool_calls,omitempty"`
-	Stream         bool           `json:"stream"`
-	Store          bool           `json:"store"`
+	Model             string         `json:"model"`
+	Instructions      string         `json:"instructions"`
+	PromptCacheKey    string         `json:"prompt_cache_key"`
+	Input             []inputMessage `json:"input"`
+	Tools             []responseTool `json:"tools,omitempty"`
+	ToolChoice        any            `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool          `json:"parallel_tool_calls,omitempty"`
+	Stream            bool           `json:"stream"`
+	Store             bool           `json:"store"`
 }
 
 type inputMessage struct {
@@ -59,10 +59,10 @@ type usageEnvelope struct {
 }
 
 type responseEnvelope struct {
-	ID             string        `json:"id"`
-	PromptCacheKey string        `json:"prompt_cache_key"`
-	OutputText     string        `json:"output_text"`
-	Usage          usageEnvelope `json:"usage"`
+	ID             string         `json:"id"`
+	PromptCacheKey string         `json:"prompt_cache_key"`
+	OutputText     string         `json:"output_text"`
+	Usage          usageEnvelope  `json:"usage"`
 	Output         []responseItem `json:"output"`
 }
 
@@ -110,11 +110,11 @@ type memoryActionDecision struct {
 }
 
 type conflictDecision struct {
-	Conflict      bool     `json:"conflict"`
-	MergeSuggested bool    `json:"merge_suggested"`
-	ConflictKinds []string `json:"conflict_kinds"`
-	ReasonCodes   []string `json:"reason_codes"`
-	Resolution    string   `json:"resolution"`
+	Conflict       bool     `json:"conflict"`
+	MergeSuggested bool     `json:"merge_suggested"`
+	ConflictKinds  []string `json:"conflict_kinds"`
+	ReasonCodes    []string `json:"reason_codes"`
+	Resolution     string   `json:"resolution"`
 }
 
 type reviewScheduleDecision struct {
@@ -201,19 +201,21 @@ type generatedMemory struct {
 }
 
 type layerRunSummary struct {
-	Layer         string `json:"layer"`
-	ResponseID    string `json:"response_id"`
-	RequestID     string `json:"request_id"`
-	InputTokens   int    `json:"input_tokens"`
-	CachedTokens  int    `json:"cached_tokens"`
-	OutputTokens  int    `json:"output_tokens"`
-	LogPath       string `json:"log_path"`
-	OutputPath    string `json:"output_path"`
-	DurationMS    int64  `json:"duration_ms"`
-	StreamedBytes int    `json:"streamed_bytes"`
-	Accepted      bool   `json:"accepted"`
-	RejectReason  string `json:"reject_reason,omitempty"`
-	Skipped       bool   `json:"skipped,omitempty"`
+	Layer          string `json:"layer"`
+	ResponseID     string `json:"response_id"`
+	RequestID      string `json:"request_id"`
+	HistoryGroupID string `json:"history_group_id,omitempty"`
+	RecallPath     string `json:"recall_path,omitempty"`
+	InputTokens    int    `json:"input_tokens"`
+	CachedTokens   int    `json:"cached_tokens"`
+	OutputTokens   int    `json:"output_tokens"`
+	LogPath        string `json:"log_path"`
+	OutputPath     string `json:"output_path"`
+	DurationMS     int64  `json:"duration_ms"`
+	StreamedBytes  int    `json:"streamed_bytes"`
+	Accepted       bool   `json:"accepted"`
+	RejectReason   string `json:"reject_reason,omitempty"`
+	Skipped        bool   `json:"skipped,omitempty"`
 }
 
 type memoryDraft struct {
@@ -256,16 +258,13 @@ func main() {
 		autoRoute = flag.Bool("auto-route", false, "Use memory policy to route the scenario into a target memory layer")
 		allLayers = flag.Bool("all-layers", false, "Generate short, long, and permanent memories in one run")
 		auto      = flag.Bool("auto", false, "Alias of --all-layers for real multi-layer generation")
+		recallID  = flag.String("recall-memory-id", "", "Recall evidence for one abstract memory ID instead of generating new memory")
+		compact   = flag.Bool("compact-store", false, "Compact resident memory store by merging duplicate history groups and remapping source group ids")
 		logDir    = flag.String("log-dir", "experiments/memory-runtime/logs", "Directory to store JSONL request logs")
 		outDir    = flag.String("out-dir", "experiments/memory-runtime/output", "Directory to store generated memory files")
 		verbose   = flag.Bool("verbose", false, "Print streamed text as it arrives")
 	)
 	flag.Parse()
-
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		exitf("OPENAI_API_KEY is required")
-	}
 
 	profile, err := buildResidentProfile(strings.ToLower(strings.TrimSpace(*resident)))
 	if err != nil {
@@ -288,6 +287,34 @@ func main() {
 		exitf("create store dir: %v", err)
 	}
 	memStore := memory.NewFileStore(storeDir)
+
+	if strings.TrimSpace(*recallID) != "" {
+		result, err := recallEvidence(memStore, profile.Name, strings.TrimSpace(*recallID), *outDir)
+		if err != nil {
+			exitf("recall evidence: %v", err)
+		}
+		out, _ := json.Marshal(result)
+		fmt.Println(string(out))
+		return
+	}
+
+	if *compact {
+		if err := memStore.CompactResident(profile.Name); err != nil {
+			exitf("compact resident store: %v", err)
+		}
+		out, _ := json.Marshal(map[string]any{
+			"resident":  profile.Name,
+			"compacted": true,
+			"store_dir": storeDir,
+		})
+		fmt.Println(string(out))
+		return
+	}
+
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if apiKey == "" {
+		exitf("OPENAI_API_KEY is required")
+	}
 
 	layersToRun := []string{strings.TrimSpace(*layer)}
 	if *allLayers || *auto {
@@ -398,28 +425,33 @@ func runLayer(client *http.Client, memStore memory.Store, baseURL, apiKey, model
 	if err != nil {
 		return layerRunSummary{}, err
 	}
+	historyGroup, err := routeEventWindowToEvidence(memStore, profile.Name, scenario, layer, eventWindow)
+	if err != nil {
+		return layerRunSummary{}, fmt.Errorf("route event window to evidence: %w", err)
+	}
 	canonical := distillCanonical(eventWindow)
 	snapshot, err := loadMemorySnapshot(memStore, profile.Name)
 	if err != nil {
 		return layerRunSummary{}, err
 	}
 	preDecision := memory.DefaultPolicy().Evaluate(memory.EventSignal{
-		Novelty:        estimateNovelty(eventWindow),
-		Confidence:     canonical.Confidence,
-		DecisionImpact: canonical.DecisionImpact,
-		ImpactRounds:   len(eventWindow),
-		Recurrence:     eventRecurrence(eventWindow),
-		ResourceWeight: canonical.ToEventSignal().ResourceWeight,
+		Novelty:            estimateNovelty(eventWindow),
+		Confidence:         canonical.Confidence,
+		DecisionImpact:     canonical.DecisionImpact,
+		ImpactRounds:       len(eventWindow),
+		Recurrence:         eventRecurrence(eventWindow),
+		ResourceWeight:     canonical.ToEventSignal().ResourceWeight,
 		RelationshipWeight: canonical.ToEventSignal().RelationshipWeight,
-		RuleWeight: canonical.ToEventSignal().RuleWeight,
-		IdentityWeight: canonical.ToEventSignal().IdentityWeight,
+		RuleWeight:         canonical.ToEventSignal().RuleWeight,
+		IdentityWeight:     canonical.ToEventSignal().IdentityWeight,
 	})
-	if shouldSkipByPolicy(preDecision) || shouldSkipNewMemory(canonical, snapshot) {
+	if !shouldExtractFromGroup(historyGroup, layer) || shouldSkipByPolicy(preDecision) || shouldSkipNewMemory(memStore, profile.Name, layer, scenario, canonical, eventWindow, snapshot) {
 		return layerRunSummary{
-			Layer:        layer,
-			Accepted:     false,
-			RejectReason: "Skipped new memory generation because the event meaning does not justify a new memory.",
-			Skipped:      true,
+			Layer:          layer,
+			Accepted:       false,
+			RejectReason:   "Skipped new memory generation because the event meaning does not justify a new memory.",
+			HistoryGroupID: historyGroup.GroupUUID,
+			Skipped:        true,
 		}, nil
 	}
 
@@ -670,6 +702,10 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		memoryText = ""
 	}
 	now := time.Now().UTC()
+	historyGroup, err := markGroupExtracted(memStore, profile.Name, scenario, layer, eventWindow, finalDraft)
+	if err != nil {
+		return layerRunSummary{}, fmt.Errorf("mark history group extracted: %w", err)
+	}
 	requestedLayer := memory.Layer(layer)
 	recordDecision := memory.DefaultPolicy().Evaluate(memory.EventSignal{
 		Novelty:        estimateNovelty(eventWindow),
@@ -729,7 +765,7 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		ObservedCache:  finalDraftResult.ObservedPromptCacheKey,
 		RecordState:    recordState,
 	}
-	if err := commitStoreRecord(memStore, profile.Name, finalDraftResult.ResponseID, memoryText, recordState, recordDecision, conflictDecisionPtr); err != nil {
+	if err := commitStoreRecord(memStore, profile.Name, finalDraftResult.ResponseID, memoryText, recordState, recordDecision, conflictDecisionPtr, []string{historyGroup.GroupUUID}); err != nil {
 		return layerRunSummary{}, fmt.Errorf("commit store record: %w", err)
 	}
 
@@ -761,6 +797,8 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		"output_tokens":             finalDraftResult.OutputTokens + finalVerdictResult.OutputTokens + routingResult.OutputTokens + conflictResult.OutputTokens + actionResult.OutputTokens + reviewResult.OutputTokens,
 		"duration_ms":               time.Since(started).Milliseconds(),
 		"event_count":               len(eventWindow),
+		"history_group_id":          historyGroup.GroupUUID,
+		"history_group_tags":        historyGroup.Tags,
 		"requested_layer":           string(requestedLayer),
 		"routed_layer":              string(routedLayer),
 		"committed_layer":           string(recordState.Layer),
@@ -795,18 +833,19 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 	}
 
 	return layerRunSummary{
-		Layer:         layer,
-		ResponseID:    finalDraftResult.ResponseID,
-		RequestID:     finalDraftResult.RequestID,
-		InputTokens:   finalDraftResult.InputTokens + finalVerdictResult.InputTokens + routingResult.InputTokens + conflictResult.InputTokens + actionResult.InputTokens + reviewResult.InputTokens,
-		CachedTokens:  finalDraftResult.CachedTokens + finalVerdictResult.CachedTokens + routingResult.CachedTokens + conflictResult.CachedTokens + actionResult.CachedTokens + reviewResult.CachedTokens,
-		OutputTokens:  finalDraftResult.OutputTokens + finalVerdictResult.OutputTokens + routingResult.OutputTokens + conflictResult.OutputTokens + actionResult.OutputTokens + reviewResult.OutputTokens,
-		LogPath:       logPath,
-		OutputPath:    outPath,
-		DurationMS:    time.Since(started).Milliseconds(),
-		StreamedBytes: len(memoryText),
-		Accepted:      finalVerdict.Accepted,
-		RejectReason:  finalVerdict.RejectReason,
+		Layer:          layer,
+		ResponseID:     finalDraftResult.ResponseID,
+		RequestID:      finalDraftResult.RequestID,
+		HistoryGroupID: historyGroup.GroupUUID,
+		InputTokens:    finalDraftResult.InputTokens + finalVerdictResult.InputTokens + routingResult.InputTokens + conflictResult.InputTokens + actionResult.InputTokens + reviewResult.InputTokens,
+		CachedTokens:   finalDraftResult.CachedTokens + finalVerdictResult.CachedTokens + routingResult.CachedTokens + conflictResult.CachedTokens + actionResult.CachedTokens + reviewResult.CachedTokens,
+		OutputTokens:   finalDraftResult.OutputTokens + finalVerdictResult.OutputTokens + routingResult.OutputTokens + conflictResult.OutputTokens + actionResult.OutputTokens + reviewResult.OutputTokens,
+		LogPath:        logPath,
+		OutputPath:     outPath,
+		DurationMS:     time.Since(started).Milliseconds(),
+		StreamedBytes:  len(memoryText),
+		Accepted:       finalVerdict.Accepted,
+		RejectReason:   finalVerdict.RejectReason,
 	}, nil
 }
 
@@ -893,10 +932,10 @@ func validateDraftSchema(layer string, draft memoryDraft) []string {
 		issues = append(issues, "confidence must be between 0 and 100")
 	}
 	allowed := map[string]bool{
-		"keep_short":         true,
-		"promote_long":       true,
-		"promote_permanent":  true,
-		"decay":              true,
+		"keep_short":        true,
+		"promote_long":      true,
+		"promote_permanent": true,
+		"decay":             true,
 	}
 	if !allowed[draft.PromoteOrDecay] {
 		issues = append(issues, "promote_or_decay has invalid enum value")
@@ -1683,7 +1722,7 @@ func buildRoutingDecisionPayload(model, cacheKey, prompt string) requestPayload 
 							"type": []string{"string", "null"},
 						},
 					},
-					"required": []string{"target_layer", "action", "reason_codes", "review_after", "expires_after"},
+					"required":             []string{"target_layer", "action", "reason_codes", "review_after", "expires_after"},
 					"additionalProperties": false,
 				},
 			},
@@ -1693,8 +1732,8 @@ func buildRoutingDecisionPayload(model, cacheKey, prompt string) requestPayload 
 			Name: "route_memory_layer",
 		},
 		ParallelToolCalls: &parallelToolCalls,
-		Stream: true,
-		Store:  false,
+		Stream:            true,
+		Store:             false,
 	}
 }
 
@@ -1721,7 +1760,7 @@ func buildActionDecisionPayload(model, cacheKey, prompt string) requestPayload {
 							"enum": []string{"create", "update", "promote", "retain", "decay", "delete", "review"},
 						},
 						"reason_codes": map[string]any{
-							"type": "array",
+							"type":  "array",
 							"items": map[string]any{"type": "string"},
 						},
 						"needs_review": map[string]any{
@@ -1734,7 +1773,7 @@ func buildActionDecisionPayload(model, cacheKey, prompt string) requestPayload {
 							"type": []string{"string", "null"},
 						},
 					},
-					"required": []string{"action", "reason_codes", "needs_review", "review_after", "expires_after"},
+					"required":             []string{"action", "reason_codes", "needs_review", "review_after", "expires_after"},
 					"additionalProperties": false,
 				},
 			},
@@ -1776,7 +1815,7 @@ func buildConflictDecisionPayload(model, cacheKey, prompt string) requestPayload
 				"additionalProperties": false,
 			},
 		}},
-		ToolChoice: functionToolChoice{Type: "function", Name: "check_memory_conflicts"},
+		ToolChoice:        functionToolChoice{Type: "function", Name: "check_memory_conflicts"},
 		ParallelToolCalls: &parallelToolCalls,
 		Stream:            true,
 		Store:             false,
@@ -1800,16 +1839,16 @@ func buildReviewSchedulePayload(model, cacheKey, prompt string) requestPayload {
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"needs_review": map[string]any{"type": "boolean"},
-					"review_after": map[string]any{"type": []string{"string", "null"}},
+					"needs_review":  map[string]any{"type": "boolean"},
+					"review_after":  map[string]any{"type": []string{"string", "null"}},
 					"expires_after": map[string]any{"type": []string{"string", "null"}},
-					"reason_codes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"reason_codes":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 				},
 				"required":             []string{"needs_review", "review_after", "expires_after", "reason_codes"},
 				"additionalProperties": false,
 			},
 		}},
-		ToolChoice: functionToolChoice{Type: "function", Name: "schedule_memory_review"},
+		ToolChoice:        functionToolChoice{Type: "function", Name: "schedule_memory_review"},
 		ParallelToolCalls: &parallelToolCalls,
 		Stream:            true,
 		Store:             false,
@@ -2145,7 +2184,7 @@ func buildMemorySnapshot(resident, scenario, layer string) []memorySnapshotEntry
 }
 
 func loadMemorySnapshot(memStore memory.Store, resident string) ([]memorySnapshotEntry, error) {
-	records, err := memStore.List(resident)
+	records, err := memStore.ListAbstractMemories(resident)
 	if err != nil {
 		return nil, err
 	}
@@ -2165,7 +2204,10 @@ func loadMemorySnapshot(memStore memory.Store, resident string) ([]memorySnapsho
 	return entries, nil
 }
 
-func shouldSkipNewMemory(canonical memory.CanonicalMemory, snapshot []memorySnapshotEntry) bool {
+func shouldSkipNewMemory(memStore memory.Store, resident, layer, scenario string, canonical memory.CanonicalMemory, eventWindow []event, snapshot []memorySnapshotEntry) bool {
+	if shouldSkipByRecentHistoryGroup(memStore, resident, layer, scenario, canonical, eventWindow) {
+		return true
+	}
 	trigger := strings.ToLower(strings.TrimSpace(canonical.Trigger))
 	corrected := strings.ToLower(strings.TrimSpace(canonical.CorrectedBelief))
 	actionBoundary := strings.ToLower(strings.TrimSpace(canonical.ActionBoundary))
@@ -2192,6 +2234,42 @@ func shouldSkipNewMemory(canonical memory.CanonicalMemory, snapshot []memorySnap
 	return false
 }
 
+func shouldSkipByRecentHistoryGroup(memStore memory.Store, resident, layer, scenario string, canonical memory.CanonicalMemory, eventWindow []event) bool {
+	if memStore == nil {
+		return false
+	}
+	groups, err := memStore.ListHistoryGroups(resident)
+	if err != nil || len(groups) == 0 {
+		return false
+	}
+	candidateTags := deriveHistoryGroupTags(scenario, layer, eventWindow)
+	candidateHint := strings.ToLower(strings.TrimSpace(canonical.CorrectedBelief))
+	if candidateHint == "" {
+		candidateHint = strings.ToLower(strings.TrimSpace(canonical.ActionBoundary))
+	}
+	candidateRefs := buildHistoryGroupEventRefs(scenario, layer, eventWindow)
+	candidateEnd := eventWindowEnd(eventWindow)
+	for _, group := range groups {
+		if group.EventCount == 0 || group.SourceKind != "dialogue_window" {
+			continue
+		}
+		if sameStringSlice(candidateRefs, group.RawEventRefs) {
+			return true
+		}
+		if len(intersectStrings(candidateTags, group.Tags)) < 3 {
+			continue
+		}
+		hint := strings.ToLower(strings.TrimSpace(group.SummaryHint))
+		if candidateHint != "" && hint != "" && !strings.Contains(hint, candidateHint) && !strings.Contains(candidateHint, hint) {
+			continue
+		}
+		if !candidateEnd.IsZero() && !group.ClosedAt.IsZero() && candidateEnd.Sub(group.ClosedAt) <= 2*time.Hour {
+			return true
+		}
+	}
+	return false
+}
+
 func shouldSkipByPolicy(decision memory.Decision) bool {
 	if decision.Action == memory.ActionRetain && decision.TargetLayer == memory.LayerInstant {
 		return true
@@ -2202,7 +2280,210 @@ func shouldSkipByPolicy(decision memory.Decision) bool {
 	return false
 }
 
-func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary string, state memory.Record, decision memory.Decision, conflict *conflictDecision) error {
+func routeEventWindowToEvidence(memStore memory.Store, resident, scenario, layer string, eventWindow []event) (memory.HistoryGroup, error) {
+	if memStore == nil {
+		return memory.HistoryGroup{}, nil
+	}
+	group := findMatchingOpenGroup(memStore, resident, scenario, layer, eventWindow)
+	if group.GroupUUID == "" {
+		group = newHistoryGroup(resident, scenario, layer, eventWindow)
+	} else {
+		group = appendWindowToGroup(group, scenario, layer, eventWindow)
+	}
+	group = closeGroupIfNeeded(group)
+	return group, memStore.UpsertHistoryGroup(group)
+}
+
+func markGroupExtracted(memStore memory.Store, resident, scenario, layer string, eventWindow []event, draft memoryDraft) (memory.HistoryGroup, error) {
+	group, err := routeEventWindowToEvidence(memStore, resident, scenario, layer, eventWindow)
+	if err != nil {
+		return memory.HistoryGroup{}, err
+	}
+	group.SummaryHint = buildHistoryGroupSummaryHint(draft, eventWindow)
+	group.ExtractedLayers = mergeStringLists(group.ExtractedLayers, []string{layer})
+	if group.State == memory.HistoryGroupOpen {
+		group = closeGroupIfNeeded(group)
+	}
+	return group, memStore.UpsertHistoryGroup(group)
+}
+
+func shouldExtractFromGroup(group memory.HistoryGroup, layer string) bool {
+	if group.GroupUUID == "" {
+		return true
+	}
+	if containsString(group.ExtractedLayers, layer) {
+		return false
+	}
+	if group.State == memory.HistoryGroupClosed {
+		return group.EventCount > 0
+	}
+	if group.EventCount >= 5 {
+		return true
+	}
+	return false
+}
+
+func findMatchingOpenGroup(memStore memory.Store, resident, scenario, layer string, eventWindow []event) memory.HistoryGroup {
+	if memStore == nil {
+		return memory.HistoryGroup{}
+	}
+	groups, err := memStore.ListHistoryGroups(resident)
+	if err != nil {
+		return memory.HistoryGroup{}
+	}
+	candidateRefs := buildHistoryGroupEventRefs(scenario, layer, eventWindow)
+	candidateTags := deriveHistoryGroupTags(scenario, layer, eventWindow)
+	for _, group := range groups {
+		if sameStringSlice(group.RawEventRefs, candidateRefs) {
+			return group
+		}
+	}
+	for _, group := range groups {
+		if group.State != memory.HistoryGroupOpen {
+			continue
+		}
+		if len(intersectStrings(group.Tags, candidateTags)) < 2 {
+			continue
+		}
+		if !group.LastEventAt.IsZero() && !eventWindowStart(eventWindow).IsZero() && eventWindowStart(eventWindow).Sub(group.LastEventAt) > 6*time.Hour {
+			continue
+		}
+		if sameStringSlice(group.RawEventRefs, candidateRefs) || canAppendWindowToOpenGroup(group, candidateRefs) {
+			return group
+		}
+	}
+	return memory.HistoryGroup{}
+}
+
+func newHistoryGroup(resident, scenario, layer string, eventWindow []event) memory.HistoryGroup {
+	now := time.Now().UTC()
+	createdAt := eventWindowStart(eventWindow)
+	closedAt := eventWindowEnd(eventWindow)
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	if closedAt.IsZero() {
+		closedAt = createdAt
+	}
+	return memory.HistoryGroup{
+		GroupUUID:       fmt.Sprintf("%s-%s-%s", resident, layer, now.Format("20060102T150405.000000000Z07")),
+		Resident:        resident,
+		CreatedAt:       createdAt,
+		ClosedAt:        closedAt,
+		LastEventAt:     closedAt,
+		SourceKind:      "dialogue_window",
+		State:           memory.HistoryGroupOpen,
+		EventCount:      len(eventWindow),
+		Tags:            deriveHistoryGroupTags(scenario, layer, eventWindow),
+		RawEventRefs:    buildHistoryGroupEventRefs(scenario, layer, eventWindow),
+		ExtractedLayers: nil,
+	}
+}
+
+func appendWindowToGroup(group memory.HistoryGroup, scenario, layer string, eventWindow []event) memory.HistoryGroup {
+	if group.State == memory.HistoryGroupClosed {
+		return group
+	}
+	group.RawEventRefs = mergeStringLists(group.RawEventRefs, buildHistoryGroupEventRefs(scenario, layer, eventWindow))
+	group.EventCount = len(group.RawEventRefs)
+	group.Tags = mergeStringLists(group.Tags, deriveHistoryGroupTags(scenario, layer, eventWindow))
+	end := eventWindowEnd(eventWindow)
+	if !end.IsZero() && end.After(group.LastEventAt) {
+		group.LastEventAt = end
+	}
+	if group.CreatedAt.IsZero() {
+		group.CreatedAt = eventWindowStart(eventWindow)
+	}
+	if group.ClosedAt.IsZero() || end.After(group.ClosedAt) {
+		group.ClosedAt = end
+	}
+	return group
+}
+
+func closeGroupIfNeeded(group memory.HistoryGroup) memory.HistoryGroup {
+	if group.GroupUUID == "" {
+		return group
+	}
+	if group.EventCount >= 5 {
+		group.State = memory.HistoryGroupClosed
+		group.CloseReason = "event_count_threshold"
+	}
+	if group.State == memory.HistoryGroupOpen && !group.CreatedAt.IsZero() && !group.LastEventAt.IsZero() && group.LastEventAt.Sub(group.CreatedAt) >= 12*time.Hour {
+		group.State = memory.HistoryGroupClosed
+		group.CloseReason = "time_window_threshold"
+	}
+	if group.LastEventAt.IsZero() {
+		group.LastEventAt = group.ClosedAt
+	}
+	return group
+}
+
+func canAppendWindowToOpenGroup(group memory.HistoryGroup, candidateRefs []string) bool {
+	if group.State != memory.HistoryGroupOpen {
+		return false
+	}
+	if len(candidateRefs) == 0 {
+		return false
+	}
+	existing := make(map[string]struct{}, len(group.RawEventRefs))
+	for _, ref := range group.RawEventRefs {
+		existing[strings.TrimSpace(ref)] = struct{}{}
+	}
+	for _, ref := range candidateRefs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		if _, ok := existing[ref]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func recallEvidence(memStore memory.Store, resident, memoryID, outDir string) (map[string]any, error) {
+	record, ok, err := memStore.GetAbstractMemory(resident, memoryID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("memory %q not found", memoryID)
+	}
+	groups, err := memStore.ListHistoryGroups(resident)
+	if err != nil {
+		return nil, err
+	}
+	groupByID := make(map[string]memory.HistoryGroup, len(groups))
+	for _, group := range groups {
+		groupByID[group.GroupUUID] = group
+	}
+	recalled := make([]memory.HistoryGroup, 0, len(record.SourceGroupIDs))
+	for _, groupID := range record.SourceGroupIDs {
+		if group, ok := groupByID[groupID]; ok {
+			recalled = append(recalled, group)
+		}
+	}
+	result := map[string]any{
+		"resident":        resident,
+		"memory":          record,
+		"evidence_groups": recalled,
+	}
+	baseName := fmt.Sprintf("%s-recall-%s-%s.md", resident, sanitizeFileName(memoryID), time.Now().UTC().Format("20060102T150405Z"))
+	recallPath := filepath.Join(outDir, baseName)
+	var b strings.Builder
+	b.WriteString("# Evidence Recall\n\n")
+	b.WriteString("```json\n")
+	raw, _ := json.MarshalIndent(result, "", "  ")
+	b.Write(raw)
+	b.WriteString("\n```\n")
+	if err := os.WriteFile(recallPath, []byte(b.String()), 0o644); err != nil {
+		return nil, err
+	}
+	result["recall_path"] = recallPath
+	return result, nil
+}
+
+func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary string, state memory.Record, decision memory.Decision, conflict *conflictDecision, sourceGroupIDs []string) error {
 	if memStore == nil {
 		return nil
 	}
@@ -2215,25 +2496,174 @@ func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary str
 			}
 		}
 		if targetID != "" {
-			if existing, ok, err := memStore.Get(resident, targetID); err == nil && ok {
+			if existing, ok, err := memStore.GetAbstractMemory(resident, targetID); err == nil && ok {
 				existing.Record = state
 				existing.Record.ID = targetID
 				existing.Summary = summary
 				existing.DecisionAction = decision.Action
 				existing.SourceRunID = sourceRunID
-				return memStore.Upsert(existing)
+				existing.SourceGroupIDs = mergeStringLists(existing.SourceGroupIDs, sourceGroupIDs)
+				return memStore.UpsertAbstractMemory(existing)
 			}
 			return errors.New("merge target not found in store: " + targetID)
 		}
 	}
 
-	return memStore.Upsert(memory.StoreRecord{
+	return memStore.UpsertAbstractMemory(memory.AbstractMemory{
 		Record:         state,
 		Resident:       resident,
 		Summary:        summary,
 		DecisionAction: decision.Action,
 		SourceRunID:    sourceRunID,
+		SourceGroupIDs: append([]string(nil), sourceGroupIDs...),
 	})
+}
+
+func eventWindowStart(events []event) time.Time {
+	if len(events) == 0 {
+		return time.Time{}
+	}
+	start := events[0].Time
+	for _, e := range events[1:] {
+		if e.Time.Before(start) {
+			start = e.Time
+		}
+	}
+	return start.UTC()
+}
+
+func eventWindowEnd(events []event) time.Time {
+	if len(events) == 0 {
+		return time.Time{}
+	}
+	end := events[0].Time
+	for _, e := range events[1:] {
+		if e.Time.After(end) {
+			end = e.Time
+		}
+	}
+	return end.UTC()
+}
+
+func deriveHistoryGroupTags(scenario, layer string, eventWindow []event) []string {
+	seen := map[string]struct{}{
+		"scenario:" + sanitizeFileName(scenario): {},
+		"layer:" + sanitizeFileName(layer):       {},
+	}
+	for _, e := range eventWindow {
+		category := strings.TrimSpace(strings.ToLower(e.Category))
+		if category == "" {
+			continue
+		}
+		seen["category:"+sanitizeFileName(category)] = struct{}{}
+		if e.Importance >= 4 {
+			seen["high-importance"] = struct{}{}
+		}
+	}
+	tags := make([]string, 0, len(seen))
+	for tag := range seen {
+		tags = append(tags, tag)
+	}
+	return tags
+}
+
+func buildHistoryGroupSummaryHint(draft memoryDraft, eventWindow []event) string {
+	if text := strings.TrimSpace(draft.NewReadToKeep); text != "" {
+		return text
+	}
+	if text := strings.TrimSpace(draft.WhyItMatters); text != "" {
+		return text
+	}
+	if len(eventWindow) > 0 {
+		return strings.TrimSpace(eventWindow[len(eventWindow)-1].Summary)
+	}
+	return ""
+}
+
+func buildHistoryGroupEventRefs(scenario, layer string, eventWindow []event) []string {
+	refs := make([]string, 0, len(eventWindow))
+	for _, e := range eventWindow {
+		refs = append(refs, fmt.Sprintf("%s:%s:r%d:%s", sanitizeFileName(scenario), sanitizeFileName(layer), e.Round, sanitizeFileName(strings.ToLower(e.Category))))
+	}
+	return refs
+}
+
+func mergeStringLists(existing, incoming []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(incoming))
+	merged := make([]string, 0, len(existing)+len(incoming))
+	for _, item := range existing {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		merged = append(merged, item)
+	}
+	for _, item := range incoming {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		merged = append(merged, item)
+	}
+	return merged
+}
+
+func intersectStrings(left, right []string) []string {
+	if len(left) == 0 || len(right) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(left))
+	for _, item := range left {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		seen[item] = struct{}{}
+	}
+	var out []string
+	for _, item := range right {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func sameStringSlice(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if strings.TrimSpace(left[i]) != strings.TrimSpace(right[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsString(items []string, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func extractMergeTargetID(resolution string) string {

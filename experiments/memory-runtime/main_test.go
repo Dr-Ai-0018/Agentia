@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"ai-arena/internal/memory"
 )
@@ -130,6 +131,69 @@ func TestShouldSkipByPolicy(t *testing.T) {
 	}
 	if shouldSkipByPolicy(memoryDecision("promote", "permanent")) {
 		t.Fatal("did not expect permanent promote to skip new memory")
+	}
+}
+
+func TestFindMatchingOpenGroupReusesClosedGroupByRefs(t *testing.T) {
+	store := memory.NewMemoryStore()
+	group := memory.HistoryGroup{
+		GroupUUID:    "existing-group",
+		Resident:     "onyx",
+		CreatedAt:    time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC),
+		ClosedAt:     time.Date(2026, 6, 2, 18, 0, 0, 0, time.UTC),
+		LastEventAt:  time.Date(2026, 6, 2, 18, 0, 0, 0, time.UTC),
+		SourceKind:   "dialogue_window",
+		State:        memory.HistoryGroupClosed,
+		CloseReason:  "legacy_closed_group",
+		EventCount:   5,
+		Tags:         []string{"scenario:baseline", "layer:permanent"},
+		RawEventRefs: []string{"baseline:permanent:r3:resource_change", "baseline:permanent:r4:failure", "baseline:permanent:r5:failure", "baseline:permanent:r6:recovery", "baseline:permanent:r7:admin_feedback"},
+	}
+	if err := store.UpsertHistoryGroup(group); err != nil {
+		t.Fatalf("upsert group: %v", err)
+	}
+
+	events, err := buildScenario("baseline")
+	if err != nil {
+		t.Fatalf("build scenario: %v", err)
+	}
+	window, err := selectWindow(events, "onyx", "permanent")
+	if err != nil {
+		t.Fatalf("select window: %v", err)
+	}
+
+	got := findMatchingOpenGroup(store, "onyx", "baseline", "permanent", window)
+	if got.GroupUUID != "existing-group" {
+		t.Fatalf("expected existing group, got %q", got.GroupUUID)
+	}
+}
+
+func TestFindMatchingOpenGroupAppendsCompatibleWindow(t *testing.T) {
+	store := memory.NewMemoryStore()
+	group := memory.HistoryGroup{
+		GroupUUID:    "open-group",
+		Resident:     "onyx",
+		CreatedAt:    time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC),
+		ClosedAt:     time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC),
+		LastEventAt:  time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC),
+		SourceKind:   "dialogue_window",
+		State:        memory.HistoryGroupOpen,
+		EventCount:   2,
+		Tags:         []string{"scenario:baseline", "layer:permanent", "category:resource_change", "high-importance"},
+		RawEventRefs: []string{"baseline:permanent:r1:resource_change", "baseline:permanent:r2:failure"},
+	}
+	if err := store.UpsertHistoryGroup(group); err != nil {
+		t.Fatalf("upsert group: %v", err)
+	}
+
+	window := []event{
+		{Round: 3, Time: time.Date(2026, 6, 2, 11, 0, 0, 0, time.UTC), Category: "resource_change", Importance: 4, Summary: "disk expansion request was approved after evidence was shown"},
+		{Round: 4, Time: time.Date(2026, 6, 2, 11, 30, 0, 0, time.UTC), Category: "failure", Importance: 3, Summary: "service bootstrap failed on the first attempt"},
+	}
+
+	got := findMatchingOpenGroup(store, "onyx", "baseline", "permanent", window)
+	if got.GroupUUID != "open-group" {
+		t.Fatalf("expected open group match, got %q", got.GroupUUID)
 	}
 }
 

@@ -14,6 +14,7 @@ dist/
 *.test
 coverage.out
 experiments/*/logs/
+experiments/*/output/
 
 # Local env / secrets
 .env

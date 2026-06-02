@@ -11,12 +11,16 @@ import (
 )
 
 type RecordStatus string
+type HistoryGroupState string
 
 const (
 	StatusActive   RecordStatus = "active"
 	StatusDecaying RecordStatus = "decaying"
 	StatusReview   RecordStatus = "review"
 	StatusDeleted  RecordStatus = "deleted"
+
+	HistoryGroupOpen   HistoryGroupState = "open"
+	HistoryGroupClosed HistoryGroupState = "closed"
 )
 
 type Record struct {
@@ -32,12 +36,32 @@ type Record struct {
 	Pinned      bool         `json:"pinned"`
 }
 
-type StoreRecord struct {
+type HistoryGroup struct {
+	GroupUUID       string            `json:"group_uuid"`
+	Resident        string            `json:"resident"`
+	CreatedAt       time.Time         `json:"created_at"`
+	ClosedAt        time.Time         `json:"closed_at"`
+	LastEventAt     time.Time         `json:"last_event_at,omitempty"`
+	SourceKind      string            `json:"source_kind"`
+	State           HistoryGroupState `json:"state"`
+	CloseReason     string            `json:"close_reason,omitempty"`
+	EventCount      int               `json:"event_count"`
+	Tags            []string          `json:"tags"`
+	SummaryHint     string            `json:"summary_hint"`
+	RawEventRefs    []string          `json:"raw_event_refs"`
+	ExtractedLayers []string          `json:"extracted_layers,omitempty"`
+}
+
+type AbstractMemory struct {
 	Record
-	Resident       string `json:"resident"`
-	Summary        string `json:"summary"`
-	DecisionAction Action `json:"decision_action"`
-	SourceRunID    string `json:"source_run_id,omitempty"`
+	Resident        string   `json:"resident"`
+	Summary         string   `json:"summary"`
+	DecisionAction  Action   `json:"decision_action"`
+	SourceRunID     string   `json:"source_run_id,omitempty"`
+	SourceGroupIDs  []string `json:"source_group_ids"`
+	ParentMemoryIDs []string `json:"parent_memory_ids"`
+	Boundary        string   `json:"boundary,omitempty"`
+	Confidence      float64  `json:"confidence,omitempty"`
 }
 
 type SnapshotEntry struct {
@@ -47,24 +71,34 @@ type SnapshotEntry struct {
 	Summary        string `json:"summary"`
 }
 
+type ResidentMemoryBundle struct {
+	HistoryGroups    []HistoryGroup   `json:"history_groups"`
+	AbstractMemories []AbstractMemory `json:"abstract_memories"`
+}
+
 type Store interface {
-	List(resident string) ([]StoreRecord, error)
-	Upsert(record StoreRecord) error
-	Get(resident, id string) (StoreRecord, bool, error)
+	ListAbstractMemories(resident string) ([]AbstractMemory, error)
+	UpsertAbstractMemory(record AbstractMemory) error
+	GetAbstractMemory(resident, id string) (AbstractMemory, bool, error)
+	ListHistoryGroups(resident string) ([]HistoryGroup, error)
+	UpsertHistoryGroup(group HistoryGroup) error
+	CompactResident(resident string) error
 }
 
 type MemoryStore struct {
-	records map[string][]StoreRecord
+	historyGroups    map[string][]HistoryGroup
+	abstractMemories map[string][]AbstractMemory
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		records: make(map[string][]StoreRecord),
+		historyGroups:    make(map[string][]HistoryGroup),
+		abstractMemories: make(map[string][]AbstractMemory),
 	}
 }
 
-func (s *MemoryStore) List(resident string) ([]StoreRecord, error) {
-	records := append([]StoreRecord(nil), s.records[resident]...)
+func (s *MemoryStore) ListAbstractMemories(resident string) ([]AbstractMemory, error) {
+	records := append([]AbstractMemory(nil), s.abstractMemories[resident]...)
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].UpdatedAt.Equal(records[j].UpdatedAt) {
 			return records[i].ID < records[j].ID
@@ -74,36 +108,82 @@ func (s *MemoryStore) List(resident string) ([]StoreRecord, error) {
 	return records, nil
 }
 
-func (s *MemoryStore) Get(resident, id string) (StoreRecord, bool, error) {
-	for _, record := range s.records[resident] {
+func (s *MemoryStore) GetAbstractMemory(resident, id string) (AbstractMemory, bool, error) {
+	for _, record := range s.abstractMemories[resident] {
 		if record.ID == id {
 			return record, true, nil
 		}
 	}
-	return StoreRecord{}, false, nil
+	return AbstractMemory{}, false, nil
 }
 
-func (s *MemoryStore) Upsert(record StoreRecord) error {
+func (s *MemoryStore) UpsertAbstractMemory(record AbstractMemory) error {
 	if strings.TrimSpace(record.Resident) == "" {
 		return errors.New("resident is required")
 	}
 	if strings.TrimSpace(record.ID) == "" {
-		return errors.New("record id is required")
+		return errors.New("abstract memory id is required")
 	}
-
-	list := s.records[record.Resident]
+	list := s.abstractMemories[record.Resident]
 	for i := range list {
 		if list[i].ID == record.ID {
 			list[i] = record
-			s.records[record.Resident] = list
+			s.abstractMemories[record.Resident] = list
 			return nil
 		}
 	}
-	s.records[record.Resident] = append(list, record)
+	s.abstractMemories[record.Resident] = append(list, record)
 	return nil
 }
 
-func BuildSnapshot(records []StoreRecord, limit int) []SnapshotEntry {
+func (s *MemoryStore) ListHistoryGroups(resident string) ([]HistoryGroup, error) {
+	groups := append([]HistoryGroup(nil), s.historyGroups[resident]...)
+	for i := range groups {
+		groups[i] = normalizeHistoryGroup(groups[i])
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].CreatedAt.After(groups[j].CreatedAt)
+	})
+	return groups, nil
+}
+
+func (s *MemoryStore) UpsertHistoryGroup(group HistoryGroup) error {
+	group = normalizeHistoryGroup(group)
+	if strings.TrimSpace(group.Resident) == "" {
+		return errors.New("resident is required")
+	}
+	if strings.TrimSpace(group.GroupUUID) == "" {
+		return errors.New("group uuid is required")
+	}
+	list := s.historyGroups[group.Resident]
+	for i := range list {
+		if list[i].GroupUUID == group.GroupUUID {
+			list[i] = group
+			s.historyGroups[group.Resident] = list
+			return nil
+		}
+	}
+	s.historyGroups[group.Resident] = append(list, group)
+	return nil
+}
+
+func (s *MemoryStore) CompactResident(resident string) error {
+	groups, err := s.ListHistoryGroups(resident)
+	if err != nil {
+		return err
+	}
+	records, err := s.ListAbstractMemories(resident)
+	if err != nil {
+		return err
+	}
+	compactedGroups, groupIDMap := compactHistoryGroups(groups)
+	compactedRecords := remapAbstractMemoryGroups(records, groupIDMap)
+	s.historyGroups[resident] = compactedGroups
+	s.abstractMemories[resident] = compactedRecords
+	return nil
+}
+
+func BuildSnapshot(records []AbstractMemory, limit int) []SnapshotEntry {
 	if limit <= 0 || limit > len(records) {
 		limit = len(records)
 	}
@@ -130,19 +210,12 @@ func NewFileStore(root string) *FileStore {
 	return &FileStore{root: root}
 }
 
-func (s *FileStore) List(resident string) ([]StoreRecord, error) {
-	path := s.residentPath(resident)
-	raw, err := os.ReadFile(path)
+func (s *FileStore) ListAbstractMemories(resident string) ([]AbstractMemory, error) {
+	bundle, err := s.loadBundle(resident)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	var records []StoreRecord
-	if err := json.Unmarshal(raw, &records); err != nil {
-		return nil, err
-	}
+	records := append([]AbstractMemory(nil), bundle.AbstractMemories...)
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].UpdatedAt.Equal(records[j].UpdatedAt) {
 			return records[i].ID < records[j].ID
@@ -152,43 +225,123 @@ func (s *FileStore) List(resident string) ([]StoreRecord, error) {
 	return records, nil
 }
 
-func (s *FileStore) Get(resident, id string) (StoreRecord, bool, error) {
-	records, err := s.List(resident)
+func (s *FileStore) GetAbstractMemory(resident, id string) (AbstractMemory, bool, error) {
+	records, err := s.ListAbstractMemories(resident)
 	if err != nil {
-		return StoreRecord{}, false, err
+		return AbstractMemory{}, false, err
 	}
 	for _, record := range records {
 		if record.ID == id {
 			return record, true, nil
 		}
 	}
-	return StoreRecord{}, false, nil
+	return AbstractMemory{}, false, nil
 }
 
-func (s *FileStore) Upsert(record StoreRecord) error {
+func (s *FileStore) UpsertAbstractMemory(record AbstractMemory) error {
 	if err := os.MkdirAll(s.root, 0o755); err != nil {
 		return err
 	}
-	records, err := s.List(record.Resident)
+	bundle, err := s.loadBundle(record.Resident)
 	if err != nil {
 		return err
 	}
 	found := false
-	for i := range records {
-		if records[i].ID == record.ID {
-			records[i] = record
+	for i := range bundle.AbstractMemories {
+		if bundle.AbstractMemories[i].ID == record.ID {
+			bundle.AbstractMemories[i] = record
 			found = true
 			break
 		}
 	}
 	if !found {
-		records = append(records, record)
+		bundle.AbstractMemories = append(bundle.AbstractMemories, record)
 	}
-	raw, err := json.MarshalIndent(records, "", "  ")
+	return s.writeBundle(record.Resident, bundle)
+}
+
+func (s *FileStore) ListHistoryGroups(resident string) ([]HistoryGroup, error) {
+	bundle, err := s.loadBundle(resident)
+	if err != nil {
+		return nil, err
+	}
+	groups := append([]HistoryGroup(nil), bundle.HistoryGroups...)
+	for i := range groups {
+		groups[i] = normalizeHistoryGroup(groups[i])
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].CreatedAt.After(groups[j].CreatedAt)
+	})
+	return groups, nil
+}
+
+func (s *FileStore) UpsertHistoryGroup(group HistoryGroup) error {
+	if err := os.MkdirAll(s.root, 0o755); err != nil {
+		return err
+	}
+	group = normalizeHistoryGroup(group)
+	bundle, err := s.loadBundle(group.Resident)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.residentPath(record.Resident), raw, 0o644)
+	found := false
+	for i := range bundle.HistoryGroups {
+		if bundle.HistoryGroups[i].GroupUUID == group.GroupUUID {
+			bundle.HistoryGroups[i] = group
+			found = true
+			break
+		}
+	}
+	if !found {
+		bundle.HistoryGroups = append(bundle.HistoryGroups, group)
+	}
+	return s.writeBundle(group.Resident, bundle)
+}
+
+func (s *FileStore) CompactResident(resident string) error {
+	if err := os.MkdirAll(s.root, 0o755); err != nil {
+		return err
+	}
+	bundle, err := s.loadBundle(resident)
+	if err != nil {
+		return err
+	}
+	groups := append([]HistoryGroup(nil), bundle.HistoryGroups...)
+	for i := range groups {
+		groups[i] = normalizeHistoryGroup(groups[i])
+	}
+	compactedGroups, groupIDMap := compactHistoryGroups(groups)
+	bundle.HistoryGroups = compactedGroups
+	bundle.AbstractMemories = remapAbstractMemoryGroups(bundle.AbstractMemories, groupIDMap)
+	return s.writeBundle(resident, bundle)
+}
+
+func (s *FileStore) loadBundle(resident string) (ResidentMemoryBundle, error) {
+	path := s.residentPath(resident)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ResidentMemoryBundle{}, nil
+		}
+		return ResidentMemoryBundle{}, err
+	}
+	var bundle ResidentMemoryBundle
+	if err := json.Unmarshal(raw, &bundle); err != nil {
+		var legacy []AbstractMemory
+		if legacyErr := json.Unmarshal(raw, &legacy); legacyErr != nil {
+			return ResidentMemoryBundle{}, err
+		}
+		bundle.AbstractMemories = legacy
+	}
+	return bundle, nil
+}
+
+func (s *FileStore) writeBundle(resident string, bundle ResidentMemoryBundle) error {
+	raw, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.residentPath(resident), raw, 0o644)
 }
 
 func (s *FileStore) residentPath(resident string) string {
@@ -219,4 +372,184 @@ func ApplyDecision(now time.Time, record Record, decision Decision) Record {
 	}
 
 	return record
+}
+
+func normalizeHistoryGroup(group HistoryGroup) HistoryGroup {
+	if group.LastEventAt.IsZero() {
+		if !group.ClosedAt.IsZero() {
+			group.LastEventAt = group.ClosedAt
+		} else {
+			group.LastEventAt = group.CreatedAt
+		}
+	}
+	if strings.TrimSpace(string(group.State)) == "" {
+		if group.EventCount > 0 {
+			group.State = HistoryGroupClosed
+		} else {
+			group.State = HistoryGroupOpen
+		}
+	}
+	if group.State == HistoryGroupClosed && strings.TrimSpace(group.CloseReason) == "" {
+		group.CloseReason = "legacy_closed_group"
+	}
+	if group.EventCount == 0 {
+		group.EventCount = len(group.RawEventRefs)
+	}
+	return group
+}
+
+func compactHistoryGroups(groups []HistoryGroup) ([]HistoryGroup, map[string]string) {
+	type candidate struct {
+		group HistoryGroup
+		index int
+	}
+	bySignature := make(map[string]candidate)
+	idMap := make(map[string]string)
+	for _, group := range groups {
+		group = normalizeHistoryGroup(group)
+		signature := historyGroupSignature(group)
+		existing, ok := bySignature[signature]
+		if !ok {
+			bySignature[signature] = candidate{group: group}
+			idMap[group.GroupUUID] = group.GroupUUID
+			continue
+		}
+		merged := mergeHistoryGroup(existing.group, group)
+		bySignature[signature] = candidate{group: merged}
+		idMap[group.GroupUUID] = merged.GroupUUID
+		idMap[existing.group.GroupUUID] = merged.GroupUUID
+	}
+	compacted := make([]HistoryGroup, 0, len(bySignature))
+	for _, item := range bySignature {
+		compacted = append(compacted, normalizeHistoryGroup(item.group))
+	}
+	sort.Slice(compacted, func(i, j int) bool {
+		return compacted[i].CreatedAt.After(compacted[j].CreatedAt)
+	})
+	return compacted, idMap
+}
+
+func remapAbstractMemoryGroups(records []AbstractMemory, groupIDMap map[string]string) []AbstractMemory {
+	out := make([]AbstractMemory, 0, len(records))
+	for _, record := range records {
+		record.SourceGroupIDs = remapGroupIDs(record.SourceGroupIDs, groupIDMap)
+		out = append(out, record)
+	}
+	return out
+}
+
+func remapGroupIDs(groupIDs []string, groupIDMap map[string]string) []string {
+	var mapped []string
+	seen := map[string]struct{}{}
+	for _, groupID := range groupIDs {
+		target := groupID
+		if replacement, ok := groupIDMap[groupID]; ok && strings.TrimSpace(replacement) != "" {
+			target = replacement
+		}
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		mapped = append(mapped, target)
+	}
+	return mapped
+}
+
+func historyGroupSignature(group HistoryGroup) string {
+	return strings.Join(group.RawEventRefs, "\n")
+}
+
+func mergeHistoryGroup(left, right HistoryGroup) HistoryGroup {
+	left = normalizeHistoryGroup(left)
+	right = normalizeHistoryGroup(right)
+	keep := left
+	drop := right
+	if preferHistoryGroup(right, left) {
+		keep = right
+		drop = left
+	}
+	keep.CreatedAt = minTime(left.CreatedAt, right.CreatedAt)
+	keep.ClosedAt = maxTime(left.ClosedAt, right.ClosedAt)
+	keep.LastEventAt = maxTime(left.LastEventAt, right.LastEventAt)
+	keep.EventCount = maxInt(left.EventCount, right.EventCount)
+	keep.Tags = mergeStringSlices(left.Tags, right.Tags)
+	if strings.TrimSpace(keep.SummaryHint) == "" {
+		keep.SummaryHint = drop.SummaryHint
+	}
+	keep.RawEventRefs = mergeStringSlices(left.RawEventRefs, right.RawEventRefs)
+	keep.ExtractedLayers = mergeStringSlices(left.ExtractedLayers, right.ExtractedLayers)
+	if keep.State == HistoryGroupOpen && drop.State == HistoryGroupClosed {
+		keep.State = HistoryGroupClosed
+	}
+	if strings.TrimSpace(keep.CloseReason) == "" {
+		keep.CloseReason = drop.CloseReason
+	}
+	return normalizeHistoryGroup(keep)
+}
+
+func preferHistoryGroup(left, right HistoryGroup) bool {
+	if left.State != right.State {
+		return left.State == HistoryGroupClosed
+	}
+	if len(left.ExtractedLayers) != len(right.ExtractedLayers) {
+		return len(left.ExtractedLayers) > len(right.ExtractedLayers)
+	}
+	if strings.TrimSpace(left.SummaryHint) != "" && strings.TrimSpace(right.SummaryHint) == "" {
+		return true
+	}
+	return left.GroupUUID < right.GroupUUID
+}
+
+func mergeStringSlices(left, right []string) []string {
+	seen := make(map[string]struct{}, len(left)+len(right))
+	var out []string
+	for _, item := range append(append([]string(nil), left...), right...) {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func minTime(left, right time.Time) time.Time {
+	if left.IsZero() {
+		return right
+	}
+	if right.IsZero() {
+		return left
+	}
+	if left.Before(right) {
+		return left
+	}
+	return right
+}
+
+func maxTime(left, right time.Time) time.Time {
+	if left.IsZero() {
+		return right
+	}
+	if right.IsZero() {
+		return left
+	}
+	if left.After(right) {
+		return left
+	}
+	return right
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
