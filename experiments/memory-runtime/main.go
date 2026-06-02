@@ -425,9 +425,9 @@ func runLayer(client *http.Client, memStore memory.Store, baseURL, apiKey, model
 	if err != nil {
 		return layerRunSummary{}, err
 	}
-	historyGroup, err := routeEventWindowToEvidence(memStore, profile.Name, scenario, layer, eventWindow)
+	historyGroup, err := previewEventWindowGroup(memStore, profile.Name, scenario, layer, eventWindow)
 	if err != nil {
-		return layerRunSummary{}, fmt.Errorf("route event window to evidence: %w", err)
+		return layerRunSummary{}, fmt.Errorf("preview event window group: %w", err)
 	}
 	canonical := distillCanonical(eventWindow)
 	snapshot, err := loadMemorySnapshot(memStore, profile.Name)
@@ -446,6 +446,9 @@ func runLayer(client *http.Client, memStore memory.Store, baseURL, apiKey, model
 		IdentityWeight:     canonical.ToEventSignal().IdentityWeight,
 	})
 	if !shouldExtractFromGroup(historyGroup, layer) || shouldSkipByPolicy(preDecision) || shouldSkipNewMemory(memStore, profile.Name, layer, scenario, canonical, eventWindow, snapshot) {
+		if _, err := routeEventWindowToEvidence(memStore, profile.Name, scenario, layer, eventWindow); err != nil {
+			return layerRunSummary{}, fmt.Errorf("persist skipped event window group: %w", err)
+		}
 		return layerRunSummary{
 			Layer:          layer,
 			Accepted:       false,
@@ -1578,6 +1581,16 @@ func decodeReviewScheduleDecision(raw string) (reviewScheduleDecision, error) {
 	return decision, nil
 }
 
+func normalizeOptionalDurationLiteral(raw string) string {
+	value := strings.TrimSpace(strings.ToLower(raw))
+	switch value {
+	case "", "null", "never", "none", "n/a":
+		return ""
+	default:
+		return raw
+	}
+}
+
 func cleanJSON(raw string) string {
 	replacer := strings.NewReplacer(",\n}", "\n}", ",\n]", "\n]", ",}", "}", ",]", "]")
 	return replacer.Replace(raw)
@@ -2055,7 +2068,10 @@ func extractActionDecision(calls []responseItem) (memoryActionDecision, bool) {
 		}
 		decision, err := decodeActionDecision(item.Arguments)
 		if err != nil {
-			return memoryActionDecision{}, false
+			decision, err = decodeActionDecisionWithToolCompat(item.Arguments)
+			if err != nil {
+				return memoryActionDecision{}, false
+			}
 		}
 		return decision, true
 	}
@@ -2091,11 +2107,41 @@ func extractReviewScheduleDecision(calls []responseItem) (reviewScheduleDecision
 		}
 		decision, err := decodeReviewScheduleDecision(item.Arguments)
 		if err != nil {
-			return reviewScheduleDecision{}, false
+			decision, err = decodeReviewScheduleDecisionWithToolCompat(item.Arguments)
+			if err != nil {
+				return reviewScheduleDecision{}, false
+			}
 		}
 		return decision, true
 	}
 	return reviewScheduleDecision{}, false
+}
+
+func decodeActionDecisionWithToolCompat(raw string) (memoryActionDecision, error) {
+	var decision memoryActionDecision
+	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
+	if err := json.Unmarshal([]byte(cleaned), &decision); err != nil {
+		return memoryActionDecision{}, err
+	}
+	decision.ExpiresAfter = normalizeOptionalDurationLiteral(decision.ExpiresAfter)
+	decision.ReviewAfter = normalizeOptionalDurationLiteral(decision.ReviewAfter)
+	if issues := validateActionDecision(decision); len(issues) > 0 {
+		return memoryActionDecision{}, errors.New(strings.Join(issues, "; "))
+	}
+	return decision, nil
+}
+
+func decodeReviewScheduleDecisionWithToolCompat(raw string) (reviewScheduleDecision, error) {
+	var decision reviewScheduleDecision
+	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
+	if err := json.Unmarshal([]byte(cleaned), &decision); err != nil {
+		return reviewScheduleDecision{}, err
+	}
+	decision.ExpiresAfter = normalizeOptionalDurationLiteral(decision.ExpiresAfter)
+	decision.ReviewAfter = normalizeOptionalDurationLiteral(decision.ReviewAfter)
+	return decision, nil
 }
 
 func mergeRoutingDecision(base memory.Decision, routed routingDecision) memory.Decision {
@@ -2284,14 +2330,25 @@ func routeEventWindowToEvidence(memStore memory.Store, resident, scenario, layer
 	if memStore == nil {
 		return memory.HistoryGroup{}, nil
 	}
+	group, err := previewEventWindowGroup(memStore, resident, scenario, layer, eventWindow)
+	if err != nil {
+		return memory.HistoryGroup{}, err
+	}
+	group = closeGroupIfNeeded(group)
+	return group, memStore.UpsertHistoryGroup(group)
+}
+
+func previewEventWindowGroup(memStore memory.Store, resident, scenario, layer string, eventWindow []event) (memory.HistoryGroup, error) {
+	if memStore == nil {
+		return memory.HistoryGroup{}, nil
+	}
 	group := findMatchingOpenGroup(memStore, resident, scenario, layer, eventWindow)
 	if group.GroupUUID == "" {
 		group = newHistoryGroup(resident, scenario, layer, eventWindow)
 	} else {
 		group = appendWindowToGroup(group, scenario, layer, eventWindow)
 	}
-	group = closeGroupIfNeeded(group)
-	return group, memStore.UpsertHistoryGroup(group)
+	return closeGroupIfNeeded(group), nil
 }
 
 func markGroupExtracted(memStore memory.Store, resident, scenario, layer string, eventWindow []event, draft memoryDraft) (memory.HistoryGroup, error) {
