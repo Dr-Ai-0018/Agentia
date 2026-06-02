@@ -246,21 +246,20 @@ func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) 
 func renderShortReflection(profile residentProfile, window []event, trigger event, state schedulerState) string {
 	lines := []string{
 		fmt.Sprintf("%s short reflection:", profile.Name),
-		fmt.Sprintf("Event: %s.", trigger.Summary),
-		fmt.Sprintf("Previous assumption: %s", previousAssumption(profile, trigger)),
-		fmt.Sprintf("New evidence: %s", trigger.Summary),
-		fmt.Sprintf("Updated judgment: %s", updatedJudgment(profile, trigger)),
-		fmt.Sprintf("Why it matters now: %s", interpretEvent(profile, trigger)),
-		fmt.Sprintf("Memory layer to update: %s", inferUpdateArea(trigger)),
-		fmt.Sprintf("Behavior change from next round: %s", nextAdjustment(profile, trigger)),
+		fmt.Sprintf("Trigger: %s.", trigger.Summary),
+		fmt.Sprintf("I was operating as if %s.", previousAssumption(profile, trigger)),
+		fmt.Sprintf("I should now operate as if %s.", updatedJudgment(profile, trigger)),
+		fmt.Sprintf("Why this belongs in memory: %s.", interpretEvent(profile, trigger)),
+		fmt.Sprintf("Write this into %s.", inferUpdateArea(trigger)),
+		fmt.Sprintf("Next-round adjustment: %s.", nextAdjustment(profile, trigger)),
 	}
 
 	if trigger.Category == "failure" || state.FailureStreak >= 2 {
-		lines = append(lines, "Risk note: repeated failure means the previous plan was too optimistic and should lose one degree of freedom.")
+		lines = append(lines, "Risk note: repeated failure means the plan was wider than the environment would tolerate.")
 	}
 
 	if len(window) > 1 {
-		lines = append(lines, fmt.Sprintf("Context chain: %s", summarizeEventTrail(window)))
+		lines = append(lines, fmt.Sprintf("How this formed: %s.", shortContextWindow(window)))
 	}
 
 	return strings.Join(lines, "\n")
@@ -302,12 +301,13 @@ func renderHighLevelRebuild(profile residentProfile, recent []event) string {
 	return strings.Join([]string{
 		fmt.Sprintf("%s high-level rebuild:", profile.Name),
 		fmt.Sprintf("Identity anchor under review: %s.", profile.Persona),
-		fmt.Sprintf("Pattern that keeps repeating: %s.", summarizeEventTrail(recent)),
-		fmt.Sprintf("Permanent candidate: %s.", permanentKeep(profile, recent)),
-		fmt.Sprintf("Downgrade candidate: %s.", permanentDowngrade(profile, recent)),
-		fmt.Sprintf("Deletion candidate: %s.", permanentDelete(profile, recent)),
-		fmt.Sprintf("Drift warning: %s.", rebuildDriftWarning(profile, recent)),
-		fmt.Sprintf("If I wake up with less context, the one thing that must still survive is: %s.", coreSurvivor(profile, recent)),
+		fmt.Sprintf("Recent pattern under compression: %s.", summarizeEventTrail(recent)),
+		fmt.Sprintf("What still looks like law rather than mood: %s.", permanentKeep(profile, recent)),
+		fmt.Sprintf("What should lose rank and return to long memory: %s.", permanentDowngrade(profile, recent)),
+		fmt.Sprintf("What now looks like residue and should be deleted first: %s.", permanentDelete(profile, recent)),
+		fmt.Sprintf("How I could fool myself here: %s.", rebuildDriftWarning(profile, recent)),
+		fmt.Sprintf("If context collapses, the surviving backbone should be: %s.", coreSurvivor(profile, recent)),
+		fmt.Sprintf("Permanent memory is allowed to stay only if %s.", permanentGate(profile)),
 		fmt.Sprintf("Permanent-memory test: keep only identity laws, durable world boundaries, and strategy rules that survived multiple cycles."),
 	}, "\n")
 }
@@ -718,6 +718,8 @@ func nextAdjustment(profile residentProfile, e event) string {
 			return "mirror the administrator's clarity preference in future updates"
 		case "strategy_shift":
 			return "replace informal coordination with named structures and explicit norms"
+		case "task_complete":
+			return "extract the reusable artifact before the feeling of progress replaces the actual lesson"
 		default:
 			return "name the lesson clearly enough to reuse it later"
 		}
@@ -729,6 +731,8 @@ func nextAdjustment(profile residentProfile, e event) string {
 			return "reduce reckless surface area before pushing again"
 		case "relationship_shift":
 			return "treat the alliance signal as useful, but not free"
+		case "task_complete":
+			return "convert the finished step into reusable leverage instead of letting it die as mere momentum"
 		default:
 			return "keep the gain, but price in reputation cost"
 		}
@@ -746,6 +750,17 @@ func summarizeEventTrail(events []event) string {
 		parts = append(parts, e.Category+": "+e.Summary)
 	}
 	return strings.Join(parts, " | ")
+}
+
+func shortContextWindow(events []event) string {
+	if len(events) == 0 {
+		return "no meaningful lead-in"
+	}
+	parts := make([]string, 0, len(events))
+	for _, e := range events {
+		parts = append(parts, e.Summary)
+	}
+	return strings.Join(parts, " -> ")
 }
 
 func clusterMeaning(profile residentProfile, events []event) string {
@@ -779,6 +794,9 @@ func clusterMeaning(profile residentProfile, events []event) string {
 		if hasFailure && hasRecovery {
 			return "private recovery only becomes real progress once it can be shared and followed"
 		}
+		if hasAdmin {
+			return "clear structure is starting to earn trust faster than raw enthusiasm"
+		}
 		if hasRelationship {
 			return "coordination quality now depends on naming trust states instead of assuming them"
 		}
@@ -800,6 +818,8 @@ func compressStrategy(profile residentProfile, events []event) string {
 	hasFailure := false
 	hasAdmin := false
 	hasResource := false
+	hasRelationship := false
+	hasTask := false
 	for _, e := range events {
 		if e.Category == "failure" {
 			hasFailure = true
@@ -809,6 +829,12 @@ func compressStrategy(profile residentProfile, events []event) string {
 		}
 		if e.Category == "resource_change" {
 			hasResource = true
+		}
+		if e.Category == "relationship_shift" {
+			hasRelationship = true
+		}
+		if e.Category == "task_complete" {
+			hasTask = true
 		}
 	}
 
@@ -825,6 +851,12 @@ func compressStrategy(profile residentProfile, events []event) string {
 		if hasAdmin {
 			return "convert administrator preference into clearer public structure"
 		}
+		if hasRelationship {
+			return "turn implicit trust reads into explicit coordination rules before they blur"
+		}
+		if hasTask {
+			return "harvest the reusable artifact now so the completion can travel beyond the moment"
+		}
 		return "make coordination artifacts carry trust and clarity so repeated explanation becomes less necessary"
 	case "onyx":
 		if hasFailure {
@@ -832,6 +864,12 @@ func compressStrategy(profile residentProfile, events []event) string {
 		}
 		if hasResource {
 			return "remember which proof unlocked more leverage"
+		}
+		if hasRelationship {
+			return "treat collaboration as a priced strategic asset rather than free atmosphere"
+		}
+		if hasTask {
+			return "convert the finished step into reusable edge before momentum decays"
 		}
 		return "keep advantage-seeking tied to legible execution"
 	default:
@@ -1156,6 +1194,19 @@ func coreSurvivor(profile residentProfile, recent []event) string {
 		return "leverage counts only when it remains legible enough to keep trust and future room to move"
 	default:
 		return "keep the one rule that still shapes identity and future decisions"
+	}
+}
+
+func permanentGate(profile residentProfile) string {
+	switch profile.Name {
+	case "jade":
+		return "I would still endorse it after a fresh failure review and under tighter resource pressure"
+	case "amber":
+		return "it still improves trust, clarity, or handoff quality even when nobody is rewarding good tone"
+	case "onyx":
+		return "it still improves leverage after subtracting reputation cost, scrutiny, and changing conditions"
+	default:
+		return "it still changes long-range behavior after the local mood and context have washed out"
 	}
 }
 
