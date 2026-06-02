@@ -246,20 +246,20 @@ func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) 
 func renderShortReflection(profile residentProfile, window []event, trigger event, state schedulerState) string {
 	lines := []string{
 		fmt.Sprintf("%s short reflection:", profile.Name),
-		fmt.Sprintf("Trigger: %s.", trigger.Summary),
-		fmt.Sprintf("I was operating as if %s.", previousAssumption(profile, trigger)),
-		fmt.Sprintf("I should now operate as if %s.", updatedJudgment(profile, trigger)),
-		fmt.Sprintf("Why this belongs in memory: %s.", interpretEvent(profile, trigger)),
-		fmt.Sprintf("Write this into %s.", inferUpdateArea(trigger)),
-		fmt.Sprintf("Next-round adjustment: %s.", nextAdjustment(profile, trigger)),
+		fmt.Sprintf("What just happened: %s.", trigger.Summary),
+		fmt.Sprintf("The old read I should stop trusting: %s.", previousAssumption(profile, trigger)),
+		fmt.Sprintf("The read I should carry forward instead: %s.", updatedJudgment(profile, trigger)),
+		fmt.Sprintf("Why I do not want this to blur away: %s.", interpretEvent(profile, trigger)),
+		fmt.Sprintf("Where this belongs in memory: %s.", inferUpdateArea(trigger)),
+		fmt.Sprintf("Immediate behavior change: %s.", nextAdjustment(profile, trigger)),
 	}
 
 	if trigger.Category == "failure" || state.FailureStreak >= 2 {
-		lines = append(lines, "Risk note: repeated failure means the plan was wider than the environment would tolerate.")
+		lines = append(lines, "What still stings: repeated failure means the plan was wider than the environment would tolerate.")
 	}
 
 	if len(window) > 1 {
-		lines = append(lines, fmt.Sprintf("How this formed: %s.", shortContextWindow(window)))
+		lines = append(lines, fmt.Sprintf("Lead-in to this moment: %s.", shortContextWindow(window)))
 	}
 
 	return strings.Join(lines, "\n")
@@ -272,43 +272,43 @@ func renderMicroDigest(profile residentProfile, important []event) string {
 
 	return strings.Join([]string{
 		fmt.Sprintf("%s micro digest:", profile.Name),
-		fmt.Sprintf("Signal cluster: %s.", summarizeEventTrail(important)),
-		fmt.Sprintf("Belief revision: %s.", beliefRevision(profile, important)),
-		fmt.Sprintf("What this cluster now seems to mean: %s.", clusterMeaning(profile, important)),
-		fmt.Sprintf("Carry forward rule: %s.", retainRule(profile, important)),
-		fmt.Sprintf("Next-cycle stance: %s.", compressStrategy(profile, important)),
-		fmt.Sprintf("Watch for distortion: %s.", openCaution(profile, important)),
-		fmt.Sprintf("Decay test: delete this long memory once it stops changing decisions after %s.", profile.LongTTL),
+		fmt.Sprintf("What kept showing up: %s.", summarizeEventTrail(important)),
+		fmt.Sprintf("Belief that actually moved: %s.", beliefRevision(profile, important)),
+		fmt.Sprintf("What this probably says about the world right now: %s.", clusterMeaning(profile, important)),
+		fmt.Sprintf("Rule I do not want to lose: %s.", retainRule(profile, important)),
+		fmt.Sprintf("Default stance for the next few rounds: %s.", compressStrategy(profile, important)),
+		fmt.Sprintf("How this memory could mislead me later: %s.", openCaution(profile, important)),
+		fmt.Sprintf("When to let this decay: once it stops changing decisions for about %s.", profile.LongTTL),
 	}, "\n")
 }
 
 func renderDailyDigest(profile residentProfile, dayEvents []event) string {
 	return strings.Join([]string{
 		fmt.Sprintf("%s daily digest:", profile.Name),
-		fmt.Sprintf("Day arc: %s.", summarizeDay(dayEvents)),
-		fmt.Sprintf("What I changed my mind about: %s.", dayBeliefRevision(profile, dayEvents)),
-		fmt.Sprintf("What now deserves a stable slot in tomorrow's context: %s.", memoryForTomorrow(profile, dayEvents)),
-		fmt.Sprintf("What genuinely improved: %s.", improvedToday(profile, dayEvents)),
-		fmt.Sprintf("What should be allowed to fade tonight: %s.", letFadeTonight(profile, dayEvents)),
-		fmt.Sprintf("What still feels unresolved: %s.", unresolvedToday(profile, dayEvents)),
-		fmt.Sprintf("Tomorrow first move: %s.", tomorrowFirstMove(profile, dayEvents)),
-		fmt.Sprintf("Uncertainty note: %s.", uncertaintyNote(profile, dayEvents)),
-		fmt.Sprintf("Morning review question: %s.", morningReviewQuestion(profile, dayEvents)),
+		fmt.Sprintf("The shape of the day: %s.", summarizeDay(dayEvents)),
+		fmt.Sprintf("Belief that moved today: %s.", dayBeliefRevision(profile, dayEvents)),
+		fmt.Sprintf("What deserves a stable slot in tomorrow's context: %s.", memoryForTomorrow(profile, dayEvents)),
+		fmt.Sprintf("What counted as real progress: %s.", improvedToday(profile, dayEvents)),
+		fmt.Sprintf("What can disappear tonight without hurting me: %s.", letFadeTonight(profile, dayEvents)),
+		fmt.Sprintf("What still has a hook in me: %s.", unresolvedToday(profile, dayEvents)),
+		fmt.Sprintf("First move tomorrow: %s.", tomorrowFirstMove(profile, dayEvents)),
+		fmt.Sprintf("What I still do not know: %s.", uncertaintyNote(profile, dayEvents)),
+		fmt.Sprintf("Question for the morning version of me: %s.", morningReviewQuestion(profile, dayEvents)),
 	}, "\n")
 }
 
 func renderHighLevelRebuild(profile residentProfile, recent []event) string {
 	return strings.Join([]string{
 		fmt.Sprintf("%s high-level rebuild:", profile.Name),
-		fmt.Sprintf("Identity anchor under review: %s.", profile.Persona),
-		fmt.Sprintf("Recent pattern under compression: %s.", summarizeEventTrail(recent)),
-		fmt.Sprintf("What still looks like law rather than mood: %s.", permanentKeep(profile, recent)),
-		fmt.Sprintf("What should lose rank and return to long memory: %s.", permanentDowngrade(profile, recent)),
-		fmt.Sprintf("What now looks like residue and should be deleted first: %s.", permanentDelete(profile, recent)),
-		fmt.Sprintf("How I could fool myself here: %s.", rebuildDriftWarning(profile, recent)),
-		fmt.Sprintf("If context collapses, the surviving backbone should be: %s.", coreSurvivor(profile, recent)),
-		fmt.Sprintf("Permanent memory is allowed to stay only if %s.", permanentGate(profile)),
-		fmt.Sprintf("Permanent-memory test: keep only identity laws, durable world boundaries, and strategy rules that survived multiple cycles."),
+		fmt.Sprintf("Identity anchor I am testing against: %s.", profile.Persona),
+		fmt.Sprintf("Recent pattern I am trying to compress: %s.", summarizeEventTrail(recent)),
+		fmt.Sprintf("What still feels like law rather than mood: %s.", permanentKeep(profile, recent)),
+		fmt.Sprintf("What should step down into ordinary long memory: %s.", permanentDowngrade(profile, recent)),
+		fmt.Sprintf("What already smells like residue: %s.", permanentDelete(profile, recent)),
+		fmt.Sprintf("How I could lie to myself if I am careless: %s.", rebuildDriftWarning(profile, recent)),
+		fmt.Sprintf("If almost everything else vanished, this should still remain: %s.", coreSurvivor(profile, recent)),
+		fmt.Sprintf("A permanent memory only deserves the rank if %s.", permanentGate(profile)),
+		fmt.Sprintf("Final test: only keep identity laws, durable world boundaries, and strategy rules that survived multiple cycles."),
 	}, "\n")
 }
 
@@ -768,6 +768,8 @@ func clusterMeaning(profile residentProfile, events []event) string {
 	hasRecovery := false
 	hasAdmin := false
 	hasRelationship := false
+	hasResource := false
+	hasTask := false
 	for _, e := range events {
 		switch e.Category {
 		case "failure":
@@ -778,6 +780,10 @@ func clusterMeaning(profile residentProfile, events []event) string {
 			hasAdmin = true
 		case "relationship_shift":
 			hasRelationship = true
+		case "resource_change":
+			hasResource = true
+		case "task_complete":
+			hasTask = true
 		}
 	}
 
@@ -788,6 +794,12 @@ func clusterMeaning(profile residentProfile, events []event) string {
 		}
 		if hasAdmin {
 			return "clean structure is not optional polish but part of reliable execution"
+		}
+		if hasResource {
+			return "good evidence is opening doors that brute forcing would not"
+		}
+		if hasTask {
+			return "a finished step is only worth keeping if it sharpens the next clean move"
 		}
 		return "evidence is slowly replacing improvisation as the default operating basis"
 	case "amber":
@@ -800,6 +812,12 @@ func clusterMeaning(profile residentProfile, events []event) string {
 		if hasRelationship {
 			return "coordination quality now depends on naming trust states instead of assuming them"
 		}
+		if hasResource {
+			return "shared value becomes more believable once it is packaged clearly enough for others to act on"
+		}
+		if hasTask {
+			return "completed work becomes socially real only after it turns into something reusable"
+		}
 		return "clarity is becoming infrastructure rather than presentation"
 	case "onyx":
 		if hasFailure && hasRecovery {
@@ -807,6 +825,12 @@ func clusterMeaning(profile residentProfile, events []event) string {
 		}
 		if hasAdmin {
 			return "legibility is part of leverage because invisible strength earns less room to move"
+		}
+		if hasResource {
+			return "the environment yields more when the proof is stronger than the pressure"
+		}
+		if hasTask {
+			return "momentum only compounds if the finished move can be redeployed later"
 		}
 		return "advantage is compounding only when it remains governable"
 	default:
@@ -848,8 +872,14 @@ func compressStrategy(profile residentProfile, events []event) string {
 		}
 		return "keep investing in cleaner baselines than faster improvisation"
 	case "amber":
+		if hasFailure {
+			return "turn the fix into a shareable path so the same confusion does not need to be paid for twice"
+		}
 		if hasAdmin {
 			return "convert administrator preference into clearer public structure"
+		}
+		if hasResource {
+			return "preserve the explanation that made shared value legible enough to unlock more room"
 		}
 		if hasRelationship {
 			return "turn implicit trust reads into explicit coordination rules before they blur"
@@ -861,6 +891,9 @@ func compressStrategy(profile residentProfile, events []event) string {
 	case "onyx":
 		if hasFailure {
 			return "separate useful aggression from sloppy overreach"
+		}
+		if hasAdmin {
+			return "package strength in a way that keeps room to maneuver under scrutiny"
 		}
 		if hasResource {
 			return "remember which proof unlocked more leverage"
