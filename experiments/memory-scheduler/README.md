@@ -13,6 +13,10 @@
   - 本地事件流模拟器
   - 内置 `baseline|busy-day|quiet-day` 三种场景
   - 输出每个事件对应的记忆调度决策
+  - 为 `short_reflection / micro_digest / daily_digest / high_level_rebuild` 生成文本草稿
+  - 显式区分 `instant / short / long / permanent` 四层记忆
+  - 为不同层设置衰减时间
+  - 在记忆临近消散时生成保留提醒
   - 支持自然日边界补 daily digest
   - 支持同类事件冷却与 short reflection 轮次间隔
 
@@ -30,6 +34,12 @@ go run ./experiments/memory-scheduler
 go run ./experiments/memory-scheduler --scenario busy-day
 ```
 
+指定居民：
+
+```bash
+go run ./experiments/memory-scheduler --resident onyx
+```
+
 查看完整决策流：
 
 ```bash
@@ -44,6 +54,9 @@ go run ./experiments/memory-scheduler --render
 - `daily_digest_count`
 - `high_level_rebuild_count`
 - `categories_seen`
+- `generated_memory_counts`
+- `generated_layer_counts`
+- `retention_alert_count`
 
 ## 观察重点
 
@@ -52,3 +65,5 @@ go run ./experiments/memory-scheduler --render
 - 连续失败是否会触发 short reflection
 - 重要事件累计后是否会触发 `micro digest`
 - 同一天内是否避免重复 daily digest
+- 生成的文本是否真的像“记忆”，而不只是标签堆叠
+- 临近过期的记忆是否会被提醒复核
