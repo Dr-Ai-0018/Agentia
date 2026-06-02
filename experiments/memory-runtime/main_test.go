@@ -100,3 +100,21 @@ func TestDecodeActionDecisionRejectsInvalidEnum(t *testing.T) {
 		t.Fatalf("expected invalid enum error, got %v", err)
 	}
 }
+
+func TestDecodeActionDecisionRejectsInvalidDuration(t *testing.T) {
+	raw := `{
+		"action":"update",
+		"reason_codes":["x"],
+		"needs_review":false,
+		"review_after":null,
+		"expires_after":"never"
+	}`
+
+	_, err := decodeActionDecision(raw)
+	if err == nil {
+		t.Fatal("expected invalid duration error")
+	}
+	if !strings.Contains(err.Error(), "expires_after must be a valid Go duration or null") {
+		t.Fatalf("expected invalid duration error, got %v", err)
+	}
+}

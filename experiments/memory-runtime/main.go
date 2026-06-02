@@ -657,6 +657,11 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, recordDecision)
+	if conflictDecisionPtr != nil && conflictDecisionPtr.MergeSuggested {
+		if targetID := extractMergeTargetID(conflictDecisionPtr.Resolution); targetID != "" {
+			recordState.ID = targetID
+		}
+	}
 
 	record := generatedMemory{
 		Resident:       profile.Name,
@@ -888,7 +893,22 @@ func validateActionDecision(decision memoryActionDecision) []string {
 	if len(decision.ReasonCodes) == 0 {
 		issues = append(issues, "reason_codes is empty")
 	}
+	if issues = append(issues, validateOptionalDurationString("review_after", decision.ReviewAfter)...); len(issues) > 0 {
+		return issues
+	}
+	issues = append(issues, validateOptionalDurationString("expires_after", decision.ExpiresAfter)...)
 	return issues
+}
+
+func validateOptionalDurationString(field, value string) []string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	if _, err := time.ParseDuration(trimmed); err != nil {
+		return []string{field + " must be a valid Go duration or null"}
+	}
+	return nil
 }
 
 func containsAll(s string, needles []string) bool {
@@ -1848,6 +1868,7 @@ func requestConflictDecision(client *http.Client, baseURL, apiKey, model string,
 	b.WriteString("- mark merge_suggested=true if the candidate should be merged into an existing memory rather than stored as a fresh one\n")
 	b.WriteString("- conflict_kinds should contain machine-readable tags like duplicate_scope, contradictory_rule, weaker_restatement\n")
 	b.WriteString("- resolution must say keep_new, merge_existing, or reject_new with a short reason\n")
+	b.WriteString("- if merge_existing is chosen and a target record clearly fits, include it as merge_existing id=<record_id>\n")
 
 	payload := buildConflictDecisionPayload(model, profile.PromptCacheKey+"-"+layer+"-conflict-v1", b.String())
 	result, err := postStream(client, baseURL, apiKey, payload, false)
@@ -2092,6 +2113,7 @@ func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary str
 				existing.SourceRunID = sourceRunID
 				return memStore.Upsert(existing)
 			}
+			return errors.New("merge target not found in store: " + targetID)
 		}
 	}
 
