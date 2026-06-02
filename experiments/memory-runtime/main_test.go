@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"ai-arena/internal/memory"
 )
 
 func TestDecodeDraftRejectsDuplicateKeys(t *testing.T) {
@@ -116,5 +118,24 @@ func TestDecodeActionDecisionRejectsInvalidDuration(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "expires_after must be a valid Go duration or null") {
 		t.Fatalf("expected invalid duration error, got %v", err)
+	}
+}
+
+func TestShouldSkipByPolicy(t *testing.T) {
+	if !shouldSkipByPolicy(memoryDecision("retain", "instant")) {
+		t.Fatal("expected retain instant to skip new memory")
+	}
+	if !shouldSkipByPolicy(memoryDecision("update", "short")) {
+		t.Fatal("expected update short to skip new memory")
+	}
+	if shouldSkipByPolicy(memoryDecision("promote", "permanent")) {
+		t.Fatal("did not expect permanent promote to skip new memory")
+	}
+}
+
+func memoryDecision(action, layer string) memory.Decision {
+	return memory.Decision{
+		Action:      memory.Action(action),
+		TargetLayer: memory.Layer(layer),
 	}
 }

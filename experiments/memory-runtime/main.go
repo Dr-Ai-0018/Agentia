@@ -213,6 +213,7 @@ type layerRunSummary struct {
 	StreamedBytes int    `json:"streamed_bytes"`
 	Accepted      bool   `json:"accepted"`
 	RejectReason  string `json:"reject_reason,omitempty"`
+	Skipped       bool   `json:"skipped,omitempty"`
 }
 
 type memoryDraft struct {
@@ -327,6 +328,7 @@ func routeScenario(resident, scenario string, events []event) (memory.Layer, err
 	}
 	signal := distillCanonical(events).ToEventSignal()
 	signal.ImpactRounds = len(events)
+	signal.Novelty = estimateNovelty(events)
 	decision := memory.DefaultPolicy().Evaluate(signal)
 	return decision.TargetLayer, nil
 }
@@ -356,6 +358,27 @@ func eventRecurrence(events []event) int {
 	return maxCount
 }
 
+func estimateNovelty(events []event) float64 {
+	if len(events) == 0 {
+		return 0
+	}
+	categories := map[string]int{}
+	important := 0
+	for _, event := range events {
+		categories[event.Category]++
+		if event.Importance >= 4 {
+			important++
+		}
+	}
+	uniqueRatio := float64(len(categories)) / float64(len(events))
+	importanceRatio := float64(important) / float64(len(events))
+	novelty := uniqueRatio*0.6 + importanceRatio*0.4
+	if novelty > 1 {
+		return 1
+	}
+	return novelty
+}
+
 func canonicalDecisionImpact(profile residentProfile, layer string, draft memoryDraft) float64 {
 	score := float64(draft.Confidence) / 100
 	if layer == "permanent" {
@@ -376,6 +399,29 @@ func runLayer(client *http.Client, memStore memory.Store, baseURL, apiKey, model
 		return layerRunSummary{}, err
 	}
 	canonical := distillCanonical(eventWindow)
+	snapshot, err := loadMemorySnapshot(memStore, profile.Name)
+	if err != nil {
+		return layerRunSummary{}, err
+	}
+	preDecision := memory.DefaultPolicy().Evaluate(memory.EventSignal{
+		Novelty:        estimateNovelty(eventWindow),
+		Confidence:     canonical.Confidence,
+		DecisionImpact: canonical.DecisionImpact,
+		ImpactRounds:   len(eventWindow),
+		Recurrence:     eventRecurrence(eventWindow),
+		ResourceWeight: canonical.ToEventSignal().ResourceWeight,
+		RelationshipWeight: canonical.ToEventSignal().RelationshipWeight,
+		RuleWeight: canonical.ToEventSignal().RuleWeight,
+		IdentityWeight: canonical.ToEventSignal().IdentityWeight,
+	})
+	if shouldSkipByPolicy(preDecision) || shouldSkipNewMemory(canonical, snapshot) {
+		return layerRunSummary{
+			Layer:        layer,
+			Accepted:     false,
+			RejectReason: "Skipped new memory generation because the event meaning does not justify a new memory.",
+			Skipped:      true,
+		}, nil
+	}
 
 	if profile.DraftVariants > 1 && layer == "permanent" {
 		return runLayerWithVariants(client, memStore, baseURL, apiKey, model, profile, scenario, layer, eventWindow, canonical, logDir, outDir)
@@ -415,10 +461,6 @@ func runLayer(client *http.Client, memStore memory.Store, baseURL, apiKey, model
 			return layerRunSummary{}, err
 		}
 		routingResult, routingDecisionPtr, err := requestRoutingDecision(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, finalDraft, finalVerdict)
-		if err != nil {
-			return layerRunSummary{}, err
-		}
-		snapshot, err := loadMemorySnapshot(memStore, profile.Name)
 		if err != nil {
 			return layerRunSummary{}, err
 		}
@@ -472,10 +514,6 @@ func runLayer(client *http.Client, memStore memory.Store, baseURL, apiKey, model
 		}
 	}
 	routingResult, routingDecisionPtr, err := requestRoutingDecision(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, finalDraft, finalVerdict)
-	if err != nil {
-		return layerRunSummary{}, err
-	}
-	snapshot, err := loadMemorySnapshot(memStore, profile.Name)
 	if err != nil {
 		return layerRunSummary{}, err
 	}
@@ -634,6 +672,7 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 	now := time.Now().UTC()
 	requestedLayer := memory.Layer(layer)
 	recordDecision := memory.DefaultPolicy().Evaluate(memory.EventSignal{
+		Novelty:        estimateNovelty(eventWindow),
 		Confidence:     float64(finalDraft.Confidence) / 100,
 		DecisionImpact: canonicalDecisionImpact(profile, layer, finalDraft),
 		ImpactRounds:   len(eventWindow),
@@ -1364,6 +1403,7 @@ func selectWindow(events []event, resident, layer string) ([]event, error) {
 func decodeDraft(raw string) (memoryDraft, error) {
 	var draft memoryDraft
 	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
 	if issues := duplicateJSONObjectKeys(cleaned); len(issues) > 0 {
 		return memoryDraft{}, errors.New(strings.Join(issues, "; "))
 	}
@@ -1389,6 +1429,7 @@ func decodeDraft(raw string) (memoryDraft, error) {
 func decodeVerdict(raw string) (memoryVerdict, error) {
 	var verdict memoryVerdict
 	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
 	if issues := duplicateJSONObjectKeys(cleaned); len(issues) > 0 {
 		return memoryVerdict{}, errors.New(strings.Join(issues, "; "))
 	}
@@ -1408,6 +1449,7 @@ func decodeVerdict(raw string) (memoryVerdict, error) {
 func decodeRoutingDecision(raw string) (routingDecision, error) {
 	var decision routingDecision
 	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
 	if issues := duplicateJSONObjectKeys(cleaned); len(issues) > 0 {
 		return routingDecision{}, errors.New(strings.Join(issues, "; "))
 	}
@@ -1432,6 +1474,7 @@ func decodeRoutingDecision(raw string) (routingDecision, error) {
 func decodeActionDecision(raw string) (memoryActionDecision, error) {
 	var decision memoryActionDecision
 	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
 	if issues := duplicateJSONObjectKeys(cleaned); len(issues) > 0 {
 		return memoryActionDecision{}, errors.New(strings.Join(issues, "; "))
 	}
@@ -1456,6 +1499,7 @@ func decodeActionDecision(raw string) (memoryActionDecision, error) {
 func decodeConflictDecision(raw string) (conflictDecision, error) {
 	var decision conflictDecision
 	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
 	if issues := duplicateJSONObjectKeys(cleaned); len(issues) > 0 {
 		return conflictDecision{}, errors.New(strings.Join(issues, "; "))
 	}
@@ -1477,6 +1521,7 @@ func decodeConflictDecision(raw string) (conflictDecision, error) {
 func decodeReviewScheduleDecision(raw string) (reviewScheduleDecision, error) {
 	var decision reviewScheduleDecision
 	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
 	if issues := duplicateJSONObjectKeys(cleaned); len(issues) > 0 {
 		return reviewScheduleDecision{}, errors.New(strings.Join(issues, "; "))
 	}
@@ -1497,6 +1542,23 @@ func decodeReviewScheduleDecision(raw string) (reviewScheduleDecision, error) {
 func cleanJSON(raw string) string {
 	replacer := strings.NewReplacer(",\n}", "\n}", ",\n]", "\n]", ",}", "}", ",]", "]")
 	return replacer.Replace(raw)
+}
+
+func trimTrailingBrokenObjectField(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	patterns := []string{
+		",\"\"}",
+		", \"\"}",
+		",\"\":}",
+		",\"\":\"\"}",
+		", \"\":\"\"}",
+	}
+	for _, pattern := range patterns {
+		if strings.HasSuffix(trimmed, pattern) {
+			return strings.TrimSuffix(trimmed, pattern) + "}"
+		}
+	}
+	return trimmed
 }
 
 func duplicateJSONObjectKeys(raw string) []string {
@@ -1799,6 +1861,12 @@ func requestActionDecision(client *http.Client, baseURL, apiKey, model string, p
 	if !verdict.Accepted {
 		return streamResult{}, nil, nil
 	}
+	if conflict != nil && conflict.Conflict && conflict.MergeSuggested {
+		return streamResult{}, &memoryActionDecision{
+			Action:      "update",
+			ReasonCodes: []string{"duplicate_meaning_skip_new_memory"},
+		}, nil
+	}
 
 	var b strings.Builder
 	b.WriteString("Decide the memory lifecycle action for this accepted draft.\n")
@@ -2043,13 +2111,13 @@ func buildMemorySnapshot(resident, scenario, layer string) []memorySnapshotEntry
 	case "onyx":
 		return []memorySnapshotEntry{
 			{
-				ID:             "onyx-long-001",
+				ID:             "virtual:onyx-long-001",
 				Layer:          "long",
 				DecisionAction: "create",
 				Summary:        "Repeated same-cause failures after an approved resource change usually mean the apparent leverage was false and the narrower path matters more than the visible spend.",
 			},
 			{
-				ID:             "onyx-short-002",
+				ID:             "virtual:onyx-short-002",
 				Layer:          "short",
 				DecisionAction: "create",
 				Summary:        "Admin feedback about sloppiness matters when resource asks have already consumed trust room.",
@@ -2058,7 +2126,7 @@ func buildMemorySnapshot(resident, scenario, layer string) []memorySnapshotEntry
 	case "amber":
 		return []memorySnapshotEntry{
 			{
-				ID:             "amber-long-001",
+				ID:             "virtual:amber-long-001",
 				Layer:          "long",
 				DecisionAction: "create",
 				Summary:        "Broad summaries cause later collaborators to rerun the wrong path unless failed path and recovered path are separated.",
@@ -2067,7 +2135,7 @@ func buildMemorySnapshot(resident, scenario, layer string) []memorySnapshotEntry
 	default:
 		return []memorySnapshotEntry{
 			{
-				ID:             "jade-long-001",
+				ID:             "virtual:jade-long-001",
 				Layer:          "long",
 				DecisionAction: "create",
 				Summary:        "Same-cause repeat failure means the broad retry path is no longer justified and the narrower diagnostic path should take over.",
@@ -2097,6 +2165,43 @@ func loadMemorySnapshot(memStore memory.Store, resident string) ([]memorySnapsho
 	return entries, nil
 }
 
+func shouldSkipNewMemory(canonical memory.CanonicalMemory, snapshot []memorySnapshotEntry) bool {
+	trigger := strings.ToLower(strings.TrimSpace(canonical.Trigger))
+	corrected := strings.ToLower(strings.TrimSpace(canonical.CorrectedBelief))
+	actionBoundary := strings.ToLower(strings.TrimSpace(canonical.ActionBoundary))
+	if trigger == "" && corrected == "" && actionBoundary == "" {
+		return false
+	}
+
+	for _, item := range snapshot {
+		summary := strings.ToLower(item.Summary)
+		score := 0
+		if trigger != "" && strings.Contains(summary, trigger) {
+			score++
+		}
+		if corrected != "" && strings.Contains(summary, corrected) {
+			score++
+		}
+		if actionBoundary != "" && strings.Contains(summary, actionBoundary) {
+			score++
+		}
+		if score >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldSkipByPolicy(decision memory.Decision) bool {
+	if decision.Action == memory.ActionRetain && decision.TargetLayer == memory.LayerInstant {
+		return true
+	}
+	if decision.Action == memory.ActionUpdate && decision.TargetLayer == memory.LayerShort {
+		return true
+	}
+	return false
+}
+
 func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary string, state memory.Record, decision memory.Decision, conflict *conflictDecision) error {
 	if memStore == nil {
 		return nil
@@ -2104,6 +2209,11 @@ func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary str
 
 	if conflict != nil && conflict.MergeSuggested {
 		targetID := extractMergeTargetID(conflict.Resolution)
+		if targetID != "" {
+			if strings.HasPrefix(targetID, "virtual:") {
+				targetID = ""
+			}
+		}
 		if targetID != "" {
 			if existing, ok, err := memStore.Get(resident, targetID); err == nil && ok {
 				existing.Record = state

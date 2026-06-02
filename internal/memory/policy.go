@@ -71,6 +71,8 @@ type Policy struct {
 	LongTTL           time.Duration
 	PermanentReview   time.Duration
 	DailySummaryAfter time.Duration
+	MeaningThreshold  float64
+	NoveltyThreshold  float64
 }
 
 func DefaultPolicy() Policy {
@@ -80,6 +82,8 @@ func DefaultPolicy() Policy {
 		LongTTL:           21 * 24 * time.Hour,
 		PermanentReview:   30 * 24 * time.Hour,
 		DailySummaryAfter: 24 * time.Hour,
+		MeaningThreshold:  0.68,
+		NoveltyThreshold:  0.55,
 	}
 }
 
@@ -136,6 +140,27 @@ func (p Policy) Evaluate(signal EventSignal) Decision {
 			TTL:         p.LongTTL,
 			ReviewAfter: 7 * 24 * time.Hour,
 			ReasonCodes: []string{"multi_round_decision_impact"},
+		}
+	}
+
+	if signal.DecisionImpact >= 0.45 || signal.ImpactRounds >= 2 || signal.ResourceWeight >= 0.6 || signal.RelationshipWeight >= 0.6 {
+		if signal.Recurrence >= 1 && signal.Novelty < 0.5 {
+			return Decision{
+				Action:      ActionUpdate,
+				TargetLayer: LayerShort,
+				TTL:         p.ShortTTL,
+				ReviewAfter: 24 * time.Hour,
+				ReasonCodes: []string{"repeat_signal_updates_existing_memory"},
+			}
+		}
+	}
+
+	if score < p.MeaningThreshold && signal.Novelty < p.NoveltyThreshold {
+		return Decision{
+			Action:      ActionRetain,
+			TargetLayer: LayerInstant,
+			TTL:         p.InstantTTL,
+			ReasonCodes: []string{"insufficient_meaning", "insufficient_novelty"},
 		}
 	}
 

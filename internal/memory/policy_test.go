@@ -78,3 +78,34 @@ func TestDailySummaryDue(t *testing.T) {
 		t.Fatal("did not expect daily summary to be due")
 	}
 }
+
+func TestEvaluateRetainsLowMeaningLowNoveltySignal(t *testing.T) {
+	policy := DefaultPolicy()
+	decision := policy.Evaluate(EventSignal{
+		Confidence:     0.7,
+		DecisionImpact: 0.2,
+		ImpactRounds:   1,
+		Recurrence:     1,
+		Novelty:        0.2,
+	})
+
+	if decision.Action != ActionRetain || decision.TargetLayer != LayerInstant {
+		t.Fatalf("expected retain instant, got %s %s", decision.Action, decision.TargetLayer)
+	}
+}
+
+func TestEvaluateUpdatesExistingShortMemoryForRepeatedLowNoveltySignal(t *testing.T) {
+	policy := DefaultPolicy()
+	decision := policy.Evaluate(EventSignal{
+		Confidence:     0.8,
+		DecisionImpact: 0.5,
+		ImpactRounds:   2,
+		Recurrence:     1,
+		ResourceWeight: 0.6,
+		Novelty:        0.3,
+	})
+
+	if decision.Action != ActionUpdate || decision.TargetLayer != LayerShort {
+		t.Fatalf("expected update short, got %s %s", decision.Action, decision.TargetLayer)
+	}
+}
