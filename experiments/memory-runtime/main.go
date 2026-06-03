@@ -204,6 +204,12 @@ type generatedMemory struct {
 	Instructions   string    `json:"instructions"`
 	UserPrompt     string    `json:"user_prompt"`
 	ObservedCache  string    `json:"observed_prompt_cache_key"`
+	DraftCached    int       `json:"draft_cached_tokens,omitempty"`
+	VerdictCached  int       `json:"verdict_cached_tokens,omitempty"`
+	RoutingCached  int       `json:"routing_cached_tokens,omitempty"`
+	ConflictCached int       `json:"conflict_cached_tokens,omitempty"`
+	ActionCached   int       `json:"action_cached_tokens,omitempty"`
+	ReviewCached   int       `json:"review_cached_tokens,omitempty"`
 	RecordState    any       `json:"record_state,omitempty"`
 }
 
@@ -774,6 +780,12 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		Instructions:   instructions,
 		UserPrompt:     userPrompt,
 		ObservedCache:  finalDraftResult.ObservedPromptCacheKey,
+		DraftCached:    finalDraftResult.CachedTokens,
+		VerdictCached:  finalVerdictResult.CachedTokens,
+		RoutingCached:  routingResult.CachedTokens,
+		ConflictCached: conflictResult.CachedTokens,
+		ActionCached:   actionResult.CachedTokens,
+		ReviewCached:   reviewResult.CachedTokens,
 		RecordState:    recordState,
 	}
 	if finalVerdict.Accepted {
@@ -828,6 +840,12 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		"reject_reason":             finalVerdict.RejectReason,
 		"issues":                    finalVerdict.Issues,
 		"text":                      memoryText,
+		"draft_cached_tokens":       finalDraftResult.CachedTokens,
+		"verdict_cached_tokens":     finalVerdictResult.CachedTokens,
+		"routing_cached_tokens":     routingResult.CachedTokens,
+		"conflict_cached_tokens":    conflictResult.CachedTokens,
+		"action_cached_tokens":      actionResult.CachedTokens,
+		"review_cached_tokens":      reviewResult.CachedTokens,
 		"record_state":              recordState,
 	}
 	rawLog, _ := json.Marshal(logLine)
