@@ -13,9 +13,10 @@
   - 流式 SSE 解析
   - 完整历史手工回放
   - 固定 `prompt_cache_key`
+  - 生成独立 run 目录
   - 输出 `cached_tokens`、`instructions_hash`、`input_prefix_hash`
   - 支持单模型或多模型批量跑
-  - 自动落 `jsonl` 日志文件
+  - 自动落 `jsonl` 逐轮日志和 `summary.json`
 
 ## 运行方式
 
@@ -60,15 +61,28 @@ go run ./experiments/openai-cache --verbose
 go run ./experiments/openai-cache --models gpt-5.4,gpt-5.5,gpt-5.4-mini
 ```
 
-日志默认写到：
+输出默认写到：
 
 ```bash
-experiments/openai-cache/logs/
+experiments/openai-cache/output/
+```
+
+每次运行会生成一个独立 run 目录，例如：
+
+```bash
+experiments/openai-cache/output/gpt-5.4-mini-20260603T120000Z/
+```
+
+其中包含：
+
+```bash
+logs/turns.jsonl
+summary.json
 ```
 
 ## 输出字段
 
-每轮输出一行 JSON，包含：
+逐轮日志包含：
 
 - `turn`
 - `model`
@@ -85,6 +99,21 @@ experiments/openai-cache/logs/
 - `duration_ms`
 - `text`
 
+`summary.json` 包含：
+
+- `turns`
+- `cache_hit_turns`
+- `cache_miss_turns`
+- `total_input_tokens`
+- `total_cached_tokens`
+- `total_output_tokens`
+- `average_duration_ms`
+- `observed_prompt_cache_keys`
+- `instructions_hash_stable`
+- `input_prefix_hash_stable_turns`
+- `log_path`
+- `summary_path`
+
 ## 第一阶段判断标准
 
 重点关注：
@@ -93,3 +122,4 @@ experiments/openai-cache/logs/
 - `prompt_cache_key_observed` 是否稳定
 - `instructions_hash` 是否稳定
 - `input_prefix_hash` 是否按预期增长而不是异常漂移
+- `summary.json` 中 `cache_hit_turns` 是否足以支撑后续正式接入策略
