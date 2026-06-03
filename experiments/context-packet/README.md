@@ -13,7 +13,9 @@
   - Go 原生组包
   - 三个居民人格种子映射
   - 四层上下文拼接
+  - 支持单次渲染与全矩阵批量运行
   - 输出 `system_const_hash`、`stable_prefix_hash`、`full_packet_hash`
+  - 输出自动 findings 摘要
   - 支持 `baseline|world-shift|memory-shift|working-shift` 四种变体
 
 ## 运行方式
@@ -40,9 +42,21 @@ go run ./experiments/context-packet --variant working-shift
 go run ./experiments/context-packet --render
 ```
 
+如果要一次跑完整矩阵并写 summary：
+
+```bash
+go run ./experiments/context-packet --matrix
+```
+
+默认输出到：
+
+```bash
+experiments/context-packet/output/
+```
+
 ## 输出字段
 
-每次输出一行 JSON，包含：
+单次运行输出：
 
 - `variant`
 - `resident`
@@ -53,6 +67,14 @@ go run ./experiments/context-packet --render
 - `stable_prefix_bytes`
 - `full_packet_bytes`
 
+矩阵运行输出 `summary.json`，包含：
+
+- `results`
+- `findings`
+- `residents`
+- `variants`
+- `output_dir`
+
 ## 观察重点
 
 - `system_const_hash` 在同一居民下应保持稳定
@@ -60,3 +82,4 @@ go run ./experiments/context-packet --render
 - `world-shift` 应改变 `stable_prefix_hash` 与 `full_packet_hash`
 - `memory-shift` 应改变 `stable_prefix_hash` 与 `full_packet_hash`
 - 三个居民之间 `system_const_hash` 必然不同，因为人格种子和身份描述不同
+- `findings` 中这些布尔值应该全部为 `true`

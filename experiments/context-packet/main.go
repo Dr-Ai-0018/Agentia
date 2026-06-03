@@ -7,7 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 type packet struct {
@@ -28,13 +30,31 @@ type packetSummary struct {
 	FullPacketBytes   int    `json:"full_packet_bytes"`
 }
 
+type matrixSummary struct {
+	GeneratedAt string                       `json:"generated_at"`
+	Residents   []string                     `json:"residents"`
+	Variants    []string                     `json:"variants"`
+	Results     []packetSummary              `json:"results"`
+	Findings    map[string]map[string]bool   `json:"findings"`
+	OutputDir   string                       `json:"output_dir"`
+}
+
 func main() {
 	var (
 		resident = flag.String("resident", "jade", "Resident persona to build packet for: jade|amber|onyx")
 		variant  = flag.String("variant", "baseline", "Packet variant: baseline|world-shift|memory-shift|working-shift")
+		matrix   = flag.Bool("matrix", false, "Run all resident/variant combinations and write a summary file")
+		outDir   = flag.String("out-dir", "experiments/context-packet/output", "Directory to store matrix summaries")
 		render   = flag.Bool("render", false, "Print the assembled packet body after the JSON summary")
 	)
 	flag.Parse()
+
+	if *matrix {
+		if err := runMatrix(*outDir); err != nil {
+			exitf("%v", err)
+		}
+		return
+	}
 
 	p, err := buildPacket(strings.ToLower(strings.TrimSpace(*resident)), strings.ToLower(strings.TrimSpace(*variant)))
 	if err != nil {
@@ -60,6 +80,79 @@ func main() {
 		fmt.Print(renderFullPacket(p))
 		fmt.Println("----- packet end -----")
 	}
+}
+
+func runMatrix(outDir string) error {
+	residents := []string{"jade", "amber", "onyx"}
+	variants := []string{"baseline", "world-shift", "memory-shift", "working-shift"}
+	results := make([]packetSummary, 0, len(residents)*len(variants))
+
+	for _, resident := range residents {
+		for _, variant := range variants {
+			packet, err := buildPacket(resident, variant)
+			if err != nil {
+				return err
+			}
+			results = append(results, packetSummary{
+				Variant:           variant,
+				Resident:          resident,
+				SystemConstHash:   sha256Hex(packet.SystemConst),
+				StablePrefixHash:  sha256Hex(renderStablePrefix(packet)),
+				FullPacketHash:    sha256Hex(renderFullPacket(packet)),
+				SystemConstBytes:  len(packet.SystemConst),
+				StablePrefixBytes: len(renderStablePrefix(packet)),
+				FullPacketBytes:   len(renderFullPacket(packet)),
+			})
+		}
+	}
+
+	findings := deriveMatrixFindings(results)
+	runDir := filepath.Join(outDir, "matrix-"+time.Now().UTC().Format("20060102T150405Z"))
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return err
+	}
+	summary := matrixSummary{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Residents:   residents,
+		Variants:    variants,
+		Results:     results,
+		Findings:    findings,
+		OutputDir:   runDir,
+	}
+	raw, _ := json.MarshalIndent(summary, "", "  ")
+	summaryPath := filepath.Join(runDir, "summary.json")
+	if err := os.WriteFile(summaryPath, raw, 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("summary_file=%s\n", summaryPath)
+	fmt.Println(string(raw))
+	return nil
+}
+
+func deriveMatrixFindings(results []packetSummary) map[string]map[string]bool {
+	findings := make(map[string]map[string]bool)
+	byResident := make(map[string]map[string]packetSummary)
+	for _, result := range results {
+		if _, ok := byResident[result.Resident]; !ok {
+			byResident[result.Resident] = map[string]packetSummary{}
+		}
+		byResident[result.Resident][result.Variant] = result
+	}
+
+	for resident, variants := range byResident {
+		base := variants["baseline"]
+		findings[resident] = map[string]bool{
+			"baseline_present":         base.Resident != "",
+			"world_shift_changes_stable": variants["world-shift"].StablePrefixHash != "" && variants["world-shift"].StablePrefixHash != base.StablePrefixHash,
+			"memory_shift_changes_stable": variants["memory-shift"].StablePrefixHash != "" && variants["memory-shift"].StablePrefixHash != base.StablePrefixHash,
+			"working_shift_keeps_stable": variants["working-shift"].StablePrefixHash != "" && variants["working-shift"].StablePrefixHash == base.StablePrefixHash,
+			"working_shift_changes_full": variants["working-shift"].FullPacketHash != "" && variants["working-shift"].FullPacketHash != base.FullPacketHash,
+			"system_const_stable_across_variants": variants["world-shift"].SystemConstHash == base.SystemConstHash &&
+				variants["memory-shift"].SystemConstHash == base.SystemConstHash &&
+				variants["working-shift"].SystemConstHash == base.SystemConstHash,
+		}
+	}
+	return findings
 }
 
 func buildPacket(resident, variant string) (packet, error) {
