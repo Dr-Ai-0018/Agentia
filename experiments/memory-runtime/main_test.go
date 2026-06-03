@@ -122,6 +122,28 @@ func TestDecodeActionDecisionRejectsInvalidDuration(t *testing.T) {
 	}
 }
 
+func TestDecodeAdjudicationDecision(t *testing.T) {
+	raw := `{
+		"accepted": true,
+		"reject_reason": "",
+		"issues": [],
+		"target_layer": "short",
+		"action": "create",
+		"needs_review": true,
+		"review_after": "8h",
+		"expires_after": "24h",
+		"reason_codes": ["grounded_in_incident"]
+	}`
+
+	decision, err := decodeAdjudicationDecision(raw)
+	if err != nil {
+		t.Fatalf("decodeAdjudicationDecision returned error: %v", err)
+	}
+	if !decision.Accepted || decision.TargetLayer != "short" || decision.Action != "create" {
+		t.Fatalf("unexpected adjudication decision: %#v", decision)
+	}
+}
+
 func TestShouldSkipByPolicy(t *testing.T) {
 	if !shouldSkipByPolicy(memoryDecision("retain", "instant")) {
 		t.Fatal("expected retain instant to skip new memory")
@@ -131,6 +153,24 @@ func TestShouldSkipByPolicy(t *testing.T) {
 	}
 	if shouldSkipByPolicy(memoryDecision("promote", "permanent")) {
 		t.Fatal("did not expect permanent promote to skip new memory")
+	}
+}
+
+func TestShouldRunConflictCheck(t *testing.T) {
+	if shouldRunConflictCheck("short", nil) {
+		t.Fatal("expected no conflict check when snapshot is empty")
+	}
+	shortSnapshot := []memorySnapshotEntry{{ID: "a", Layer: "short"}}
+	if !shouldRunConflictCheck("short", shortSnapshot) {
+		t.Fatal("expected short conflict check with same-layer snapshot")
+	}
+	longSnapshot := []memorySnapshotEntry{{ID: "b", Layer: "long"}}
+	if !shouldRunConflictCheck("short", longSnapshot) {
+		t.Fatal("expected short conflict check with longer-lived snapshot")
+	}
+	instantSnapshot := []memorySnapshotEntry{{ID: "c", Layer: "instant"}}
+	if shouldRunConflictCheck("short", instantSnapshot) {
+		t.Fatal("did not expect short conflict check against instant-only snapshot")
 	}
 }
 

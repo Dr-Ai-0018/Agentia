@@ -644,26 +644,17 @@ func runLayerWithVariants(client *http.Client, memStore memory.Store, baseURL, a
 			continue
 		}
 
-		verdictInstructions := buildVerdictInstructions(profile, layer)
-		verdictPrompt := buildVerdictPrompt(layer, eventWindow, draft)
-		verdictPayload := requestPayload{
-			Model:          model,
-			Instructions:   verdictInstructions,
-			PromptCacheKey: fmt.Sprintf("%s-%s-judge-v%d", profile.PromptCacheKey, layer, i+1),
-			Input: []inputMessage{
-				{Role: "user", Content: verdictPrompt},
-			},
-			Stream: true,
-			Store:  false,
-		}
-
-		verdictResult, err := postStream(client, baseURL, apiKey, verdictPayload, false)
+		verdictResult, adjudicationDecisionPtr, err := requestAdjudicationDecision(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, draft)
 		if err != nil {
-			return layerRunSummary{}, fmt.Errorf("variant verdict request failed: %w", err)
+			return layerRunSummary{}, fmt.Errorf("variant adjudication request failed: %w", err)
 		}
-		verdict, err := decodeVerdict(verdictResult.OutputText)
-		if err != nil {
-			return layerRunSummary{}, fmt.Errorf("decode variant verdict: %w; raw=%s", err, verdictResult.OutputText)
+		verdict := memoryVerdict{}
+		if adjudicationDecisionPtr != nil {
+			verdict = memoryVerdict{
+				Accepted:     adjudicationDecisionPtr.Accepted,
+				RejectReason: adjudicationDecisionPtr.RejectReason,
+				Issues:       append([]string(nil), adjudicationDecisionPtr.Issues...),
+			}
 		}
 
 		finalDraft := draft
@@ -1194,27 +1185,17 @@ func rewriteRejectedDraft(client *http.Client, baseURL, apiKey, model string, pr
 		}, streamResult{}, nil
 	}
 
-	verdictInstructions := buildVerdictInstructions(profile, layer)
-	verdictPrompt := buildVerdictPrompt(layer, events, rewriteDraft)
-	verdictPayload := requestPayload{
-		Model:          model,
-		Instructions:   verdictInstructions,
-		PromptCacheKey: profile.PromptCacheKey + "-" + layer + "-judge-rewrite-v1",
-		Input: []inputMessage{
-			{Role: "user", Content: verdictPrompt},
-		},
-		Stream: true,
-		Store:  false,
-	}
-
-	finalVerdictResult, err := postStream(client, baseURL, apiKey, verdictPayload, false)
+	finalVerdictResult, adjudicationDecisionPtr, err := requestAdjudicationDecision(client, baseURL, apiKey, model, profile, scenario, layer, events, rewriteDraft)
 	if err != nil {
-		return memoryDraft{}, streamResult{}, memoryVerdict{}, streamResult{}, fmt.Errorf("rewrite verdict request failed: %w", err)
+		return memoryDraft{}, streamResult{}, memoryVerdict{}, streamResult{}, fmt.Errorf("rewrite adjudication request failed: %w", err)
 	}
-
-	finalVerdict, err := decodeVerdict(finalVerdictResult.OutputText)
-	if err != nil {
-		return memoryDraft{}, streamResult{}, memoryVerdict{}, streamResult{}, fmt.Errorf("decode rewrite verdict: %w; raw=%s", err, finalVerdictResult.OutputText)
+	finalVerdict := memoryVerdict{}
+	if adjudicationDecisionPtr != nil {
+		finalVerdict = memoryVerdict{
+			Accepted:     adjudicationDecisionPtr.Accepted,
+			RejectReason: adjudicationDecisionPtr.RejectReason,
+			Issues:       append([]string(nil), adjudicationDecisionPtr.Issues...),
+		}
 	}
 
 	return rewriteDraft, rewriteResult, finalVerdict, finalVerdictResult, nil
@@ -2134,6 +2115,9 @@ func requestConflictDecision(client *http.Client, baseURL, apiKey, model string,
 	if !verdict.Accepted {
 		return streamResult{}, nil, nil
 	}
+	if !shouldRunConflictCheck(layer, snapshot) {
+		return streamResult{}, nil, nil
+	}
 	var b strings.Builder
 	b.WriteString("Check whether this accepted draft conflicts with existing memory.\n")
 	b.WriteString("Resident: " + profile.Name + "\n")
@@ -2172,6 +2156,27 @@ func requestConflictDecision(client *http.Client, baseURL, apiKey, model string,
 		return result, nil, fmt.Errorf("conflict request returned no usable check_memory_conflicts function call; output_text=%q calls=%+v", result.OutputText, result.FunctionCalls)
 	}
 	return result, &decision, nil
+}
+
+func shouldRunConflictCheck(layer string, snapshot []memorySnapshotEntry) bool {
+	if len(snapshot) == 0 {
+		return false
+	}
+	for _, item := range snapshot {
+		if item.ID == "" {
+			continue
+		}
+		if item.Layer == layer {
+			return true
+		}
+		if layer == "short" && (item.Layer == "long" || item.Layer == "permanent") {
+			return true
+		}
+		if layer == "long" && item.Layer == "permanent" {
+			return true
+		}
+	}
+	return false
 }
 
 func requestReviewScheduleDecision(client *http.Client, baseURL, apiKey, model string, profile residentProfile, scenario, layer string, events []event, draft memoryDraft, verdict memoryVerdict, routed *routingDecision, action *memoryActionDecision) (streamResult, *reviewScheduleDecision, error) {
