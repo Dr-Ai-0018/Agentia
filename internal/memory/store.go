@@ -80,6 +80,13 @@ type SnapshotEntry struct {
 	Layer          Layer  `json:"layer"`
 	DecisionAction Action `json:"decision_action"`
 	Summary        string `json:"summary"`
+	ResidentText   string `json:"resident_text,omitempty"`
+	EventAnchor    string `json:"event_anchor,omitempty"`
+	OldReadToDrop  string `json:"old_read_to_drop,omitempty"`
+	NewReadToKeep  string `json:"new_read_to_keep,omitempty"`
+	CarryForwardRule string `json:"carry_forward_rule,omitempty"`
+	WhyItMatters   string `json:"why_it_matters,omitempty"`
+	ScopeBoundary  string `json:"scope_boundary,omitempty"`
 }
 
 type ResidentMemoryBundle struct {
@@ -204,10 +211,17 @@ func BuildSnapshot(records []AbstractMemory, limit int) []SnapshotEntry {
 			continue
 		}
 		entries = append(entries, SnapshotEntry{
-			ID:             record.ID,
-			Layer:          record.Layer,
-			DecisionAction: record.DecisionAction,
-			Summary:        record.EffectiveSummary(),
+			ID:               record.ID,
+			Layer:            record.Layer,
+			DecisionAction:   record.DecisionAction,
+			Summary:          record.EffectiveSummary(),
+			ResidentText:     record.ResidentText,
+			EventAnchor:      record.Semantic.EventAnchor,
+			OldReadToDrop:    record.Semantic.OldReadToDrop,
+			NewReadToKeep:    record.Semantic.NewReadToKeep,
+			CarryForwardRule: record.Semantic.CarryForwardRule,
+			WhyItMatters:     record.Semantic.WhyItMatters,
+			ScopeBoundary:    record.Semantic.ScopeBoundary,
 		})
 	}
 	return entries

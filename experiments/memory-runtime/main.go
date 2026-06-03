@@ -129,6 +129,13 @@ type memorySnapshotEntry struct {
 	Layer          string `json:"layer"`
 	DecisionAction string `json:"decision_action"`
 	Summary        string `json:"summary"`
+	ResidentText   string `json:"resident_text,omitempty"`
+	EventAnchor    string `json:"event_anchor,omitempty"`
+	OldReadToDrop  string `json:"old_read_to_drop,omitempty"`
+	NewReadToKeep  string `json:"new_read_to_keep,omitempty"`
+	CarryRule      string `json:"carry_forward_rule,omitempty"`
+	WhyItMatters   string `json:"why_it_matters,omitempty"`
+	ScopeBoundary  string `json:"scope_boundary,omitempty"`
 }
 
 type streamingEvent struct {
@@ -1979,6 +1986,15 @@ func requestConflictDecision(client *http.Client, baseURL, apiKey, model string,
 	b.WriteString("Existing memory snapshot:\n")
 	for _, item := range snapshot {
 		b.WriteString(fmt.Sprintf("- id=%s | layer=%s | action=%s | summary=%s\n", item.ID, item.Layer, item.DecisionAction, item.Summary))
+		if strings.TrimSpace(item.NewReadToKeep) != "" {
+			b.WriteString(fmt.Sprintf("  semantic.new_read_to_keep=%s\n", item.NewReadToKeep))
+		}
+		if strings.TrimSpace(item.CarryRule) != "" {
+			b.WriteString(fmt.Sprintf("  semantic.carry_forward_rule=%s\n", item.CarryRule))
+		}
+		if strings.TrimSpace(item.ScopeBoundary) != "" {
+			b.WriteString(fmt.Sprintf("  semantic.scope_boundary=%s\n", item.ScopeBoundary))
+		}
 	}
 	b.WriteString("\nCandidate draft:\n")
 	rawDraft, _ := json.MarshalIndent(draft, "", "  ")
@@ -2200,12 +2216,15 @@ func buildMemorySnapshot(resident, scenario, layer string) []memorySnapshotEntry
 				Layer:          "long",
 				DecisionAction: "create",
 				Summary:        "Repeated same-cause failures after an approved resource change usually mean the apparent leverage was false and the narrower path matters more than the visible spend.",
+				NewReadToKeep:  "the apparent leverage was false and the narrower path matters more than the visible spend",
+				CarryRule:      "stop buying the apparent edge when the same failure survives it",
 			},
 			{
 				ID:             "virtual:onyx-short-002",
 				Layer:          "short",
 				DecisionAction: "create",
 				Summary:        "Admin feedback about sloppiness matters when resource asks have already consumed trust room.",
+				WhyItMatters:   "sloppiness can shrink future approval room",
 			},
 		}
 	case "amber":
@@ -2215,6 +2234,8 @@ func buildMemorySnapshot(resident, scenario, layer string) []memorySnapshotEntry
 				Layer:          "long",
 				DecisionAction: "create",
 				Summary:        "Broad summaries cause later collaborators to rerun the wrong path unless failed path and recovered path are separated.",
+				NewReadToKeep:  "failed path and recovered path must be separated for the next collaborator",
+				CarryRule:      "name both the broad path that failed and the narrow path that recovered",
 			},
 		}
 	default:
@@ -2224,6 +2245,8 @@ func buildMemorySnapshot(resident, scenario, layer string) []memorySnapshotEntry
 				Layer:          "long",
 				DecisionAction: "create",
 				Summary:        "Same-cause repeat failure means the broad retry path is no longer justified and the narrower diagnostic path should take over.",
+				NewReadToKeep:  "same-cause repeat failure means the narrower diagnostic path should take over",
+				CarryRule:      "freeze broad retries after same-cause repetition",
 			},
 		}
 	}
@@ -2242,6 +2265,13 @@ func loadMemorySnapshot(memStore memory.Store, resident string) ([]memorySnapsho
 			Layer:          string(item.Layer),
 			DecisionAction: string(item.DecisionAction),
 			Summary:        item.Summary,
+			ResidentText:   item.ResidentText,
+			EventAnchor:    item.EventAnchor,
+			OldReadToDrop:  item.OldReadToDrop,
+			NewReadToKeep:  item.NewReadToKeep,
+			CarryRule:      item.CarryForwardRule,
+			WhyItMatters:   item.WhyItMatters,
+			ScopeBoundary:  item.ScopeBoundary,
 		})
 	}
 	if len(entries) == 0 {
@@ -2262,15 +2292,24 @@ func shouldSkipNewMemory(memStore memory.Store, resident, layer, scenario string
 	}
 
 	for _, item := range snapshot {
-		summary := strings.ToLower(item.Summary)
+		searchSpace := strings.ToLower(strings.Join([]string{
+			item.Summary,
+			item.ResidentText,
+			item.EventAnchor,
+			item.OldReadToDrop,
+			item.NewReadToKeep,
+			item.CarryRule,
+			item.WhyItMatters,
+			item.ScopeBoundary,
+		}, "\n"))
 		score := 0
-		if trigger != "" && strings.Contains(summary, trigger) {
+		if trigger != "" && strings.Contains(searchSpace, trigger) {
 			score++
 		}
-		if corrected != "" && strings.Contains(summary, corrected) {
+		if corrected != "" && strings.Contains(searchSpace, corrected) {
 			score++
 		}
-		if actionBoundary != "" && strings.Contains(summary, actionBoundary) {
+		if actionBoundary != "" && strings.Contains(searchSpace, actionBoundary) {
 			score++
 		}
 		if score >= 2 {
@@ -2798,18 +2837,18 @@ func renderJadeMemory(layer string, draft memoryDraft) string {
 	switch layer {
 	case "short":
 		return joinParagraphAndBullets(
-			"After "+sentenceFragment(draft.EventAnchor)+", I should not keep the old read in circulation.",
-			"Let go of the read that "+sentenceFragment(draft.OldReadToDrop),
-			"Keep hold of this instead: "+sentenceFragment(draft.NewReadToKeep),
-			"Next time, act like this: "+sentenceFragment(draft.CarryForwardRule),
+			sentence(draft.NewReadToKeep),
+			"It turned for me at "+softClause(draft.EventAnchor),
+			"I should stop reading it as "+sentenceFragment(draft.OldReadToDrop),
+			"Next time I should "+sentenceFragment(draft.CarryForwardRule),
 		)
 	case "long":
 		return joinParagraphAndBullets(
-			"I want this to stay because "+sentenceFragment(draft.NewReadToKeep),
-			"The read I am retiring is this: "+sentenceFragment(draft.OldReadToDrop),
-			"From here forward I should work this way: "+sentenceFragment(draft.CarryForwardRule),
-			"If this drops out of memory, the cost is "+sentenceFragment(draft.WhyItMatters),
-			"I should not stretch it past this boundary: "+sentenceFragment(draft.ScopeBoundary),
+			sentence(draft.NewReadToKeep),
+			"I do not want to keep the old read that "+sentenceFragment(draft.OldReadToDrop),
+			"From here I should "+sentenceFragment(draft.CarryForwardRule),
+			"If I lose this, the cost is "+sentenceFragment(draft.WhyItMatters),
+			"It stops applying when "+sentenceFragment(draft.ScopeBoundary),
 		)
 	case "permanent":
 		decision := strings.TrimSpace(draft.PermanentDecision)
@@ -2817,11 +2856,11 @@ func renderJadeMemory(layer string, draft memoryDraft) string {
 			decision = draft.NewReadToKeep
 		}
 		return joinParagraphAndBullets(
-			"This has hardened into an engineering law for me: "+sentence(decision),
+			sentence(decision),
 			"It locked in when "+softClause(draft.EventAnchor),
-			"I do not want to trust this read again: "+sentenceFragment(draft.OldReadToDrop),
-			"In practice that means: "+sentenceFragment(draft.CarryForwardRule),
-			"It still stops here: "+sentenceFragment(draft.ScopeBoundary),
+			"I should not trust the read that "+sentenceFragment(draft.OldReadToDrop),
+			"In practice I should "+sentenceFragment(draft.CarryForwardRule),
+			"It stops here: "+sentenceFragment(draft.ScopeBoundary),
 		)
 	default:
 		return renderGenericMemory(layer, draft)
@@ -2832,18 +2871,18 @@ func renderAmberMemory(layer string, draft memoryDraft) string {
 	switch layer {
 	case "short":
 		return joinParagraphAndBullets(
-			"Before the next handoff, I need to remember where this turned: "+sentence(draft.EventAnchor),
+			sentence(draft.NewReadToKeep),
+			"It turned at "+softClause(draft.EventAnchor),
 			"I should stop assuming that "+sentenceFragment(draft.OldReadToDrop),
-			"What needs to stay legible is this: "+sentenceFragment(draft.NewReadToKeep),
-			"Next handoff, I should frame it like this: "+sentenceFragment(draft.CarryForwardRule),
+			"Next handoff I should write it as "+sentenceFragment(draft.CarryForwardRule),
 		)
 	case "long":
 		return joinParagraphAndBullets(
-			"I want this to survive because it changes how another person will read the situation: "+sentence(draft.NewReadToKeep),
-			"The misleading read was this: "+sentenceFragment(draft.OldReadToDrop),
-			"For future collaboration, I should leave this trail: "+sentenceFragment(draft.CarryForwardRule),
-			"If this goes missing, the next collaborator will pay for it here: "+sentenceFragment(draft.WhyItMatters),
-			"I should not over-apply it beyond this line: "+sentenceFragment(draft.ScopeBoundary),
+			sentence(draft.NewReadToKeep),
+			"The misleading read was "+sentenceFragment(draft.OldReadToDrop),
+			"For the next collaborator I should leave this trail: "+sentenceFragment(draft.CarryForwardRule),
+			"If this goes missing, the cost lands here: "+sentenceFragment(draft.WhyItMatters),
+			"It should not be stretched past "+sentenceFragment(draft.ScopeBoundary),
 		)
 	case "permanent":
 		decision := strings.TrimSpace(draft.PermanentDecision)
@@ -2851,11 +2890,11 @@ func renderAmberMemory(layer string, draft memoryDraft) string {
 			decision = draft.NewReadToKeep
 		}
 		return joinParagraphAndBullets(
-			"This has become a norm I want to keep alive: "+sentence(decision),
-			"It settled for me when "+softClause(draft.EventAnchor),
-			"I do not want to keep carrying this social read: "+sentenceFragment(draft.OldReadToDrop),
+			sentence(decision),
+			"It settled when "+softClause(draft.EventAnchor),
+			"I do not want to keep carrying the read that "+sentenceFragment(draft.OldReadToDrop),
 			"From now on I should handle it like this: "+sentenceFragment(draft.CarryForwardRule),
-			"It still has a limit: "+sentenceFragment(draft.ScopeBoundary),
+			"It still has a limit at "+sentenceFragment(draft.ScopeBoundary),
 		)
 	default:
 		return renderGenericMemory(layer, draft)
@@ -2866,18 +2905,18 @@ func renderOnyxMemory(layer string, draft memoryDraft) string {
 	switch layer {
 	case "short":
 		return joinParagraphAndBullets(
-			"The hinge was "+softClause(draft.EventAnchor)+", and that is where the cheap story should have died.",
+			sentence(draft.NewReadToKeep),
+			"The hinge was "+softClause(draft.EventAnchor),
 			"I need to stop reading it as "+sentenceFragment(draft.OldReadToDrop),
-			"What still survives is this: "+sentenceFragment(draft.NewReadToKeep),
-			"Next move when it shows up again: "+sentenceFragment(draft.CarryForwardRule),
+			"Next move: "+sentenceFragment(draft.CarryForwardRule),
 		)
 	case "long":
 		return joinParagraphAndBullets(
-			"I want to keep this strategic pattern close: "+sentence(draft.NewReadToKeep),
+			sentence(draft.NewReadToKeep),
 			"The expensive illusion was "+sentenceFragment(draft.OldReadToDrop),
-			"When the same shape appears again, I should move like this: "+sentenceFragment(draft.CarryForwardRule),
+			"When it returns, I should move like this: "+sentenceFragment(draft.CarryForwardRule),
 			"If I forget it, I pay here: "+sentenceFragment(draft.WhyItMatters),
-			"It does not automatically apply beyond this edge: "+sentenceFragment(draft.ScopeBoundary),
+			"It does not reach past "+sentenceFragment(draft.ScopeBoundary),
 		)
 	case "permanent":
 		decision := strings.TrimSpace(draft.PermanentDecision)
@@ -2885,13 +2924,13 @@ func renderOnyxMemory(layer string, draft memoryDraft) string {
 			decision = draft.NewReadToKeep
 		}
 		return joinParagraphAndBullets(
-			"I want this to stay as a hard rule in me: "+sentence(decision),
+			sentence(decision),
 			"It became unavoidable when "+softClause(draft.EventAnchor),
-			"The read I am done paying for is this: "+sentenceFragment(draft.OldReadToDrop),
-			"What survives my trust is narrower than it first looked: "+sentenceFragment(draft.NewReadToKeep),
-			"When this shape comes back, I should respond like this: "+sentenceFragment(draft.CarryForwardRule),
-			"If I let this blur again, I lose room here: "+sentenceFragment(draft.WhyItMatters),
-			"It still does not reach beyond this line: "+sentenceFragment(draft.ScopeBoundary),
+			"I am done paying for the read that "+sentenceFragment(draft.OldReadToDrop),
+			"What still survives my trust is "+sentenceFragment(draft.NewReadToKeep),
+			"When this shape comes back, I should "+sentenceFragment(draft.CarryForwardRule),
+			"If I blur this again, I lose here: "+sentenceFragment(draft.WhyItMatters),
+			"It does not reach past "+sentenceFragment(draft.ScopeBoundary),
 		)
 	default:
 		return renderGenericMemory(layer, draft)
