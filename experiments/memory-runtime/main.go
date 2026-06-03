@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -297,6 +298,7 @@ type decayScanRecord struct {
 	AppliedReasons    []string `json:"applied_reasons,omitempty"`
 	AppliedTargetID   string   `json:"applied_target_memory_id,omitempty"`
 	ReviewError       string   `json:"review_error,omitempty"`
+	ReviewRaw         string   `json:"review_raw,omitempty"`
 }
 
 type memoryDraft struct {
@@ -1061,6 +1063,18 @@ func localDraftIssues(profile residentProfile, layer string, draft memoryDraft) 
 		if strings.Contains(lower, "later today") || strings.Contains(lower, "next few hours") || strings.Contains(lower, "before the next handoff") {
 			issues = append(issues, "long memory is still framed like a same-day work note")
 		}
+		if strings.HasPrefix(lower, "i should ") || strings.HasPrefix(lower, "the rule is ") || strings.HasPrefix(lower, "this means ") {
+			issues = append(issues, "long memory opens like a stiff thesis or self-lecture")
+		}
+		if strings.Contains(lower, "not decoration") || strings.Contains(lower, "part of the work, not") {
+			issues = append(issues, "long memory is leaning on polished contrast phrasing")
+		}
+		drop := strings.ToLower(strings.TrimSpace(draft.DropCondition))
+		if drop != "" {
+			if strings.HasPrefix(drop, "drop if this stage stops") || strings.Contains(drop, "repeated evidence shows") {
+				issues = append(issues, "long memory drop_condition reads like a system policy clause")
+			}
+		}
 	}
 	if layer == "permanent" {
 		if strings.Contains(lower, "for now") || strings.Contains(lower, "later today") || strings.Contains(lower, "this afternoon") {
@@ -1571,6 +1585,8 @@ func buildDraftInstructions(profile residentProfile, layer string) string {
 		"resident_text must be natural language and must not read like a field-by-field recap.",
 		"Do not force a fixed structure like problem/solution/next-step or old belief/new belief/boundary.",
 		"Do not explain the memory from outside; write it from inside the resident's own retention bias.",
+		"For long and permanent layers, avoid opening with stiff thesis lines like 'I should...', 'The rule is...', or 'This means...' unless that exact phrasing genuinely sounds native to the resident.",
+		"For long and permanent layers, avoid polished management language, moral-of-the-story phrasing, and decorative contrast sentences that sound written for publication rather than retention.",
 		"memory_kind must be one of: moment, lesson, rule, preference, relationship, warning, milestone, reflection.",
 		"salience must be an integer from 1 to 5.",
 		"emotion_tone must be one of: neutral, warm, proud, uneasy, relieved, wary, frustrated, determined.",
@@ -1628,6 +1644,9 @@ func buildDraftPrompt(profile residentProfile, layer, scenario string, events []
 		b.WriteString("- if it naturally survives, long memory often keeps: " + profile.LongMustInclude + "\n")
 		b.WriteString("- long memory should describe a pattern that stays useful across repeated situations in this stage, not just the next move\n")
 		b.WriteString("- it may still be contingent and revisable; do not write it like an eternal law\n")
+		b.WriteString("- long memory does not need a slogan-like opening sentence; a remembered pattern, pressure, or repeated misread is enough\n")
+		b.WriteString("- avoid sounding like a polished principle memo; this should feel like something the resident would actually keep around to avoid repeating the same drift\n")
+		b.WriteString("- drop_condition for long memory should usually be empty; only fill it if there is a believable stage boundary or a concrete future invalidation signal\n")
 	} else {
 		b.WriteString("- if it naturally survives, permanent memory often keeps: " + profile.PermanentMustInclude + "\n")
 		b.WriteString("- permanent memories must survive outside this one setup story; if the rule only fits this incident, do not promote it\n")
@@ -1646,6 +1665,10 @@ func buildDraftPrompt(profile residentProfile, layer, scenario string, events []
 	case "amber":
 		b.WriteString("- amber often keeps what preserves legibility, handoff truth, cooperation tone, or the real shape of shared work\n")
 		b.WriteString("- if the memory is mostly about what another person would misunderstand, that alone can be enough\n")
+		if layer == "long" {
+			b.WriteString("- amber long memory should feel like remembering how shared understanding drifts between people, not like writing a workplace principle\n")
+			b.WriteString("- prefer the remembered social failure pattern over an abstract statement about communication quality\n")
+		}
 	case "onyx":
 		b.WriteString("- onyx often keeps what changes leverage, exposure, cost, future room to move, or the truth about a false edge\n")
 		b.WriteString("- if the memory is mainly about a fake advantage collapsing, that alone can be enough\n")
@@ -1999,6 +2022,20 @@ func normalizeOptionalDurationLiteral(raw string) string {
 		return ""
 	default:
 		trimmed := strings.TrimSpace(raw)
+		lower := strings.ToLower(trimmed)
+		fields := strings.Fields(lower)
+		if len(fields) == 2 {
+			if n, err := strconv.Atoi(fields[0]); err == nil {
+				switch fields[1] {
+				case "day", "days":
+					return fmt.Sprintf("%dh", n*24)
+				case "hour", "hours":
+					return fmt.Sprintf("%dh", n)
+				case "week", "weeks":
+					return fmt.Sprintf("%dh", n*24*7)
+				}
+			}
+		}
 		if _, err := time.Parse(time.RFC3339, trimmed); err == nil {
 			return ""
 		}
@@ -3244,7 +3281,7 @@ func applyDecayScanWithAI(client *http.Client, baseURL, apiKey, model string, me
 		if !ok {
 			continue
 		}
-		updated, applied, reviewDecision, reviewErr, err := applyDueMemoryDecision(client, baseURL, apiKey, model, memStore, profile, record, now, scan.TriggeredBy)
+		updated, applied, reviewDecision, reviewRaw, reviewErr, err := applyDueMemoryDecision(client, baseURL, apiKey, model, memStore, profile, record, now, scan.TriggeredBy)
 		if err != nil {
 			return decayScanResult{}, err
 		}
@@ -3264,6 +3301,9 @@ func applyDecayScanWithAI(client *http.Client, baseURL, apiKey, model string, me
 			result.Records[i].AppliedAction = reviewDecision.Action
 			result.Records[i].AppliedLayer = reviewDecision.TargetLayer
 			result.Records[i].AppliedTargetID = strings.TrimSpace(reviewDecision.TargetMemoryID)
+		}
+		if strings.TrimSpace(reviewRaw) != "" {
+			result.Records[i].ReviewRaw = reviewRaw
 		}
 		if reviewErr != nil {
 			result.Records[i].ReviewError = reviewErr.Error()
@@ -3338,28 +3378,27 @@ func applyConservativeDecay(record memory.AbstractMemory, now time.Time, trigger
 	return record, false
 }
 
-func applyDueMemoryDecision(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, record memory.AbstractMemory, now time.Time, triggers []string) (memory.AbstractMemory, bool, *memoryReviewDecision, error, error) {
+func applyDueMemoryDecision(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, record memory.AbstractMemory, now time.Time, triggers []string) (memory.AbstractMemory, bool, *memoryReviewDecision, string, error, error) {
 	triggered := make(map[string]bool, len(triggers))
 	for _, trigger := range triggers {
 		triggered[trigger] = true
 	}
 	if triggered["hard_expired"] && (record.Layer == memory.LayerInstant || record.Layer == memory.LayerShort) {
 		updated, applied := applyConservativeDecay(record, now, triggers)
-		return updated, applied, nil, nil, nil
+		return updated, applied, nil, "", nil, nil
 	}
-	result, decision, err := requestDueMemoryReview(client, baseURL, apiKey, model, memStore, profile, record, triggers, now)
-	_ = result
+	_, decision, rawArgs, err := requestDueMemoryReview(client, baseURL, apiKey, model, memStore, profile, record, triggers, now)
 	if err != nil {
 		updated, applied := applyConservativeDecay(record, now, triggers)
-		return updated, applied, nil, err, nil
+		return updated, applied, nil, rawArgs, err, nil
 	}
 	if decision == nil {
-		return record, false, nil, nil, nil
+		return record, false, nil, rawArgs, nil, nil
 	}
 	switch decision.Action {
 	case "promote_long", "merge_into_long":
 		updated, applied, err := applyReviewedLongSynthesis(client, baseURL, apiKey, model, memStore, profile, record, *decision, now)
-		return updated, applied, decision, nil, err
+		return updated, applied, decision, rawArgs, nil, err
 	}
 	updated := record
 	switch decision.Action {
@@ -3368,7 +3407,7 @@ func applyDueMemoryDecision(client *http.Client, baseURL, apiKey, model string, 
 		updated.UpdatedAt = now
 		updated.LastConfirmedAt = now
 		updated.ReasonCodes = append([]string(nil), decision.ReasonCodes...)
-		return updated, true, decision, nil, nil
+		return updated, true, decision, rawArgs, nil, nil
 	case "review", "retain", "promote", "decay":
 		updated.UpdatedAt = now
 		updated.LastConfirmedAt = now
@@ -3384,9 +3423,9 @@ func applyDueMemoryDecision(client *http.Client, baseURL, apiKey, model string, 
 		if updated.HardExpiresAt.IsZero() || (!updated.ExpiresAt.IsZero() && updated.HardExpiresAt.Before(updated.ExpiresAt)) {
 			updated.HardExpiresAt = now.Add(deriveHardExpiryOffset(updated.Layer, updated.ExpiresAt, now))
 		}
-		return updated, true, decision, nil, nil
+		return updated, true, decision, rawArgs, nil, nil
 	default:
-		return record, false, decision, nil, nil
+		return record, false, decision, rawArgs, nil, nil
 	}
 }
 
@@ -3572,6 +3611,9 @@ func requestReviewedLongSynthesis(client *http.Client, baseURL, apiKey, model st
 	b.WriteString("- if merging into an existing long memory, revise that long memory so it absorbs the source cleanly instead of sounding appended\n")
 	b.WriteString("- if the source still sounds like a same-day working note, abstract it upward until it becomes stage-reusable\n")
 	b.WriteString("- long memory should remain revisable, not eternal doctrine\n")
+	b.WriteString("- avoid opening with a slogan, a self-lecture, or a polished contrast line unless that exact shape feels unavoidable for this resident\n")
+	b.WriteString("- if a drop_condition is not clearly warranted, leave it empty rather than inventing a bureaucratic expiry clause\n")
+	b.WriteString("- prefer a remembered pattern over a polished maxim\n")
 
 	payload := requestPayload{
 		Model:          model,
@@ -3631,7 +3673,7 @@ func deriveHardExpiryOffset(layer memory.Layer, expiresAt, now time.Time) time.D
 	}
 }
 
-func requestDueMemoryReview(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, record memory.AbstractMemory, triggers []string, now time.Time) (streamResult, *memoryReviewDecision, error) {
+func requestDueMemoryReview(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, record memory.AbstractMemory, triggers []string, now time.Time) (streamResult, *memoryReviewDecision, string, error) {
 	var b strings.Builder
 	b.WriteString("Review one due memory and decide whether it should be deleted, retained, extended, or moved.\n")
 	b.WriteString("Resident: " + profile.Name + "\n")
@@ -3692,7 +3734,7 @@ func requestDueMemoryReview(client *http.Client, baseURL, apiKey, model string, 
 	payload := buildMemoryReviewPayload(model, profile.PromptCacheKey+"-"+string(record.Layer)+"-due-review-v1", b.String())
 	result, err := postStream(client, baseURL, apiKey, payload, false)
 	if err != nil {
-		return streamResult{}, nil, err
+		return streamResult{}, nil, "", err
 	}
 	for _, item := range result.FunctionCalls {
 		name := item.Name
@@ -3702,13 +3744,14 @@ func requestDueMemoryReview(client *http.Client, baseURL, apiKey, model string, 
 		if item.Type != "function_call" || name != "review_due_memory" {
 			continue
 		}
+		rawArgs := item.Arguments
 		decision, err := decodeMemoryReviewDecision(item.Arguments)
 		if err != nil {
-			return result, nil, err
+			return result, nil, rawArgs, err
 		}
-		return result, &decision, nil
+		return result, &decision, rawArgs, nil
 	}
-	return result, nil, fmt.Errorf("review_due_memory function call missing")
+	return result, nil, "", fmt.Errorf("review_due_memory function call missing")
 }
 
 func formatOptionalTime(ts time.Time) string {
