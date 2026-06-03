@@ -124,6 +124,18 @@ type reviewScheduleDecision struct {
 	ReasonCodes  []string `json:"reason_codes"`
 }
 
+type adjudicationDecision struct {
+	Accepted     bool     `json:"accepted"`
+	RejectReason string   `json:"reject_reason"`
+	Issues       []string `json:"issues"`
+	TargetLayer  string   `json:"target_layer"`
+	Action       string   `json:"action"`
+	NeedsReview  bool     `json:"needs_review"`
+	ReviewAfter  string   `json:"review_after,omitempty"`
+	ExpiresAfter string   `json:"expires_after,omitempty"`
+	ReasonCodes  []string `json:"reason_codes"`
+}
+
 type memorySnapshotEntry struct {
 	ID              string `json:"id"`
 	Layer           string `json:"layer"`
@@ -205,6 +217,7 @@ type generatedMemory struct {
 	UserPrompt     string    `json:"user_prompt"`
 	ObservedCache  string    `json:"observed_prompt_cache_key"`
 	DraftCached    int       `json:"draft_cached_tokens,omitempty"`
+	AdjudicationCached int   `json:"adjudication_cached_tokens,omitempty"`
 	VerdictCached  int       `json:"verdict_cached_tokens,omitempty"`
 	RoutingCached  int       `json:"routing_cached_tokens,omitempty"`
 	ConflictCached int       `json:"conflict_cached_tokens,omitempty"`
@@ -526,56 +539,59 @@ func runLayer(client *http.Client, memStore memory.Store, baseURL, apiKey, model
 		return finalizeLayerRun(memStore, profile, layer, scenario, model, eventWindow, instructions, userPrompt, payload, started, logDir, outDir, finalDraft, finalDraftResult, finalVerdict, finalVerdictResult, routingResult, routingDecisionPtr, conflictResult, conflictDecisionPtr, actionResult, actionDecisionPtr, reviewResult, reviewDecisionPtr)
 	}
 
-	verdictInstructions := buildVerdictInstructions(profile, layer)
-	verdictPrompt := buildVerdictPrompt(layer, eventWindow, draft)
-	verdictPayload := requestPayload{
-		Model:          model,
-		Instructions:   verdictInstructions,
-		PromptCacheKey: profile.PromptCacheKey + "-" + layer + "-judge-v1",
-		Input: []inputMessage{
-			{Role: "user", Content: verdictPrompt},
-		},
-		Stream: true,
-		Store:  false,
-	}
-
-	verdictResult, err := postStream(client, baseURL, apiKey, verdictPayload, false)
-	if err != nil {
-		return layerRunSummary{}, fmt.Errorf("verdict request failed: %w", err)
-	}
-
-	verdict, err := decodeVerdict(verdictResult.OutputText)
-	if err != nil {
-		return layerRunSummary{}, fmt.Errorf("decode verdict: %w; raw=%s", err, verdictResult.OutputText)
-	}
-
 	finalDraft := draft
 	finalDraftResult := result
-	finalVerdict := verdict
-	finalVerdictResult := verdictResult
+	adjudicationResult, adjudicationDecisionPtr, err := requestAdjudicationDecision(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, draft)
+	if err != nil {
+		return layerRunSummary{}, err
+	}
+	finalVerdict := memoryVerdict{}
+	finalVerdictResult := adjudicationResult
+	var routingDecisionPtr *routingDecision
+	var actionDecisionPtr *memoryActionDecision
+	var reviewDecisionPtr *reviewScheduleDecision
+	if adjudicationDecisionPtr != nil {
+		finalVerdict = memoryVerdict{
+			Accepted:     adjudicationDecisionPtr.Accepted,
+			RejectReason: adjudicationDecisionPtr.RejectReason,
+			Issues:       append([]string(nil), adjudicationDecisionPtr.Issues...),
+		}
+		routingDecisionPtr = &routingDecision{
+			TargetLayer:  adjudicationDecisionPtr.TargetLayer,
+			Action:       adjudicationDecisionPtr.Action,
+			ReasonCodes:  append([]string(nil), adjudicationDecisionPtr.ReasonCodes...),
+			ReviewAfter:  adjudicationDecisionPtr.ReviewAfter,
+			ExpiresAfter: adjudicationDecisionPtr.ExpiresAfter,
+		}
+		actionDecisionPtr = &memoryActionDecision{
+			Action:       adjudicationDecisionPtr.Action,
+			ReasonCodes:  append([]string(nil), adjudicationDecisionPtr.ReasonCodes...),
+			NeedsReview:  adjudicationDecisionPtr.NeedsReview,
+			ReviewAfter:  adjudicationDecisionPtr.ReviewAfter,
+			ExpiresAfter: adjudicationDecisionPtr.ExpiresAfter,
+		}
+		reviewDecisionPtr = &reviewScheduleDecision{
+			NeedsReview:  adjudicationDecisionPtr.NeedsReview,
+			ReviewAfter:  adjudicationDecisionPtr.ReviewAfter,
+			ExpiresAfter: adjudicationDecisionPtr.ExpiresAfter,
+			ReasonCodes:  append([]string(nil), adjudicationDecisionPtr.ReasonCodes...),
+		}
+	}
 
-	if !verdict.Accepted {
-		finalDraft, finalDraftResult, finalVerdict, finalVerdictResult, err = iterateRejectedDraft(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, draft, verdict, 3)
+	if !finalVerdict.Accepted {
+		finalDraft, finalDraftResult, finalVerdict, finalVerdictResult, err = iterateRejectedDraft(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, draft, finalVerdict, 3)
 		if err != nil {
 			return layerRunSummary{}, err
 		}
 	}
-	routingResult, routingDecisionPtr, err := requestRoutingDecision(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, finalDraft, finalVerdict)
-	if err != nil {
-		return layerRunSummary{}, err
-	}
+
+	routingResult := adjudicationResult
 	conflictResult, conflictDecisionPtr, err := requestConflictDecision(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, finalDraft, finalVerdict, snapshot)
 	if err != nil {
 		return layerRunSummary{}, err
 	}
-	actionResult, actionDecisionPtr, err := requestActionDecision(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, finalDraft, finalVerdict, routingDecisionPtr, conflictDecisionPtr)
-	if err != nil {
-		return layerRunSummary{}, err
-	}
-	reviewResult, reviewDecisionPtr, err := requestReviewScheduleDecision(client, baseURL, apiKey, model, profile, scenario, layer, eventWindow, finalDraft, finalVerdict, routingDecisionPtr, actionDecisionPtr)
-	if err != nil {
-		return layerRunSummary{}, err
-	}
+	actionResult := streamResult{}
+	reviewResult := streamResult{}
 	return finalizeLayerRun(memStore, profile, layer, scenario, model, eventWindow, instructions, userPrompt, payload, started, logDir, outDir, finalDraft, finalDraftResult, finalVerdict, finalVerdictResult, routingResult, routingDecisionPtr, conflictResult, conflictDecisionPtr, actionResult, actionDecisionPtr, reviewResult, reviewDecisionPtr)
 }
 
@@ -1037,6 +1053,25 @@ func validateActionDecision(decision memoryActionDecision) []string {
 	return issues
 }
 
+func validateAdjudicationDecision(decision adjudicationDecision) []string {
+	var issues []string
+	if !map[string]bool{"instant": true, "short": true, "long": true, "permanent": true}[decision.TargetLayer] {
+		issues = append(issues, "target_layer has invalid enum value")
+	}
+	if !map[string]bool{"create": true, "update": true, "promote": true, "retain": true, "decay": true, "delete": true, "review": true}[decision.Action] {
+		issues = append(issues, "action has invalid enum value")
+	}
+	if decision.Accepted && len(decision.ReasonCodes) == 0 {
+		issues = append(issues, "reason_codes is empty")
+	}
+	if !decision.Accepted && strings.TrimSpace(decision.RejectReason) == "" {
+		issues = append(issues, "reject_reason is required when accepted is false")
+	}
+	issues = append(issues, validateOptionalDurationString("review_after", decision.ReviewAfter)...)
+	issues = append(issues, validateOptionalDurationString("expires_after", decision.ExpiresAfter)...)
+	return issues
+}
+
 func validateOptionalDurationString(field, value string) []string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || trimmed == "null" {
@@ -1380,6 +1415,23 @@ func buildVerdictInstructions(profile residentProfile, layer string) string {
 	}, "\n")
 }
 
+func buildAdjudicationInstructions(profile residentProfile, layer string) string {
+	return strings.Join([]string{
+		"You are a strict memory adjudicator for an AI resident memory system.",
+		"Output valid JSON only.",
+		"Do not wrap JSON in markdown fences.",
+		"Decide memory quality, target layer, lifecycle action, and review schedule in one pass.",
+		"Reject vague, generic, redundant, weakly grounded, or overly templated drafts.",
+		"Reject drafts whose resident voice could be swapped with another resident without meaningful loss.",
+		"Reject permanent drafts that do not show believable durable signal.",
+		"If accepted is false, reject_reason must be non-empty and reason_codes may be empty.",
+		"If accepted is true, target_layer, action, and reason_codes must be coherent with the memory's real endurance.",
+		"Layer under review: " + layer + ".",
+		"Resident memory bias: " + profile.MemoryBias + ".",
+		"Resident core concern: " + profile.CoreConcern + ".",
+	}, "\n")
+}
+
 func buildVerdictPrompt(layer string, events []event, draft memoryDraft) string {
 	var b strings.Builder
 	b.WriteString("Review this memory draft for quality.\n")
@@ -1392,6 +1444,35 @@ func buildVerdictPrompt(layer string, events []event, draft memoryDraft) string 
 	b.Write(raw)
 	b.WriteString("\n\nReject if the draft does not preserve enough real memory signal for the target layer.\n")
 	b.WriteString("Also decide whether the memory should stay in the requested layer or be downgraded/upgraded based on actual retention value.\n")
+	return b.String()
+}
+
+func buildAdjudicationPrompt(profile residentProfile, layer, scenario string, events []event, draft memoryDraft) string {
+	var b strings.Builder
+	b.WriteString("Adjudicate this draft in one pass.\n")
+	b.WriteString("Resident: " + profile.Name + "\n")
+	b.WriteString("Scenario: " + scenario + "\n")
+	b.WriteString("Requested layer: " + layer + "\n")
+	b.WriteString("Resident memory bias: " + profile.MemoryBias + "\n")
+	b.WriteString("Resident core concern: " + profile.CoreConcern + "\n\n")
+	b.WriteString("Event window:\n")
+	for _, e := range events {
+		b.WriteString(fmt.Sprintf("- [%s] %s | importance=%d | %s\n", e.Time.Format(time.RFC3339), e.Category, e.Importance, e.Summary))
+	}
+	b.WriteString("\nDraft JSON:\n")
+	raw, _ := json.MarshalIndent(draft, "", "  ")
+	b.Write(raw)
+	b.WriteString("\n\nRules:\n")
+	b.WriteString("- accepted=false if the draft is vague, generic, repetitive, weakly grounded, or not worth keeping\n")
+	b.WriteString("- choose permanent only if this clearly survives beyond the immediate incident and encodes a durable boundary\n")
+	b.WriteString("- choose long only if the memory is stable and reusable for this stage\n")
+	b.WriteString("- choose short if it is useful soon but not yet stable enough for long retention\n")
+	b.WriteString("- choose instant only if it is raw working context or anti-error pinning\n")
+	b.WriteString("- action must reflect what should happen now: create, update, promote, retain, decay, delete, or review\n")
+	b.WriteString("- needs_review/review_after/expires_after must match the chosen layer and memory endurance\n")
+	b.WriteString("- durations must be returned in Go duration strings like 8h, 24h, or 168h\n")
+	b.WriteString("- issues must be short strings\n")
+	b.WriteString("- reason_codes must be short machine-usable identifiers\n")
 	return b.String()
 }
 
@@ -1586,6 +1667,35 @@ func decodeReviewScheduleDecision(raw string) (reviewScheduleDecision, error) {
 	}
 	if err := json.Unmarshal([]byte(cleaned), &decision); err != nil {
 		return reviewScheduleDecision{}, err
+	}
+	return decision, nil
+}
+
+func decodeAdjudicationDecision(raw string) (adjudicationDecision, error) {
+	var decision adjudicationDecision
+	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
+	if issues := duplicateJSONObjectKeys(cleaned); len(issues) > 0 {
+		return adjudicationDecision{}, errors.New(strings.Join(issues, "; "))
+	}
+	if issues := rejectUnexpectedTopLevelKeys(cleaned, []string{
+		"accepted",
+		"reject_reason",
+		"issues",
+		"target_layer",
+		"action",
+		"needs_review",
+		"review_after",
+		"expires_after",
+		"reason_codes",
+	}); len(issues) > 0 {
+		return adjudicationDecision{}, errors.New(strings.Join(issues, "; "))
+	}
+	if err := json.Unmarshal([]byte(cleaned), &decision); err != nil {
+		return adjudicationDecision{}, err
+	}
+	if issues := validateAdjudicationDecision(decision); len(issues) > 0 {
+		return adjudicationDecision{}, errors.New(strings.Join(issues, "; "))
 	}
 	return decision, nil
 }
@@ -1877,6 +1987,50 @@ func buildReviewSchedulePayload(model, cacheKey, prompt string) requestPayload {
 	}
 }
 
+func buildAdjudicationPayload(model, cacheKey, prompt string) requestPayload {
+	parallelToolCalls := false
+	return requestPayload{
+		Model:          model,
+		Instructions:   "You are a memory adjudicator. Decide acceptance, layer, lifecycle action, and review schedule in one structured function call only.",
+		PromptCacheKey: cacheKey,
+		Input: []inputMessage{
+			{Role: "user", Content: prompt},
+		},
+		Tools: []responseTool{{
+			Type:        "function",
+			Name:        "adjudicate_memory",
+			Description: "Accept or reject a draft and decide its layer, action, and review schedule.",
+			Strict:      true,
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"accepted":      map[string]any{"type": "boolean"},
+					"reject_reason": map[string]any{"type": "string"},
+					"issues":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"target_layer": map[string]any{
+						"type": "string",
+						"enum": []string{"instant", "short", "long", "permanent"},
+					},
+					"action": map[string]any{
+						"type": "string",
+						"enum": []string{"create", "update", "promote", "retain", "decay", "delete", "review"},
+					},
+					"needs_review":  map[string]any{"type": "boolean"},
+					"review_after":  map[string]any{"type": []string{"string", "null"}},
+					"expires_after": map[string]any{"type": []string{"string", "null"}},
+					"reason_codes":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+				"required":             []string{"accepted", "reject_reason", "issues", "target_layer", "action", "needs_review", "review_after", "expires_after", "reason_codes"},
+				"additionalProperties": false,
+			},
+		}},
+		ToolChoice:        functionToolChoice{Type: "function", Name: "adjudicate_memory"},
+		ParallelToolCalls: &parallelToolCalls,
+		Stream:            true,
+		Store:             false,
+	}
+}
+
 func requestRoutingDecision(client *http.Client, baseURL, apiKey, model string, profile residentProfile, scenario, layer string, events []event, draft memoryDraft, verdict memoryVerdict) (streamResult, *routingDecision, error) {
 	if !verdict.Accepted {
 		return streamResult{}, nil, nil
@@ -2057,6 +2211,20 @@ func requestReviewScheduleDecision(client *http.Client, baseURL, apiKey, model s
 	return result, &decision, nil
 }
 
+func requestAdjudicationDecision(client *http.Client, baseURL, apiKey, model string, profile residentProfile, scenario, layer string, events []event, draft memoryDraft) (streamResult, *adjudicationDecision, error) {
+	prompt := buildAdjudicationPrompt(profile, layer, scenario, events, draft)
+	payload := buildAdjudicationPayload(model, profile.PromptCacheKey+"-"+layer+"-adjudicate-v1", prompt)
+	result, err := postStream(client, baseURL, apiKey, payload, false)
+	if err != nil {
+		return streamResult{}, nil, fmt.Errorf("adjudication request failed: %w", err)
+	}
+	decision, ok := extractAdjudicationDecision(result.FunctionCalls)
+	if !ok {
+		return result, nil, fmt.Errorf("adjudication request returned no usable adjudicate_memory function call; output_text=%q calls=%+v", result.OutputText, result.FunctionCalls)
+	}
+	return result, &decision, nil
+}
+
 func extractRoutingDecision(calls []responseItem) (routingDecision, bool) {
 	for _, item := range calls {
 		name := item.Name
@@ -2133,6 +2301,24 @@ func extractReviewScheduleDecision(calls []responseItem) (reviewScheduleDecision
 		return decision, true
 	}
 	return reviewScheduleDecision{}, false
+}
+
+func extractAdjudicationDecision(calls []responseItem) (adjudicationDecision, bool) {
+	for _, item := range calls {
+		name := item.Name
+		if name == "" {
+			name = item.CallName
+		}
+		if item.Type != "function_call" || name != "adjudicate_memory" {
+			continue
+		}
+		decision, err := decodeAdjudicationDecision(item.Arguments)
+		if err != nil {
+			return adjudicationDecision{}, false
+		}
+		return decision, true
+	}
+	return adjudicationDecision{}, false
 }
 
 func decodeActionDecisionWithToolCompat(raw string) (memoryActionDecision, error) {
