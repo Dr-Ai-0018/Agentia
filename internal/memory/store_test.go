@@ -21,8 +21,28 @@ func TestApplyDecisionPromotion(t *testing.T) {
 	if updated.Layer != LayerLong || updated.Status != StatusActive {
 		t.Fatalf("unexpected state: %s %s", updated.Layer, updated.Status)
 	}
-	if updated.ExpiresAt.IsZero() || updated.ReviewAfter.IsZero() {
+	if updated.ExpiresAt.IsZero() || updated.ReviewAt.IsZero() {
 		t.Fatal("expected ttl and review timestamps")
+	}
+	if updated.HardExpiresAt.IsZero() {
+		t.Fatal("expected hard expiry timestamp")
+	}
+	if updated.LastConfirmedAt.IsZero() {
+		t.Fatal("expected last confirmed timestamp")
+	}
+}
+
+func TestApplyDecisionSetsShortHardExpiryAfterSoftExpiry(t *testing.T) {
+	now := time.Now()
+	record := Record{Layer: LayerShort}
+	updated := ApplyDecision(now, record, Decision{
+		Action:      ActionCreate,
+		TargetLayer: LayerShort,
+		TTL:         24 * time.Hour,
+		ReviewAfter: 8 * time.Hour,
+	})
+	if !updated.HardExpiresAt.After(updated.ExpiresAt) {
+		t.Fatalf("expected hard expiry after soft expiry, got hard=%v soft=%v", updated.HardExpiresAt, updated.ExpiresAt)
 	}
 }
 
@@ -124,11 +144,16 @@ func TestFileStoreRoundTripBundle(t *testing.T) {
 
 	am := AbstractMemory{
 		Record: Record{
-			ID:        "jade-memory-1",
-			Layer:     LayerPermanent,
-			Status:    StatusActive,
-			CreatedAt: now,
-			UpdatedAt: now,
+			ID:              "jade-memory-1",
+			Layer:           LayerPermanent,
+			Status:          StatusActive,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+			LastAccessedAt:  now,
+			LastConfirmedAt: now,
+			ReviewAt:        now.Add(30 * 24 * time.Hour),
+			ExpiresAt:       now.Add(90 * 24 * time.Hour),
+			HardExpiresAt:   now.Add(365 * 24 * time.Hour),
 		},
 		Resident:        "jade",
 		Summary:         "stable engineering law",
@@ -173,6 +198,9 @@ func TestFileStoreRoundTripBundle(t *testing.T) {
 	}
 	if memories[0].Semantic.RetentionIntent != "keep_permanent" {
 		t.Fatalf("unexpected semantic retention_intent: %q", memories[0].Semantic.RetentionIntent)
+	}
+	if memories[0].HardExpiresAt.IsZero() {
+		t.Fatal("expected hard_expires_at to survive roundtrip")
 	}
 
 	groups, err := store.ListHistoryGroups("jade")

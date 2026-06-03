@@ -24,16 +24,20 @@ const (
 )
 
 type Record struct {
-	ID          string       `json:"id"`
-	Layer       Layer        `json:"layer"`
-	Domain      Domain       `json:"domain"`
-	Status      RecordStatus `json:"status"`
-	ReasonCodes []string     `json:"reason_codes"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
-	ReviewAfter time.Time    `json:"review_after"`
-	ExpiresAt   time.Time    `json:"expires_at"`
-	Pinned      bool         `json:"pinned"`
+	ID              string       `json:"id"`
+	Layer           Layer        `json:"layer"`
+	Domain          Domain       `json:"domain"`
+	Status          RecordStatus `json:"status"`
+	ReasonCodes     []string     `json:"reason_codes"`
+	CreatedAt       time.Time    `json:"created_at"`
+	UpdatedAt       time.Time    `json:"updated_at"`
+	LastAccessedAt  time.Time    `json:"last_accessed_at,omitempty"`
+	LastConfirmedAt time.Time    `json:"last_confirmed_at,omitempty"`
+	ReviewAt        time.Time    `json:"review_at,omitempty"`
+	ReviewAfter     time.Time    `json:"review_after,omitempty"`
+	ExpiresAt       time.Time    `json:"expires_at,omitempty"`
+	HardExpiresAt   time.Time    `json:"hard_expires_at,omitempty"`
+	Pinned          bool         `json:"pinned"`
 }
 
 type HistoryGroup struct {
@@ -388,12 +392,16 @@ func (s *FileStore) residentPath(resident string) string {
 }
 
 func ApplyDecision(now time.Time, record Record, decision Decision) Record {
+	if record.CreatedAt.IsZero() {
+		record.CreatedAt = now
+	}
 	record.UpdatedAt = now
 	record.Layer = decision.TargetLayer
 
 	switch decision.Action {
 	case ActionCreate, ActionPromote, ActionRetain, ActionUpdate:
 		record.Status = StatusActive
+		record.LastConfirmedAt = now
 	case ActionDecay:
 		record.Status = StatusDecaying
 	case ActionReview:
@@ -403,14 +411,44 @@ func ApplyDecision(now time.Time, record Record, decision Decision) Record {
 	}
 	record.ReasonCodes = append([]string(nil), decision.ReasonCodes...)
 
+	if record.LastAccessedAt.IsZero() {
+		record.LastAccessedAt = now
+	}
 	if decision.TTL > 0 {
 		record.ExpiresAt = now.Add(decision.TTL)
 	}
 	if decision.ReviewAfter > 0 {
-		record.ReviewAfter = now.Add(decision.ReviewAfter)
+		record.ReviewAfter = now
+		record.ReviewAt = now.Add(decision.ReviewAfter)
+	}
+	if record.HardExpiresAt.IsZero() || (!record.ExpiresAt.IsZero() && record.HardExpiresAt.Before(record.ExpiresAt)) {
+		record.HardExpiresAt = deriveHardExpiry(now, record.Layer, record.ExpiresAt)
 	}
 
 	return record
+}
+
+func deriveHardExpiry(now time.Time, layer Layer, expiresAt time.Time) time.Time {
+	base := expiresAt
+	if base.IsZero() {
+		base = now
+	}
+	switch layer {
+	case LayerInstant:
+		return base.Add(4 * time.Hour)
+	case LayerShort:
+		return base.Add(24 * time.Hour)
+	case LayerLong:
+		return base.Add(30 * 24 * time.Hour)
+	case LayerPermanent:
+		return base.Add(365 * 24 * time.Hour)
+	default:
+		return base.Add(24 * time.Hour)
+	}
+}
+
+func (s *FileStore) Root() string {
+	return s.root
 }
 
 func normalizeHistoryGroup(group HistoryGroup) HistoryGroup {

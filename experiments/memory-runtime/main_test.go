@@ -356,6 +356,76 @@ func TestNormalizeDecisionActionPrefersUpdateForMerge(t *testing.T) {
 	}
 }
 
+func TestEvaluateDecayScanRecordIncludesSoftExpiry(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	record := memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "short-1",
+			Layer:          memory.LayerShort,
+			Status:         memory.StatusActive,
+			CreatedAt:      now.Add(-30 * time.Hour),
+			UpdatedAt:      now.Add(-20 * time.Hour),
+			LastAccessedAt: now.Add(-20 * time.Hour),
+			ReviewAt:       now.Add(-2 * time.Hour),
+			ExpiresAt:      now.Add(-1 * time.Hour),
+			HardExpiresAt:  now.Add(10 * time.Hour),
+		},
+		Summary: "temporary note",
+	}
+	got, include := evaluateDecayScanRecord(memory.DefaultPolicy(), record, now)
+	if !include {
+		t.Fatal("expected record to be included in decay scan")
+	}
+	if len(got.TriggeredBy) == 0 {
+		t.Fatal("expected triggered_by to be populated")
+	}
+	if got.RecommendedAction == "" {
+		t.Fatal("expected recommended action")
+	}
+}
+
+func TestApplyConservativeDecayDeletesHardExpiredShort(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	record := memory.AbstractMemory{
+		Record: memory.Record{
+			ID:            "short-1",
+			Layer:         memory.LayerShort,
+			Status:        memory.StatusActive,
+			CreatedAt:     now.Add(-72 * time.Hour),
+			UpdatedAt:     now.Add(-24 * time.Hour),
+			HardExpiresAt: now.Add(-time.Hour),
+		},
+	}
+	got, applied := applyConservativeDecay(record, now, []string{"hard_expired"})
+	if !applied {
+		t.Fatal("expected hard-expired short memory to be applied")
+	}
+	if got.Status != memory.StatusDeleted {
+		t.Fatalf("expected deleted status, got %q", got.Status)
+	}
+}
+
+func TestApplyConservativeDecayMarksReviewForSoftExpiredLong(t *testing.T) {
+	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+	record := memory.AbstractMemory{
+		Record: memory.Record{
+			ID:        "long-1",
+			Layer:     memory.LayerLong,
+			Status:    memory.StatusActive,
+			CreatedAt: now.Add(-20 * 24 * time.Hour),
+			UpdatedAt: now.Add(-5 * 24 * time.Hour),
+			ExpiresAt: now.Add(-time.Hour),
+		},
+	}
+	got, applied := applyConservativeDecay(record, now, []string{"soft_expired"})
+	if !applied {
+		t.Fatal("expected soft-expired long memory to be applied")
+	}
+	if got.Status != memory.StatusReview {
+		t.Fatalf("expected review status, got %q", got.Status)
+	}
+}
+
 func TestFindMatchingOpenGroupReusesClosedGroupByRefs(t *testing.T) {
 	store := memory.NewMemoryStore()
 	group := memory.HistoryGroup{

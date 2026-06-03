@@ -263,6 +263,28 @@ type layerRunSummary struct {
 	Skipped        bool   `json:"skipped,omitempty"`
 }
 
+type decayScanResult struct {
+	Resident  string            `json:"resident"`
+	StoreDir  string            `json:"store_dir"`
+	ScannedAt time.Time         `json:"scanned_at"`
+	Applied   bool              `json:"applied,omitempty"`
+	Records   []decayScanRecord `json:"records"`
+}
+
+type decayScanRecord struct {
+	ID                string   `json:"id"`
+	Layer             string   `json:"layer"`
+	Status            string   `json:"status"`
+	Summary           string   `json:"summary"`
+	ReviewAt          string   `json:"review_at,omitempty"`
+	ExpiresAt         string   `json:"expires_at,omitempty"`
+	HardExpiresAt     string   `json:"hard_expires_at,omitempty"`
+	TriggeredBy       []string `json:"triggered_by,omitempty"`
+	RecommendedAction string   `json:"recommended_action,omitempty"`
+	TargetLayer       string   `json:"target_layer,omitempty"`
+	ReasonCodes       []string `json:"reason_codes,omitempty"`
+}
+
 type memoryDraft struct {
 	ResidentText    string `json:"resident_text"`
 	MemoryKind      string `json:"memory_kind"`
@@ -294,19 +316,21 @@ func main() {
 	loadDotEnvIfPresent(".env")
 
 	var (
-		baseURL   = flag.String("base-url", envOrDefault("OPENAI_BASE_URL", defaultBaseURL), "OpenAI API base URL")
-		model     = flag.String("model", envOrDefault("OPENAI_MODEL", defaultModel), "OpenAI model ID")
-		resident  = flag.String("resident", "jade", "Resident: jade|amber|onyx")
-		scenario  = flag.String("scenario", "baseline", "Scenario: baseline|busy-day|quiet-day")
-		layer     = flag.String("layer", "short", "Target layer: short|long|permanent")
-		autoRoute = flag.Bool("auto-route", false, "Use memory policy to route the scenario into a target memory layer")
-		allLayers = flag.Bool("all-layers", false, "Generate short, long, and permanent memories in one run")
-		auto      = flag.Bool("auto", false, "Alias of --all-layers for real multi-layer generation")
-		recallID  = flag.String("recall-memory-id", "", "Recall evidence for one abstract memory ID instead of generating new memory")
-		compact   = flag.Bool("compact-store", false, "Compact resident memory store by merging duplicate history groups and remapping source group ids")
-		logDir    = flag.String("log-dir", "experiments/memory-runtime/logs", "Directory to store JSONL request logs")
-		outDir    = flag.String("out-dir", "experiments/memory-runtime/output", "Directory to store generated memory files")
-		verbose   = flag.Bool("verbose", false, "Print streamed text as it arrives")
+		baseURL    = flag.String("base-url", envOrDefault("OPENAI_BASE_URL", defaultBaseURL), "OpenAI API base URL")
+		model      = flag.String("model", envOrDefault("OPENAI_MODEL", defaultModel), "OpenAI model ID")
+		resident   = flag.String("resident", "jade", "Resident: jade|amber|onyx")
+		scenario   = flag.String("scenario", "baseline", "Scenario: baseline|busy-day|quiet-day")
+		layer      = flag.String("layer", "short", "Target layer: short|long|permanent")
+		autoRoute  = flag.Bool("auto-route", false, "Use memory policy to route the scenario into a target memory layer")
+		allLayers  = flag.Bool("all-layers", false, "Generate short, long, and permanent memories in one run")
+		auto       = flag.Bool("auto", false, "Alias of --all-layers for real multi-layer generation")
+		recallID   = flag.String("recall-memory-id", "", "Recall evidence for one abstract memory ID instead of generating new memory")
+		compact    = flag.Bool("compact-store", false, "Compact resident memory store by merging duplicate history groups and remapping source group ids")
+		decayScan  = flag.Bool("decay-scan", false, "Scan resident memory timestamps and print decay/review recommendations")
+		applyDecay = flag.Bool("apply-decay", false, "Apply conservative code-driven decay/review actions for due memory records")
+		logDir     = flag.String("log-dir", "experiments/memory-runtime/logs", "Directory to store JSONL request logs")
+		outDir     = flag.String("out-dir", "experiments/memory-runtime/output", "Directory to store generated memory files")
+		verbose    = flag.Bool("verbose", false, "Print streamed text as it arrives")
 	)
 	flag.Parse()
 
@@ -351,6 +375,26 @@ func main() {
 			"compacted": true,
 			"store_dir": storeDir,
 		})
+		fmt.Println(string(out))
+		return
+	}
+
+	if *decayScan {
+		result, err := runDecayScan(memStore, profile.Name, time.Now().UTC())
+		if err != nil {
+			exitf("decay scan: %v", err)
+		}
+		out, _ := json.Marshal(result)
+		fmt.Println(string(out))
+		return
+	}
+
+	if *applyDecay {
+		result, err := applyDecayScan(memStore, profile.Name, time.Now().UTC())
+		if err != nil {
+			exitf("apply decay: %v", err)
+		}
+		out, _ := json.Marshal(result)
 		fmt.Println(string(out))
 		return
 	}
@@ -2974,6 +3018,138 @@ func recallEvidence(memStore memory.Store, resident, memoryID, outDir string) (m
 	}
 	result["recall_path"] = recallPath
 	return result, nil
+}
+
+func runDecayScan(memStore memory.Store, resident string, now time.Time) (decayScanResult, error) {
+	records, err := memStore.ListAbstractMemories(resident)
+	if err != nil {
+		return decayScanResult{}, err
+	}
+	result := decayScanResult{
+		Resident:  resident,
+		ScannedAt: now,
+		Records:   make([]decayScanRecord, 0, len(records)),
+	}
+	if fs, ok := memStore.(*memory.FileStore); ok {
+		result.StoreDir = fs.Root()
+	}
+	policy := memory.DefaultPolicy()
+	for _, record := range records {
+		entry, include := evaluateDecayScanRecord(policy, record, now)
+		if include {
+			result.Records = append(result.Records, entry)
+		}
+	}
+	return result, nil
+}
+
+func applyDecayScan(memStore memory.Store, resident string, now time.Time) (decayScanResult, error) {
+	result, err := runDecayScan(memStore, resident, now)
+	if err != nil {
+		return decayScanResult{}, err
+	}
+	result.Applied = true
+	records, err := memStore.ListAbstractMemories(resident)
+	if err != nil {
+		return decayScanResult{}, err
+	}
+	byID := make(map[string]memory.AbstractMemory, len(records))
+	for _, record := range records {
+		byID[record.ID] = record
+	}
+	for i := range result.Records {
+		scan := result.Records[i]
+		record, ok := byID[scan.ID]
+		if !ok {
+			continue
+		}
+		updated, applied := applyConservativeDecay(record, now, scan.TriggeredBy)
+		if !applied {
+			continue
+		}
+		if err := memStore.UpsertAbstractMemory(updated); err != nil {
+			return decayScanResult{}, err
+		}
+		result.Records[i].Status = string(updated.Status)
+		result.Records[i].Layer = string(updated.Layer)
+		result.Records[i].ReviewAt = formatOptionalTime(updated.ReviewAt)
+		result.Records[i].ExpiresAt = formatOptionalTime(updated.ExpiresAt)
+		result.Records[i].HardExpiresAt = formatOptionalTime(updated.HardExpiresAt)
+	}
+	return result, nil
+}
+
+func evaluateDecayScanRecord(policy memory.Policy, record memory.AbstractMemory, now time.Time) (decayScanRecord, bool) {
+	var triggers []string
+	if !record.ReviewAt.IsZero() && !now.Before(record.ReviewAt) {
+		triggers = append(triggers, "review_due")
+	}
+	if !record.ExpiresAt.IsZero() && !now.Before(record.ExpiresAt) {
+		triggers = append(triggers, "soft_expired")
+	}
+	if !record.HardExpiresAt.IsZero() && !now.Before(record.HardExpiresAt) {
+		triggers = append(triggers, "hard_expired")
+	}
+	if len(triggers) == 0 {
+		return decayScanRecord{}, false
+	}
+
+	lastTouch := record.LastAccessedAt
+	if lastTouch.IsZero() {
+		lastTouch = record.UpdatedAt
+	}
+	decision := policy.EvaluateDecay(record.Layer, memory.EventSignal{
+		AgeSinceTouch:    now.Sub(lastTouch),
+		AgeSinceCreation: now.Sub(record.CreatedAt),
+		UserPinned:       record.Pinned,
+	})
+	return decayScanRecord{
+		ID:                record.ID,
+		Layer:             string(record.Layer),
+		Status:            string(record.Status),
+		Summary:           record.EffectiveSummary(),
+		ReviewAt:          formatOptionalTime(record.ReviewAt),
+		ExpiresAt:         formatOptionalTime(record.ExpiresAt),
+		HardExpiresAt:     formatOptionalTime(record.HardExpiresAt),
+		TriggeredBy:       triggers,
+		RecommendedAction: string(decision.Action),
+		TargetLayer:       string(decision.TargetLayer),
+		ReasonCodes:       append([]string(nil), decision.ReasonCodes...),
+	}, true
+}
+
+func applyConservativeDecay(record memory.AbstractMemory, now time.Time, triggers []string) (memory.AbstractMemory, bool) {
+	triggered := make(map[string]bool, len(triggers))
+	for _, trigger := range triggers {
+		triggered[trigger] = true
+	}
+
+	if triggered["hard_expired"] && (record.Layer == memory.LayerInstant || record.Layer == memory.LayerShort) {
+		record.Status = memory.StatusDeleted
+		record.UpdatedAt = now
+		record.LastConfirmedAt = now
+		record.ReasonCodes = []string{"hard_expired_code_deleted"}
+		return record, true
+	}
+
+	if triggered["soft_expired"] || triggered["review_due"] {
+		if record.Status != memory.StatusReview {
+			record.Status = memory.StatusReview
+			record.UpdatedAt = now
+			record.LastConfirmedAt = now
+			record.ReasonCodes = []string{"due_for_review"}
+			return record, true
+		}
+	}
+
+	return record, false
+}
+
+func formatOptionalTime(ts time.Time) string {
+	if ts.IsZero() {
+		return ""
+	}
+	return ts.UTC().Format(time.RFC3339)
 }
 
 func commitStoreRecord(memStore memory.Store, resident, sourceRunID string, draft memoryDraft, residentText string, state memory.Record, decision memory.Decision, conflict *conflictDecision, sourceGroupIDs []string) error {
