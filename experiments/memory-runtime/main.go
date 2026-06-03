@@ -22,6 +22,25 @@ const (
 	defaultModel   = "gpt-5.4-mini"
 )
 
+const adjudicationStablePrefix = "" +
+	"Memory adjudication protocol v1.\n" +
+	"- Accept only if the memory is grounded, selective, and worth keeping.\n" +
+	"- Reject if vague, generic, redundant, weakly grounded, or templated.\n" +
+	"- instant = raw anti-error or immediate working pin.\n" +
+	"- short = near-term working memory with explicit decay.\n" +
+	"- long = stage-stable reusable memory.\n" +
+	"- permanent = rare durable boundary across stages.\n" +
+	"- action must reflect the immediate lifecycle move.\n" +
+	"- review_after and expires_after must match actual endurance.\n" +
+	"- reason_codes must be short machine-usable identifiers.\n"
+
+const conflictStablePrefix = "" +
+	"Memory conflict protocol v1.\n" +
+	"- conflict=true if candidate contradicts or near-duplicates stronger existing memory.\n" +
+	"- merge_suggested=true if candidate should fold into existing memory rather than enter as a fresh one.\n" +
+	"- conflict_kinds should be machine-usable tags.\n" +
+	"- resolution must say keep_new, merge_existing, or reject_new with a short reason.\n"
+
 type event struct {
 	Round      int       `json:"round"`
 	Time       time.Time `json:"time"`
@@ -192,38 +211,38 @@ type residentProfile struct {
 }
 
 type generatedMemory struct {
-	Resident       string    `json:"resident"`
-	Layer          string    `json:"layer"`
-	RequestedLayer string    `json:"requested_layer"`
-	RoutedLayer    string    `json:"routed_layer"`
-	CommittedLayer string    `json:"committed_layer"`
-	DecisionAction string    `json:"decision_action,omitempty"`
-	Conflict       any       `json:"conflict,omitempty"`
-	ReviewSchedule any       `json:"review_schedule,omitempty"`
-	ReasonCodes    []string  `json:"reason_codes,omitempty"`
-	Scenario       string    `json:"scenario"`
-	GeneratedAt    time.Time `json:"generated_at"`
-	Model          string    `json:"model"`
-	ResponseID     string    `json:"response_id"`
-	RequestID      string    `json:"request_id"`
-	InputTokens    int       `json:"input_tokens"`
-	CachedTokens   int       `json:"cached_tokens"`
-	OutputTokens   int       `json:"output_tokens"`
-	EventWindow    []event   `json:"event_window"`
-	MemoryText     string    `json:"memory_text"`
-	Accepted       bool      `json:"accepted"`
-	RejectReason   string    `json:"reject_reason,omitempty"`
-	Instructions   string    `json:"instructions"`
-	UserPrompt     string    `json:"user_prompt"`
-	ObservedCache  string    `json:"observed_prompt_cache_key"`
-	DraftCached    int       `json:"draft_cached_tokens,omitempty"`
-	AdjudicationCached int   `json:"adjudication_cached_tokens,omitempty"`
-	VerdictCached  int       `json:"verdict_cached_tokens,omitempty"`
-	RoutingCached  int       `json:"routing_cached_tokens,omitempty"`
-	ConflictCached int       `json:"conflict_cached_tokens,omitempty"`
-	ActionCached   int       `json:"action_cached_tokens,omitempty"`
-	ReviewCached   int       `json:"review_cached_tokens,omitempty"`
-	RecordState    any       `json:"record_state,omitempty"`
+	Resident           string    `json:"resident"`
+	Layer              string    `json:"layer"`
+	RequestedLayer     string    `json:"requested_layer"`
+	RoutedLayer        string    `json:"routed_layer"`
+	CommittedLayer     string    `json:"committed_layer"`
+	DecisionAction     string    `json:"decision_action,omitempty"`
+	Conflict           any       `json:"conflict,omitempty"`
+	ReviewSchedule     any       `json:"review_schedule,omitempty"`
+	ReasonCodes        []string  `json:"reason_codes,omitempty"`
+	Scenario           string    `json:"scenario"`
+	GeneratedAt        time.Time `json:"generated_at"`
+	Model              string    `json:"model"`
+	ResponseID         string    `json:"response_id"`
+	RequestID          string    `json:"request_id"`
+	InputTokens        int       `json:"input_tokens"`
+	CachedTokens       int       `json:"cached_tokens"`
+	OutputTokens       int       `json:"output_tokens"`
+	EventWindow        []event   `json:"event_window"`
+	MemoryText         string    `json:"memory_text"`
+	Accepted           bool      `json:"accepted"`
+	RejectReason       string    `json:"reject_reason,omitempty"`
+	Instructions       string    `json:"instructions"`
+	UserPrompt         string    `json:"user_prompt"`
+	ObservedCache      string    `json:"observed_prompt_cache_key"`
+	DraftCached        int       `json:"draft_cached_tokens,omitempty"`
+	AdjudicationCached int       `json:"adjudication_cached_tokens,omitempty"`
+	VerdictCached      int       `json:"verdict_cached_tokens,omitempty"`
+	RoutingCached      int       `json:"routing_cached_tokens,omitempty"`
+	ConflictCached     int       `json:"conflict_cached_tokens,omitempty"`
+	ActionCached       int       `json:"action_cached_tokens,omitempty"`
+	ReviewCached       int       `json:"review_cached_tokens,omitempty"`
+	RecordState        any       `json:"record_state,omitempty"`
 }
 
 type layerRunSummary struct {
@@ -378,14 +397,14 @@ func routeScenario(resident, scenario string, events []event) (memory.Layer, err
 	if len(events) == 0 {
 		return memory.LayerInstant, nil
 	}
-	signal := distillCanonical(events).ToEventSignal()
+	signal := distillCanonical("", "", events).ToEventSignal()
 	signal.ImpactRounds = len(events)
 	signal.Novelty = estimateNovelty(events)
 	decision := memory.DefaultPolicy().Evaluate(signal)
 	return decision.TargetLayer, nil
 }
 
-func distillCanonical(events []event) memory.CanonicalMemory {
+func distillCanonical(resident, layer string, events []event) memory.CanonicalMemory {
 	distilled := make([]memory.Event, 0, len(events))
 	for _, e := range events {
 		distilled = append(distilled, memory.Event{
@@ -395,7 +414,25 @@ func distillCanonical(events []event) memory.CanonicalMemory {
 			Summary:    e.Summary,
 		})
 	}
-	return memory.DistillEvents(distilled)
+	canonical := memory.DistillEvents(distilled)
+	return specializeCanonical(resident, layer, canonical)
+}
+
+func specializeCanonical(resident, layer string, canonical memory.CanonicalMemory) memory.CanonicalMemory {
+	if resident == "jade" && layer == "permanent" && canonical.Domain == memory.DomainRules {
+		lowerTrigger := strings.ToLower(canonical.Trigger)
+		lowerBelief := strings.ToLower(canonical.CorrectedBelief)
+		if strings.Contains(lowerTrigger, "legibility") || strings.Contains(lowerBelief, "trust") {
+			canonical.Domain = memory.DomainRules
+			canonical.Trigger = "a recovery looked complete before the causal trail was made durable"
+			canonical.MistakenBelief = "a working outcome was enough even if the diagnosis trail stayed loose"
+			canonical.CorrectedBelief = "reliability includes preserving a causal path that can survive the next intervention"
+			canonical.ActionBoundary = "separate fix, cause, and irreversible follow-up whenever later changes may depend on them"
+			canonical.PreservedCost = "repeat faults, bad diagnosis, and irreversible edits built on a lucky recovery"
+			canonical.ScopeLimit = "only applies when future operators or future changes will reuse the recovery path"
+		}
+	}
+	return canonical
 }
 
 func eventRecurrence(events []event) int {
@@ -454,7 +491,7 @@ func runLayer(client *http.Client, memStore memory.Store, baseURL, apiKey, model
 	if err != nil {
 		return layerRunSummary{}, fmt.Errorf("preview event window group: %w", err)
 	}
-	canonical := distillCanonical(eventWindow)
+	canonical := distillCanonical(profile.Name, layer, eventWindow)
 	snapshot, err := loadMemorySnapshot(memStore, profile.Name)
 	if err != nil {
 		return layerRunSummary{}, err
@@ -745,6 +782,7 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 	if reviewDecisionPtr != nil {
 		recordDecision = mergeReviewDecision(recordDecision, *reviewDecisionPtr)
 	}
+	recordDecision = clampDecisionForLayer(layer, recordDecision)
 	routedLayer := recordDecision.TargetLayer
 	recordState := memory.ApplyDecision(now, memory.Record{
 		ID:        fmt.Sprintf("%s-%s-%s", profile.Name, layer, now.Format("20060102T150405Z")),
@@ -754,6 +792,8 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, recordDecision)
+	conflictDecisionPtr = normalizeConflictDecision(conflictDecisionPtr)
+	recordDecision = normalizeDecisionAction(requestedLayer, recordDecision, conflictDecisionPtr)
 	if conflictDecisionPtr != nil && conflictDecisionPtr.MergeSuggested {
 		if targetID := extractMergeTargetID(conflictDecisionPtr.Resolution); targetID != "" {
 			if !strings.HasPrefix(targetID, "virtual:") {
@@ -761,6 +801,14 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 			}
 		}
 	}
+	recordState = memory.ApplyDecision(now, memory.Record{
+		ID:        recordState.ID,
+		Layer:     requestedLayer,
+		Domain:    memory.DomainLessons,
+		Status:    memory.StatusActive,
+		CreatedAt: recordState.CreatedAt,
+		UpdatedAt: now,
+	}, recordDecision)
 
 	record := generatedMemory{
 		Resident:       profile.Name,
@@ -906,6 +954,14 @@ func localDraftIssues(profile residentProfile, layer string, draft memoryDraft) 
 			issues = append(issues, "onyx permanent memory is missing durable leverage/cost signal")
 		}
 	}
+	if profile.Name == "jade" && layer == "permanent" {
+		if strings.Contains(lower, "trust") || strings.Contains(lower, "cooperation") || strings.Contains(lower, "handoff") {
+			issues = append(issues, "jade permanent memory drifted into social-process framing instead of engineering boundary")
+		}
+		if !(strings.Contains(lower, "system") || strings.Contains(lower, "cause") || strings.Contains(lower, "diagn") || strings.Contains(lower, "path") || strings.Contains(lower, "reliab")) {
+			issues = append(issues, "jade permanent memory is missing durable engineering boundary signal")
+		}
+	}
 	if layer == "short" {
 		if strings.Contains(lower, "always") || strings.Contains(lower, "forever") || strings.Contains(lower, "from now on") {
 			issues = append(issues, "short memory sounds too absolute for a temporary working note")
@@ -913,10 +969,39 @@ func localDraftIssues(profile residentProfile, layer string, draft memoryDraft) 
 		if strings.Contains(lower, "i learned that") || strings.Contains(lower, "the lesson is") || strings.Contains(lower, "this proves that") {
 			issues = append(issues, "short memory sounds like a forced lesson instead of a working note")
 		}
+		if strings.Contains(lower, "in the future") || strings.Contains(lower, "across future incidents") || strings.Contains(lower, "from this point forward") {
+			issues = append(issues, "short memory reaches too far beyond the current work block")
+		}
+		if strings.Contains(lower, "for this failure class") || strings.Contains(lower, "the real edge was") || strings.Contains(lower, "the actual repair was") {
+			issues = append(issues, "short memory sounds too distilled and explanatory for a working note")
+		}
+		if strings.Contains(lower, "looked like the fix because") || strings.Contains(lower, "looked like leverage and bought me nothing") {
+			issues = append(issues, "short memory is over-explaining the setup instead of pinning the next-use caution")
+		}
+		if strings.Contains(lower, "the fix only appeared after") || strings.Contains(lower, "the edge is fake") || strings.Contains(lower, "the fix came from") {
+			issues = append(issues, "short memory still spends too much text unpacking the why instead of preserving the immediate warning")
+		}
+		if draft.MemoryKind == "rule" && (draft.TimeScope == "ongoing" || draft.TimeScope == "durable") {
+			issues = append(issues, "short memory tries to become a durable rule")
+		}
+		if profile.Name == "onyx" && strings.Contains(lower, "the actual leverage came from") {
+			issues = append(issues, "onyx short memory explains the strategic read too formally instead of pinning the caution")
+		}
+	}
+	if layer == "long" {
+		if strings.Contains(lower, "later today") || strings.Contains(lower, "next few hours") || strings.Contains(lower, "before the next handoff") {
+			issues = append(issues, "long memory is still framed like a same-day work note")
+		}
 	}
 	if layer == "permanent" {
 		if strings.Contains(lower, "for now") || strings.Contains(lower, "later today") || strings.Contains(lower, "this afternoon") {
 			issues = append(issues, "permanent memory sounds too tied to a temporary work block")
+		}
+		if strings.Contains(lower, "next few hours") || strings.Contains(lower, "next handoff") || strings.Contains(lower, "current ticket") {
+			issues = append(issues, "permanent memory still sounds like an active work note")
+		}
+		if strings.Contains(lower, "because") && strings.Contains(lower, "when") && strings.Contains(lower, "until") {
+			issues = append(issues, "permanent memory is over-explaining itself instead of standing as a durable boundary")
 		}
 	}
 	return issues
@@ -1061,6 +1146,101 @@ func validateAdjudicationDecision(decision adjudicationDecision) []string {
 	issues = append(issues, validateOptionalDurationString("review_after", decision.ReviewAfter)...)
 	issues = append(issues, validateOptionalDurationString("expires_after", decision.ExpiresAfter)...)
 	return issues
+}
+
+func normalizeConflictDecision(decision *conflictDecision) *conflictDecision {
+	if decision == nil {
+		return nil
+	}
+	if decision.MergeSuggested && !decision.Conflict {
+		decision.Conflict = true
+		if len(decision.ConflictKinds) == 0 {
+			decision.ConflictKinds = []string{"merge_candidate"}
+		}
+	}
+	return decision
+}
+
+func clampDecisionForLayer(layer string, decision memory.Decision) memory.Decision {
+	switch layer {
+	case "short":
+		if decision.ReviewAfter == 0 || decision.ReviewAfter > 12*time.Hour {
+			decision.ReviewAfter = 8 * time.Hour
+		}
+		if decision.TTL == 0 || decision.TTL > 36*time.Hour {
+			decision.TTL = 24 * time.Hour
+		}
+	case "instant":
+		if decision.ReviewAfter > 0 && decision.ReviewAfter > 2*time.Hour {
+			decision.ReviewAfter = 2 * time.Hour
+		}
+		if decision.TTL == 0 || decision.TTL > 6*time.Hour {
+			decision.TTL = 2 * time.Hour
+		}
+	case "permanent":
+		if decision.TargetLayer != memory.LayerPermanent {
+			return decision
+		}
+		if decision.TTL > 0 && decision.TTL < 30*24*time.Hour {
+			decision.TTL = 30 * 24 * time.Hour
+		}
+	}
+	if decision.TTL > 0 && decision.ReviewAfter > 0 && decision.ReviewAfter > decision.TTL {
+		switch layer {
+		case "short":
+			decision.ReviewAfter = minDuration(decision.ReviewAfter, 8*time.Hour)
+			decision.TTL = maxDuration(decision.TTL, 24*time.Hour)
+		case "long":
+			decision.ReviewAfter = minDuration(decision.ReviewAfter, 7*24*time.Hour)
+			decision.TTL = maxDuration(decision.TTL, 30*24*time.Hour)
+		case "permanent":
+			decision.ReviewAfter = minDuration(decision.ReviewAfter, 30*24*time.Hour)
+			decision.TTL = maxDuration(decision.TTL, 365*24*time.Hour)
+		default:
+			decision.ReviewAfter = decision.TTL
+		}
+		if decision.ReviewAfter > decision.TTL {
+			decision.ReviewAfter = decision.TTL
+		}
+	}
+	return decision
+}
+
+func normalizeDecisionAction(requestedLayer memory.Layer, decision memory.Decision, conflict *conflictDecision) memory.Decision {
+	if conflict != nil && conflict.MergeSuggested {
+		if decision.Action == memory.ActionCreate || decision.Action == memory.ActionPromote {
+			decision.Action = memory.ActionUpdate
+		}
+		return decision
+	}
+
+	switch {
+	case decision.Action == memory.ActionPromote && decision.TargetLayer == requestedLayer:
+		decision.Action = memory.ActionCreate
+	case decision.Action == memory.ActionPromote && decision.TargetLayer < requestedLayer:
+		decision.Action = memory.ActionCreate
+	case decision.Action == memory.ActionCreate && decision.TargetLayer > requestedLayer:
+		decision.Action = memory.ActionPromote
+	}
+
+	return decision
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a == 0 {
+		return b
+	}
+	if b == 0 || a < b {
+		return a
+	}
+	return b
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func validateOptionalDurationString(field, value string) []string {
@@ -1348,26 +1528,43 @@ func buildDraftPrompt(profile residentProfile, layer, scenario string, events []
 	b.WriteString("- resident core concern: " + profile.CoreConcern + "\n")
 	if layer == "short" {
 		b.WriteString("- if it naturally survives, short memory often keeps: " + profile.ShortMustInclude + "\n")
-		b.WriteString("- short memory is a working note for the next few hours, not a durable doctrine\n")
+		b.WriteString("- short memory is a working note for the next few hours, not a durable doctrine or mini postmortem\n")
+		b.WriteString("- write what needs to stay available during the next work block, even if it sounds narrow or unglamorous\n")
+		b.WriteString("- it is acceptable if the memory is just one concrete caution, one local read, or one thing not to misread again soon\n")
+		b.WriteString("- prefer one pinned caution over a full explanation; if the resident already knows the setup, do not retell it at length\n")
+		b.WriteString("- avoid phrases that sound like a polished diagnosis summary; this should feel ready-to-reuse, not ready-to-publish\n")
+		b.WriteString("- if two sentences are used, the second should sharpen the warning, not re-explain the whole causal story\n")
 		b.WriteString("- include a concrete drop_condition saying when this memory should be deleted or allowed to disappear\n")
 		b.WriteString("- if the note would stop being useful after today's work block, say that plainly in drop_condition\n")
 	} else if layer == "long" {
 		b.WriteString("- if it naturally survives, long memory often keeps: " + profile.LongMustInclude + "\n")
+		b.WriteString("- long memory should describe a pattern that stays useful across repeated situations in this stage, not just the next move\n")
+		b.WriteString("- it may still be contingent and revisable; do not write it like an eternal law\n")
 	} else {
 		b.WriteString("- if it naturally survives, permanent memory often keeps: " + profile.PermanentMustInclude + "\n")
 		b.WriteString("- permanent memories must survive outside this one setup story; if the rule only fits this incident, do not promote it\n")
+		b.WriteString("- permanent memory should feel like a durable identity, strategy, or world boundary, not merely the strongest version of today's lesson\n")
+		b.WriteString("- let permanent memory stand like a boundary or governing sentence; avoid over-arguing it inside the memory itself\n")
 		b.WriteString("- permanent memory should usually leave drop_condition empty unless there is a clear review condition rather than a deletion condition\n")
 	}
 	switch profile.Name {
 	case "jade":
 		b.WriteString("- jade often keeps what changes diagnosis, reversibility, execution quality, or technical confidence\n")
 		b.WriteString("- if only one narrow technical realization stayed, it is enough to keep only that\n")
+		if layer == "permanent" {
+			b.WriteString("- for jade permanent memory, stay in engineering reality: system boundaries, causal diagnosis, path narrowing, reversibility, reliability\n")
+			b.WriteString("- do not center trust, handoff, coordination, or social structure unless they are clearly subordinate to engineering reliability\n")
+		}
 	case "amber":
 		b.WriteString("- amber often keeps what preserves legibility, handoff truth, cooperation tone, or the real shape of shared work\n")
 		b.WriteString("- if the memory is mostly about what another person would misunderstand, that alone can be enough\n")
 	case "onyx":
 		b.WriteString("- onyx often keeps what changes leverage, exposure, cost, future room to move, or the truth about a false edge\n")
 		b.WriteString("- if the memory is mainly about a fake advantage collapsing, that alone can be enough\n")
+		if layer == "short" {
+			b.WriteString("- onyx short memory should read like a tactical self-warning before the next move, not like a polished strategic recap\n")
+			b.WriteString("- prefer a sharp priced caution over a three-part explanation\n")
+		}
 	}
 	b.WriteString("\nProduce JSON with the required schema only.\n")
 	return b.String()
@@ -1405,6 +1602,11 @@ func buildAdjudicationInstructions(profile residentProfile, layer string) string
 		"Reject vague, generic, redundant, weakly grounded, or overly templated drafts.",
 		"Reject drafts whose resident voice could be swapped with another resident without meaningful loss.",
 		"Reject permanent drafts that do not show believable durable signal.",
+		"Reject short drafts that read like mini-essays, moral lessons, or stage-level strategy summaries instead of near-term working retention.",
+		"Reject short drafts that spend too many words retelling setup instead of pinning the next-use caution.",
+		"Reject long drafts that are still mostly about one immediate next step rather than a reusable stage pattern.",
+		"Reject permanent drafts that are merely upgraded long memories without a true cross-stage boundary.",
+		"Reject permanent drafts that explain themselves like an essay instead of standing as a durable boundary.",
 		"If accepted is false, reject_reason must be non-empty and reason_codes may be empty.",
 		"If accepted is true, target_layer, action, and reason_codes must be coherent with the memory's real endurance.",
 		"Layer under review: " + layer + ".",
@@ -1430,7 +1632,8 @@ func buildVerdictPrompt(layer string, events []event, draft memoryDraft) string 
 
 func buildAdjudicationPrompt(profile residentProfile, layer, scenario string, events []event, draft memoryDraft) string {
 	var b strings.Builder
-	b.WriteString("Adjudicate this draft in one pass.\n")
+	b.WriteString(adjudicationStablePrefix)
+	b.WriteString("\nAdjudicate this draft in one pass.\n")
 	b.WriteString("Resident: " + profile.Name + "\n")
 	b.WriteString("Scenario: " + scenario + "\n")
 	b.WriteString("Requested layer: " + layer + "\n")
@@ -1443,17 +1646,9 @@ func buildAdjudicationPrompt(profile residentProfile, layer, scenario string, ev
 	b.WriteString("\nDraft JSON:\n")
 	raw, _ := json.MarshalIndent(draft, "", "  ")
 	b.Write(raw)
-	b.WriteString("\n\nRules:\n")
-	b.WriteString("- accepted=false if the draft is vague, generic, repetitive, weakly grounded, or not worth keeping\n")
-	b.WriteString("- choose permanent only if this clearly survives beyond the immediate incident and encodes a durable boundary\n")
-	b.WriteString("- choose long only if the memory is stable and reusable for this stage\n")
-	b.WriteString("- choose short if it is useful soon but not yet stable enough for long retention\n")
-	b.WriteString("- choose instant only if it is raw working context or anti-error pinning\n")
-	b.WriteString("- action must reflect what should happen now: create, update, promote, retain, decay, delete, or review\n")
-	b.WriteString("- needs_review/review_after/expires_after must match the chosen layer and memory endurance\n")
+	b.WriteString("\n\nDynamic checks:\n")
 	b.WriteString("- durations must be returned in Go duration strings like 8h, 24h, or 168h\n")
 	b.WriteString("- issues must be short strings\n")
-	b.WriteString("- reason_codes must be short machine-usable identifiers\n")
 	return b.String()
 }
 
@@ -2119,7 +2314,8 @@ func requestConflictDecision(client *http.Client, baseURL, apiKey, model string,
 		return streamResult{}, nil, nil
 	}
 	var b strings.Builder
-	b.WriteString("Check whether this accepted draft conflicts with existing memory.\n")
+	b.WriteString(conflictStablePrefix)
+	b.WriteString("\nCheck whether this accepted draft conflicts with existing memory.\n")
 	b.WriteString("Resident: " + profile.Name + "\n")
 	b.WriteString("Scenario: " + scenario + "\n")
 	b.WriteString("Requested layer: " + layer + "\n\n")
@@ -2139,11 +2335,7 @@ func requestConflictDecision(client *http.Client, baseURL, apiKey, model string,
 	b.WriteString("\nCandidate draft:\n")
 	rawDraft, _ := json.MarshalIndent(draft, "", "  ")
 	b.Write(rawDraft)
-	b.WriteString("\n\nRules:\n")
-	b.WriteString("- mark conflict=true if the new memory contradicts a stronger existing memory or is a near-duplicate that should not be separately committed\n")
-	b.WriteString("- mark merge_suggested=true if the candidate should be merged into an existing memory rather than stored as a fresh one\n")
-	b.WriteString("- conflict_kinds should contain machine-readable tags like duplicate_scope, contradictory_rule, weaker_restatement\n")
-	b.WriteString("- resolution must say keep_new, merge_existing, or reject_new with a short reason\n")
+	b.WriteString("\n\nDynamic checks:\n")
 	b.WriteString("- if merge_existing is chosen and a target record clearly fits, include it as merge_existing id=<record_id>\n")
 
 	payload := buildConflictDecisionPayload(model, profile.PromptCacheKey+"-"+layer+"-conflict-v1", b.String())
@@ -2459,15 +2651,15 @@ func loadMemorySnapshot(memStore memory.Store, resident string) ([]memorySnapsho
 	entries := make([]memorySnapshotEntry, 0, len(snapshot))
 	for _, item := range snapshot {
 		entries = append(entries, memorySnapshotEntry{
-			ID:             item.ID,
-			Layer:          string(item.Layer),
-			DecisionAction: string(item.DecisionAction),
-			Summary:        item.Summary,
-			ResidentText:   item.ResidentText,
-			MemoryKind:     item.MemoryKind,
-			Salience:       item.Salience,
-			EmotionTone:    item.EmotionTone,
-			TimeScope:      item.TimeScope,
+			ID:              item.ID,
+			Layer:           string(item.Layer),
+			DecisionAction:  string(item.DecisionAction),
+			Summary:         item.Summary,
+			ResidentText:    item.ResidentText,
+			MemoryKind:      item.MemoryKind,
+			Salience:        item.Salience,
+			EmotionTone:     item.EmotionTone,
+			TimeScope:       item.TimeScope,
 			RetentionIntent: item.RetentionIntent,
 		})
 	}

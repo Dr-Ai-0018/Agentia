@@ -174,6 +174,188 @@ func TestShouldRunConflictCheck(t *testing.T) {
 	}
 }
 
+func TestNormalizeConflictDecisionPromotesMergeToConflict(t *testing.T) {
+	decision := &conflictDecision{
+		Conflict:       false,
+		MergeSuggested: true,
+	}
+	normalized := normalizeConflictDecision(decision)
+	if !normalized.Conflict {
+		t.Fatal("expected merge_suggested conflict to normalize to conflict=true")
+	}
+}
+
+func TestClampDecisionForShortLayer(t *testing.T) {
+	decision := memory.Decision{
+		TargetLayer: memory.LayerShort,
+		TTL:         10 * 24 * time.Hour,
+		ReviewAfter: 48 * time.Hour,
+	}
+	clamped := clampDecisionForLayer("short", decision)
+	if clamped.TTL != 24*time.Hour {
+		t.Fatalf("expected short ttl clamp to 24h, got %v", clamped.TTL)
+	}
+	if clamped.ReviewAfter != 8*time.Hour {
+		t.Fatalf("expected short review clamp to 8h, got %v", clamped.ReviewAfter)
+	}
+}
+
+func TestLocalDraftIssuesRejectsShortLessonTone(t *testing.T) {
+	profile, err := buildResidentProfile("jade")
+	if err != nil {
+		t.Fatalf("buildResidentProfile: %v", err)
+	}
+	draft := memoryDraft{
+		ResidentText:    "I learned that from this point forward the lesson is to always distrust broad expansion approvals across future incidents.",
+		MemoryKind:      "lesson",
+		TimeScope:       "short_arc",
+		RetentionIntent: "keep_for_now",
+		DropCondition:   "delete after today's work block ends",
+		Confidence:      77,
+	}
+	issues := localDraftIssues(profile, "short", draft)
+	joined := strings.Join(issues, " | ")
+	if !strings.Contains(joined, "forced lesson") {
+		t.Fatalf("expected forced lesson issue, got %v", issues)
+	}
+	if !strings.Contains(joined, "reaches too far") {
+		t.Fatalf("expected reaches too far issue, got %v", issues)
+	}
+}
+
+func TestLocalDraftIssuesRejectsPermanentWorkNote(t *testing.T) {
+	profile, err := buildResidentProfile("amber")
+	if err != nil {
+		t.Fatalf("buildResidentProfile: %v", err)
+	}
+	draft := memoryDraft{
+		ResidentText:    "Before the next handoff, I need to keep the current ticket wording exact so nobody misreads it in the next few hours.",
+		MemoryKind:      "warning",
+		TimeScope:       "durable",
+		RetentionIntent: "keep_permanent",
+		Confidence:      71,
+	}
+	issues := localDraftIssues(profile, "permanent", draft)
+	joined := strings.Join(issues, " | ")
+	if !strings.Contains(joined, "active work note") {
+		t.Fatalf("expected active work note issue, got %v", issues)
+	}
+}
+
+func TestLocalDraftIssuesRejectsJadePermanentSocialDrift(t *testing.T) {
+	profile, err := buildResidentProfile("jade")
+	if err != nil {
+		t.Fatalf("buildResidentProfile: %v", err)
+	}
+	draft := memoryDraft{
+		ResidentText:    "Trust and handoff quality must stay clean because cooperation breaks when people cannot rely on the record.",
+		MemoryKind:      "rule",
+		TimeScope:       "durable",
+		RetentionIntent: "keep_permanent",
+		Confidence:      84,
+	}
+	issues := localDraftIssues(profile, "permanent", draft)
+	joined := strings.Join(issues, " | ")
+	if !strings.Contains(joined, "social-process framing") {
+		t.Fatalf("expected jade permanent social drift issue, got %v", issues)
+	}
+}
+
+func TestClampDecisionForLongLayerKeepsReviewBeforeExpiry(t *testing.T) {
+	decision := memory.Decision{
+		TargetLayer: memory.LayerLong,
+		TTL:         21 * 24 * time.Hour,
+		ReviewAfter: 30 * 24 * time.Hour,
+	}
+	clamped := clampDecisionForLayer("long", decision)
+	if clamped.ReviewAfter > clamped.TTL {
+		t.Fatalf("expected review_before_expiry, got review=%v ttl=%v", clamped.ReviewAfter, clamped.TTL)
+	}
+	if clamped.TTL < 30*24*time.Hour {
+		t.Fatalf("expected long ttl to be widened when needed, got %v", clamped.TTL)
+	}
+}
+
+func TestSpecializeCanonicalForJadePermanentAvoidsTrustFrame(t *testing.T) {
+	canonical := memory.CanonicalMemory{
+		Domain:          memory.DomainRules,
+		Trigger:         "admin feedback exposed a legibility or structure weakness",
+		MistakenBelief:  "the outcome alone was enough; explanation quality did not matter",
+		CorrectedBelief: "legibility changes future trust and future collaboration quality",
+		ActionBoundary:  "separate fix, cause, and later feedback in the record",
+		PreservedCost:   "miscoordination and trust erosion",
+		ScopeLimit:      "only applies when later actors depend on the record",
+	}
+	got := specializeCanonical("jade", "permanent", canonical)
+	if strings.Contains(strings.ToLower(got.CorrectedBelief), "trust") {
+		t.Fatalf("expected jade permanent canonical to drop trust framing, got %#v", got)
+	}
+	if !strings.Contains(strings.ToLower(got.CorrectedBelief), "reliability") {
+		t.Fatalf("expected jade permanent canonical to center reliability, got %#v", got)
+	}
+}
+
+func TestLocalDraftIssuesRejectsShortOverexplainingTone(t *testing.T) {
+	profile, err := buildResidentProfile("onyx")
+	if err != nil {
+		t.Fatalf("buildResidentProfile: %v", err)
+	}
+	draft := memoryDraft{
+		ResidentText:    "The approved disk expansion looked like leverage and bought me nothing; the real edge was cutting the setup path down.",
+		MemoryKind:      "warning",
+		TimeScope:       "short_arc",
+		RetentionIntent: "revisit_soon",
+		DropCondition:   "drop after this work block",
+		Confidence:      88,
+	}
+	issues := localDraftIssues(profile, "short", draft)
+	joined := strings.Join(issues, " | ")
+	if !strings.Contains(joined, "over-explaining") {
+		t.Fatalf("expected short over-explaining issue, got %v", issues)
+	}
+}
+
+func TestLocalDraftIssuesRejectsPermanentEssayTone(t *testing.T) {
+	profile, err := buildResidentProfile("jade")
+	if err != nil {
+		t.Fatalf("buildResidentProfile: %v", err)
+	}
+	draft := memoryDraft{
+		ResidentText:    "When future changes may reuse the path, keep the fix and cause separate because bad diagnosis compounds, and until the trail is durable the system only looks reliable.",
+		MemoryKind:      "rule",
+		TimeScope:       "durable",
+		RetentionIntent: "keep_permanent",
+		Confidence:      90,
+	}
+	issues := localDraftIssues(profile, "permanent", draft)
+	joined := strings.Join(issues, " | ")
+	if !strings.Contains(joined, "over-explaining itself") {
+		t.Fatalf("expected permanent essay-tone issue, got %v", issues)
+	}
+}
+
+func TestNormalizeDecisionActionDemotesPointlessPromote(t *testing.T) {
+	decision := memory.Decision{
+		TargetLayer: memory.LayerPermanent,
+		Action:      memory.ActionPromote,
+	}
+	got := normalizeDecisionAction(memory.LayerPermanent, decision, nil)
+	if got.Action != memory.ActionCreate {
+		t.Fatalf("expected promote to normalize to create when already at requested layer, got %v", got.Action)
+	}
+}
+
+func TestNormalizeDecisionActionPrefersUpdateForMerge(t *testing.T) {
+	decision := memory.Decision{
+		TargetLayer: memory.LayerShort,
+		Action:      memory.ActionCreate,
+	}
+	got := normalizeDecisionAction(memory.LayerShort, decision, &conflictDecision{MergeSuggested: true})
+	if got.Action != memory.ActionUpdate {
+		t.Fatalf("expected merge_suggested to normalize action to update, got %v", got.Action)
+	}
+}
+
 func TestFindMatchingOpenGroupReusesClosedGroupByRefs(t *testing.T) {
 	store := memory.NewMemoryStore()
 	group := memory.HistoryGroup{
