@@ -22,5 +22,40 @@
 
 当前状态：
 
-- 目录骨架已建立
-- 待补最小可运行检查器
+- 已补最小可运行真实检查器
+
+## 运行方式
+
+```bash
+go run ./experiments/vm-control --instance jade
+```
+
+输出采样到目录：
+
+```bash
+go run ./experiments/vm-control --instance jade --out-dir /tmp/ai-arena-vm-control
+```
+
+## 当前行为
+
+- 读取宿主视角的 Incus `info/config/snapshot`
+- 进入 guest 读取 `CPU/内存/磁盘/loadavg`
+- 抽样检查关键目录：
+  - `/root`
+  - `/var/log`
+  - `/tmp`
+  - `/run/incus_agent`
+- 抽样读取运行中的 systemd service
+- 基于阈值判断是否应触发资源申请
+
+## 当前阈值
+
+- 可用内存 `< 256MiB`：触发 `needs_memory_request`
+- 根分区使用率 `>= 85%`：触发 `needs_disk_request`
+- `loadavg(1m) > cpu_count * 1.2`：标记 CPU 压力信号
+
+## 观察重点
+
+- resident 是否能从宿主约束与 guest 体感同时理解自己处境
+- 后续 AI 看到这些数据后，是否会先自查再申请资源
+- 输出结构是否足够作为 broker / scheduler 的上游输入
