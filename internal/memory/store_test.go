@@ -41,7 +41,7 @@ func TestMemoryStoreUpsertAbstractMemoryAndSnapshot(t *testing.T) {
 		Resident:       "onyx",
 		Summary:        "long-term leverage lesson",
 		ResidentText:   "I should stop paying for the false edge.",
-		Semantic:       SemanticMemory{NewReadToKeep: "treat visible approval as non-causal until the failure mode changes"},
+		Semantic:       SemanticMemory{MemoryKind: "lesson", Salience: 4, RetentionIntent: "keep_long"},
 		DecisionAction: ActionCreate,
 		SourceGroupIDs: []string{"group-1"},
 	})
@@ -133,7 +133,7 @@ func TestFileStoreRoundTripBundle(t *testing.T) {
 		Resident:        "jade",
 		Summary:         "stable engineering law",
 		ResidentText:    "I should keep the narrow recovery path close.",
-		Semantic:        SemanticMemory{CarryForwardRule: "freeze broad retries after same-cause repetition"},
+		Semantic:        SemanticMemory{MemoryKind: "rule", TimeScope: "durable", RetentionIntent: "keep_permanent"},
 		DecisionAction:  ActionCreate,
 		SourceGroupIDs:  []string{"group-1"},
 		ParentMemoryIDs: []string{},
@@ -171,8 +171,8 @@ func TestFileStoreRoundTripBundle(t *testing.T) {
 	if memories[0].ResidentText != "I should keep the narrow recovery path close." {
 		t.Fatalf("unexpected resident text: %q", memories[0].ResidentText)
 	}
-	if memories[0].Semantic.CarryForwardRule != "freeze broad retries after same-cause repetition" {
-		t.Fatalf("unexpected semantic carry_forward_rule: %q", memories[0].Semantic.CarryForwardRule)
+	if memories[0].Semantic.RetentionIntent != "keep_permanent" {
+		t.Fatalf("unexpected semantic retention_intent: %q", memories[0].Semantic.RetentionIntent)
 	}
 
 	groups, err := store.ListHistoryGroups("jade")
@@ -286,7 +286,7 @@ func TestCompactResidentMergesDuplicateHistoryGroupsAndRemapsMemory(t *testing.T
 		Resident:       "onyx",
 		Summary:        "memory",
 		ResidentText:   "The real edge was narrower than the approval made it look.",
-		Semantic:       SemanticMemory{WhyItMatters: "without this I keep paying twice for the same miss"},
+		Semantic:       SemanticMemory{MemoryKind: "lesson", EmotionTone: "wary", RetentionIntent: "keep_long"},
 		DecisionAction: ActionUpdate,
 		SourceGroupIDs: []string{"group-a", "group-b"},
 	}
@@ -327,22 +327,13 @@ func TestCompactResidentMergesDuplicateHistoryGroupsAndRemapsMemory(t *testing.T
 func TestAbstractMemoryEffectiveSummaryFallbacks(t *testing.T) {
 	record := AbstractMemory{
 		ResidentText: "resident-facing note",
-		Semantic: SemanticMemory{
-			NewReadToKeep:    "new read",
-			CarryForwardRule: "carry rule",
-		},
 	}
 	if got := record.EffectiveSummary(); got != "resident-facing note" {
 		t.Fatalf("expected resident_text fallback, got %q", got)
 	}
 
 	record.ResidentText = ""
-	if got := record.EffectiveSummary(); got != "new read" {
-		t.Fatalf("expected semantic fallback, got %q", got)
-	}
-
-	record.Semantic.NewReadToKeep = ""
-	if got := record.EffectiveSummary(); got != "carry rule" {
-		t.Fatalf("expected carry_forward_rule fallback, got %q", got)
+	if got := record.EffectiveSummary(); got != "" {
+		t.Fatalf("expected empty fallback with no resident_text, got %q", got)
 	}
 }

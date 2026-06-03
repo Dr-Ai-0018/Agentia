@@ -67,26 +67,26 @@ type AbstractMemory struct {
 }
 
 type SemanticMemory struct {
-	EventAnchor      string `json:"event_anchor,omitempty"`
-	OldReadToDrop    string `json:"old_read_to_drop,omitempty"`
-	NewReadToKeep    string `json:"new_read_to_keep,omitempty"`
-	CarryForwardRule string `json:"carry_forward_rule,omitempty"`
-	WhyItMatters     string `json:"why_it_matters,omitempty"`
-	ScopeBoundary    string `json:"scope_boundary,omitempty"`
+	MemoryKind      string `json:"memory_kind,omitempty"`
+	Salience        int    `json:"salience,omitempty"`
+	EmotionTone     string `json:"emotion_tone,omitempty"`
+	TimeScope       string `json:"time_scope,omitempty"`
+	RetentionIntent string `json:"retention_intent,omitempty"`
+	DropCondition   string `json:"drop_condition,omitempty"`
 }
 
 type SnapshotEntry struct {
-	ID             string `json:"id"`
-	Layer          Layer  `json:"layer"`
-	DecisionAction Action `json:"decision_action"`
-	Summary        string `json:"summary"`
-	ResidentText   string `json:"resident_text,omitempty"`
-	EventAnchor    string `json:"event_anchor,omitempty"`
-	OldReadToDrop  string `json:"old_read_to_drop,omitempty"`
-	NewReadToKeep  string `json:"new_read_to_keep,omitempty"`
-	CarryForwardRule string `json:"carry_forward_rule,omitempty"`
-	WhyItMatters   string `json:"why_it_matters,omitempty"`
-	ScopeBoundary  string `json:"scope_boundary,omitempty"`
+	ID              string `json:"id"`
+	Layer           Layer  `json:"layer"`
+	DecisionAction  Action `json:"decision_action"`
+	Summary         string `json:"summary"`
+	ResidentText    string `json:"resident_text,omitempty"`
+	MemoryKind      string `json:"memory_kind,omitempty"`
+	Salience        int    `json:"salience,omitempty"`
+	EmotionTone     string `json:"emotion_tone,omitempty"`
+	TimeScope       string `json:"time_scope,omitempty"`
+	RetentionIntent string `json:"retention_intent,omitempty"`
+	DropCondition   string `json:"drop_condition,omitempty"`
 }
 
 type ResidentMemoryBundle struct {
@@ -211,17 +211,17 @@ func BuildSnapshot(records []AbstractMemory, limit int) []SnapshotEntry {
 			continue
 		}
 		entries = append(entries, SnapshotEntry{
-			ID:               record.ID,
-			Layer:            record.Layer,
-			DecisionAction:   record.DecisionAction,
-			Summary:          record.EffectiveSummary(),
-			ResidentText:     record.ResidentText,
-			EventAnchor:      record.Semantic.EventAnchor,
-			OldReadToDrop:    record.Semantic.OldReadToDrop,
-			NewReadToKeep:    record.Semantic.NewReadToKeep,
-			CarryForwardRule: record.Semantic.CarryForwardRule,
-			WhyItMatters:     record.Semantic.WhyItMatters,
-			ScopeBoundary:    record.Semantic.ScopeBoundary,
+			ID:              record.ID,
+			Layer:           record.Layer,
+			DecisionAction:  record.DecisionAction,
+			Summary:         record.EffectiveSummary(),
+			ResidentText:    record.ResidentText,
+			MemoryKind:      record.Semantic.MemoryKind,
+			Salience:        record.Semantic.Salience,
+			EmotionTone:     record.Semantic.EmotionTone,
+			TimeScope:       record.Semantic.TimeScope,
+			RetentionIntent: record.Semantic.RetentionIntent,
+			DropCondition:   record.Semantic.DropCondition,
 		})
 	}
 	return entries
@@ -232,17 +232,11 @@ func (m AbstractMemory) EffectiveSummary() string {
 		return strings.TrimSpace(m.Summary)
 	}
 	if strings.TrimSpace(m.ResidentText) != "" {
-		return strings.TrimSpace(m.ResidentText)
-	}
-	parts := []string{
-		strings.TrimSpace(m.Semantic.NewReadToKeep),
-		strings.TrimSpace(m.Semantic.CarryForwardRule),
-		strings.TrimSpace(m.Semantic.WhyItMatters),
-	}
-	for _, part := range parts {
-		if part != "" {
-			return part
+		text := strings.TrimSpace(m.ResidentText)
+		if idx := strings.IndexAny(text, ".!?\n"); idx > 0 {
+			return strings.TrimSpace(text[:idx])
 		}
+		return text
 	}
 	return ""
 }

@@ -125,17 +125,17 @@ type reviewScheduleDecision struct {
 }
 
 type memorySnapshotEntry struct {
-	ID             string `json:"id"`
-	Layer          string `json:"layer"`
-	DecisionAction string `json:"decision_action"`
-	Summary        string `json:"summary"`
-	ResidentText   string `json:"resident_text,omitempty"`
-	EventAnchor    string `json:"event_anchor,omitempty"`
-	OldReadToDrop  string `json:"old_read_to_drop,omitempty"`
-	NewReadToKeep  string `json:"new_read_to_keep,omitempty"`
-	CarryRule      string `json:"carry_forward_rule,omitempty"`
-	WhyItMatters   string `json:"why_it_matters,omitempty"`
-	ScopeBoundary  string `json:"scope_boundary,omitempty"`
+	ID              string `json:"id"`
+	Layer           string `json:"layer"`
+	DecisionAction  string `json:"decision_action"`
+	Summary         string `json:"summary"`
+	ResidentText    string `json:"resident_text,omitempty"`
+	MemoryKind      string `json:"memory_kind,omitempty"`
+	Salience        int    `json:"salience,omitempty"`
+	EmotionTone     string `json:"emotion_tone,omitempty"`
+	TimeScope       string `json:"time_scope,omitempty"`
+	RetentionIntent string `json:"retention_intent,omitempty"`
+	DropCondition   string `json:"drop_condition,omitempty"`
 }
 
 type streamingEvent struct {
@@ -226,15 +226,14 @@ type layerRunSummary struct {
 }
 
 type memoryDraft struct {
-	EventAnchor       string `json:"event_anchor"`
-	OldReadToDrop     string `json:"old_read_to_drop"`
-	NewReadToKeep     string `json:"new_read_to_keep"`
-	CarryForwardRule  string `json:"carry_forward_rule"`
-	WhyItMatters      string `json:"why_it_matters"`
-	ScopeBoundary     string `json:"scope_boundary"`
-	Confidence        int    `json:"confidence"`
-	PromoteOrDecay    string `json:"promote_or_decay"`
-	PermanentDecision string `json:"permanent_decision,omitempty"`
+	ResidentText    string `json:"resident_text"`
+	MemoryKind      string `json:"memory_kind"`
+	Salience        int    `json:"salience"`
+	EmotionTone     string `json:"emotion_tone"`
+	TimeScope       string `json:"time_scope"`
+	RetentionIntent string `json:"retention_intent"`
+	DropCondition   string `json:"drop_condition,omitempty"`
+	Confidence      int    `json:"confidence"`
 }
 
 type memoryVerdict struct {
@@ -418,7 +417,7 @@ func canonicalDecisionImpact(profile residentProfile, layer string, draft memory
 	if layer == "permanent" {
 		score += 0.2
 	}
-	if profile.Name == "onyx" && strings.Contains(strings.ToLower(draft.PermanentDecision), "false edge") {
+	if profile.Name == "onyx" && strings.Contains(strings.ToLower(draft.ResidentText), "false edge") {
 		score += 0.1
 	}
 	if score > 1 {
@@ -707,7 +706,7 @@ func buildVariantPressure(profile residentProfile, layer string, index int) stri
 }
 
 func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, scenario, model string, eventWindow []event, instructions, userPrompt string, payload requestPayload, started time.Time, logDir, outDir string, finalDraft memoryDraft, finalDraftResult streamResult, finalVerdict memoryVerdict, finalVerdictResult streamResult, routingResult streamResult, routingDecisionPtr *routingDecision, conflictResult streamResult, conflictDecisionPtr *conflictDecision, actionResult streamResult, actionDecisionPtr *memoryActionDecision, reviewResult streamResult, reviewDecisionPtr *reviewScheduleDecision) (layerRunSummary, error) {
-	memoryText := renderAcceptedMemory(profile, layer, finalDraft)
+	memoryText := strings.TrimSpace(finalDraft.ResidentText)
 	if !finalVerdict.Accepted {
 		memoryText = ""
 	}
@@ -744,7 +743,9 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 	}, recordDecision)
 	if conflictDecisionPtr != nil && conflictDecisionPtr.MergeSuggested {
 		if targetID := extractMergeTargetID(conflictDecisionPtr.Resolution); targetID != "" {
-			recordState.ID = targetID
+			if !strings.HasPrefix(targetID, "virtual:") {
+				recordState.ID = targetID
+			}
 		}
 	}
 
@@ -775,8 +776,10 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		ObservedCache:  finalDraftResult.ObservedPromptCacheKey,
 		RecordState:    recordState,
 	}
-	if err := commitStoreRecord(memStore, profile.Name, finalDraftResult.ResponseID, finalDraft, memoryText, recordState, recordDecision, conflictDecisionPtr, []string{historyGroup.GroupUUID}); err != nil {
-		return layerRunSummary{}, fmt.Errorf("commit store record: %w", err)
+	if finalVerdict.Accepted {
+		if err := commitStoreRecord(memStore, profile.Name, finalDraftResult.ResponseID, finalDraft, memoryText, recordState, recordDecision, conflictDecisionPtr, []string{historyGroup.GroupUUID}); err != nil {
+			return layerRunSummary{}, fmt.Errorf("commit store record: %w", err)
+		}
 	}
 
 	baseName := fmt.Sprintf("%s-%s-%s-%s", profile.Name, layer, sanitizeFileName(scenario), time.Now().UTC().Format("20060102T150405Z"))
@@ -862,32 +865,33 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 func localDraftIssues(profile residentProfile, layer string, draft memoryDraft) []string {
 	var issues []string
 	issues = append(issues, validateDraftSchema(layer, draft)...)
-	anchorLower := strings.ToLower(strings.TrimSpace(draft.EventAnchor))
-	if anchorLower == "" {
-		issues = append(issues, "event_anchor is empty")
+	text := strings.TrimSpace(draft.ResidentText)
+	if text == "" {
+		issues = append(issues, "resident_text is empty")
 	}
-	if strings.Count(anchorLower, ":") > 1 || strings.Contains(anchorLower, " to ") || strings.Contains(anchorLower, " and ") || strings.Contains(anchorLower, "then") && strings.Contains(anchorLower, "after") {
-		issues = append(issues, "event_anchor reads like a mini timeline instead of a hinge")
+	if len([]rune(text)) < 24 {
+		issues = append(issues, "resident_text is too short to preserve real memory signal")
+	}
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "old belief") || strings.Contains(lower, "new belief") || strings.Contains(lower, "next step") {
+		issues = append(issues, "resident_text reads like an explicit template scaffold")
 	}
 	if profile.Name == "onyx" && layer == "permanent" {
-		decisionLower := strings.ToLower(strings.TrimSpace(draft.PermanentDecision))
-		if decisionLower == "" {
-			issues = append(issues, "permanent_decision is empty")
+		if !(strings.Contains(lower, "false edge") || strings.Contains(lower, "real edge") || strings.Contains(lower, "cost") || strings.Contains(lower, "reputation") || strings.Contains(lower, "leverage")) {
+			issues = append(issues, "onyx permanent memory is missing durable leverage/cost signal")
 		}
-		if strings.HasPrefix(decisionLower, "permanent rule:") || strings.HasPrefix(decisionLower, "retain") || strings.HasPrefix(decisionLower, "promote") || strings.HasPrefix(decisionLower, "keep") {
-			issues = append(issues, "permanent_decision reads like a label or polished slogan, not a hard boundary")
+	}
+	if layer == "short" {
+		if strings.Contains(lower, "always") || strings.Contains(lower, "forever") || strings.Contains(lower, "from now on") {
+			issues = append(issues, "short memory sounds too absolute for a temporary working note")
 		}
-		if !(strings.Contains(decisionLower, "false edge") || strings.Contains(decisionLower, "false win")) {
-			issues = append(issues, "permanent_decision must explicitly name the false edge")
+		if strings.Contains(lower, "i learned that") || strings.Contains(lower, "the lesson is") || strings.Contains(lower, "this proves that") {
+			issues = append(issues, "short memory sounds like a forced lesson instead of a working note")
 		}
-		if !strings.Contains(decisionLower, "real edge") {
-			issues = append(issues, "permanent_decision must explicitly name the real edge")
-		}
-		if !(strings.Contains(decisionLower, "cost") || strings.Contains(decisionLower, "priced cost")) {
-			issues = append(issues, "permanent_decision must explicitly price the cost")
-		}
-		if !containsAll(decisionLower, []string{"false", "real", "cost"}) {
-			issues = append(issues, "permanent_decision is missing the false edge, real edge, or priced cost")
+	}
+	if layer == "permanent" {
+		if strings.Contains(lower, "for now") || strings.Contains(lower, "later today") || strings.Contains(lower, "this afternoon") {
+			issues = append(issues, "permanent memory sounds too tied to a temporary work block")
 		}
 	}
 	return issues
@@ -900,23 +904,16 @@ func localRawDraftIssues(profile residentProfile, layer, raw string) []string {
 		return []string{"raw draft is empty"}
 	}
 	for _, key := range []string{
-		`"event_anchor"`,
-		`"old_read_to_drop"`,
-		`"new_read_to_keep"`,
-		`"carry_forward_rule"`,
-		`"why_it_matters"`,
-		`"scope_boundary"`,
+		`"resident_text"`,
+		`"memory_kind"`,
+		`"salience"`,
+		`"emotion_tone"`,
+		`"time_scope"`,
+		`"retention_intent"`,
 		`"confidence"`,
-		`"promote_or_decay"`,
-		`"permanent_decision"`,
 	} {
 		if strings.Count(trimmed, key) > 1 {
 			issues = append(issues, fmt.Sprintf("raw draft repeats key %s", key))
-		}
-	}
-	if profile.Name == "onyx" && layer == "permanent" {
-		if strings.Count(trimmed, `"permanent_decision"`) != 1 {
-			issues = append(issues, "raw draft must contain exactly one permanent_decision key")
 		}
 	}
 	return issues
@@ -925,13 +922,11 @@ func localRawDraftIssues(profile residentProfile, layer, raw string) []string {
 func validateDraftSchema(layer string, draft memoryDraft) []string {
 	var issues []string
 	requiredStrings := map[string]string{
-		"event_anchor":       draft.EventAnchor,
-		"old_read_to_drop":   draft.OldReadToDrop,
-		"new_read_to_keep":   draft.NewReadToKeep,
-		"carry_forward_rule": draft.CarryForwardRule,
-		"why_it_matters":     draft.WhyItMatters,
-		"scope_boundary":     draft.ScopeBoundary,
-		"promote_or_decay":   draft.PromoteOrDecay,
+		"resident_text":    draft.ResidentText,
+		"memory_kind":      draft.MemoryKind,
+		"emotion_tone":     draft.EmotionTone,
+		"time_scope":       draft.TimeScope,
+		"retention_intent": draft.RetentionIntent,
 	}
 	for field, value := range requiredStrings {
 		if strings.TrimSpace(value) == "" {
@@ -941,20 +936,56 @@ func validateDraftSchema(layer string, draft memoryDraft) []string {
 	if draft.Confidence < 0 || draft.Confidence > 100 {
 		issues = append(issues, "confidence must be between 0 and 100")
 	}
-	allowed := map[string]bool{
-		"keep_short":        true,
-		"promote_long":      true,
-		"promote_permanent": true,
-		"decay":             true,
+	if draft.Salience < 1 || draft.Salience > 5 {
+		issues = append(issues, "salience must be between 1 and 5")
 	}
-	if !allowed[draft.PromoteOrDecay] {
-		issues = append(issues, "promote_or_decay has invalid enum value")
+	if !map[string]bool{"moment": true, "lesson": true, "rule": true, "preference": true, "relationship": true, "warning": true, "milestone": true, "reflection": true}[draft.MemoryKind] {
+		issues = append(issues, "memory_kind has invalid enum value")
 	}
-	if layer == "permanent" && strings.TrimSpace(draft.PermanentDecision) == "" {
-		issues = append(issues, "permanent_decision is required for permanent layer")
+	if !map[string]bool{"neutral": true, "warm": true, "proud": true, "uneasy": true, "relieved": true, "wary": true, "frustrated": true, "determined": true}[draft.EmotionTone] {
+		issues = append(issues, "emotion_tone has invalid enum value")
 	}
-	if layer != "permanent" && strings.TrimSpace(draft.PermanentDecision) != "" {
-		issues = append(issues, "permanent_decision must be empty for non-permanent layer")
+	if !map[string]bool{"momentary": true, "short_arc": true, "ongoing": true, "durable": true}[draft.TimeScope] {
+		issues = append(issues, "time_scope has invalid enum value")
+	}
+	if !map[string]bool{"revisit_soon": true, "keep_for_now": true, "keep_long": true, "keep_permanent": true}[draft.RetentionIntent] {
+		issues = append(issues, "retention_intent has invalid enum value")
+	}
+	dropCondition := strings.TrimSpace(draft.DropCondition)
+	switch layer {
+	case "instant":
+		if dropCondition == "" {
+			issues = append(issues, "instant layer requires drop_condition")
+		}
+		if draft.RetentionIntent == "keep_long" || draft.RetentionIntent == "keep_permanent" {
+			issues = append(issues, "instant layer cannot claim long or permanent retention")
+		}
+		if draft.TimeScope != "momentary" {
+			issues = append(issues, "instant layer should use momentary time_scope")
+		}
+	case "short":
+		if dropCondition == "" {
+			issues = append(issues, "short layer requires drop_condition")
+		}
+		if draft.RetentionIntent == "keep_long" || draft.RetentionIntent == "keep_permanent" {
+			issues = append(issues, "short layer cannot claim long or permanent retention")
+		}
+		if draft.TimeScope == "ongoing" || draft.TimeScope == "durable" {
+			issues = append(issues, "short layer cannot use ongoing or durable time_scope")
+		}
+	case "permanent":
+		if draft.RetentionIntent != "keep_permanent" {
+			issues = append(issues, "permanent layer should use keep_permanent retention_intent")
+		}
+		if draft.TimeScope != "durable" {
+			issues = append(issues, "permanent layer should use durable time_scope")
+		}
+		if draft.MemoryKind == "moment" {
+			issues = append(issues, "permanent layer cannot be a pure moment memory")
+		}
+		if dropCondition != "" {
+			issues = append(issues, "permanent layer should usually leave drop_condition empty")
+		}
 	}
 	return issues
 }
@@ -1015,22 +1046,17 @@ func scoreDraft(profile residentProfile, layer string, draft memoryDraft, verdic
 	}
 	score -= len(verdict.Issues) * 40
 	score += draft.Confidence
+	score += draft.Salience * 10
+	if layer == "permanent" && draft.RetentionIntent == "keep_permanent" {
+		score += 60
+	}
 	if profile.Name == "onyx" && layer == "permanent" {
-		decisionLower := strings.ToLower(draft.PermanentDecision)
-		if containsAll(decisionLower, []string{"false", "real", "cost"}) {
-			score += 80
-		}
-		if strings.Contains(strings.ToLower(draft.EventAnchor), "second") {
-			score += 40
-		}
-		if strings.Contains(decisionLower, "approval") || strings.Contains(decisionLower, "approved") {
-			score += 20
-		}
-		if strings.Contains(decisionLower, "budget") || strings.Contains(decisionLower, "capital") {
-			score += 20
-		}
-		if strings.Contains(decisionLower, "future approval") || strings.Contains(decisionLower, "resource room") || strings.Contains(decisionLower, "backing") {
+		text := strings.ToLower(draft.ResidentText)
+		if strings.Contains(text, "false edge") || strings.Contains(text, "leverage") {
 			score += 30
+		}
+		if strings.Contains(text, "cost") || strings.Contains(text, "reputation") {
+			score += 20
 		}
 	}
 	return score
@@ -1213,48 +1239,44 @@ func buildResidentProfile(name string) (residentProfile, error) {
 
 func buildDraftInstructions(profile residentProfile, layer string) string {
 	voice := profile.LongVoice
-	mustInclude := profile.LongMustInclude
+	layerTendency := profile.LongMustInclude
 	if layer == "short" {
 		voice = profile.ShortVoice
-		mustInclude = profile.ShortMustInclude
+		layerTendency = profile.ShortMustInclude
 	} else if layer == "permanent" {
 		voice = profile.PermanentVoice
-		mustInclude = profile.PermanentMustInclude
+		layerTendency = profile.PermanentMustInclude
 	}
 
 	return strings.Join([]string{
-		"You are generating a structured memory draft for a long-running AI resident inside the AI Arena civilization sandbox.",
+		"You are generating one memory item for a long-running AI resident inside the AI Arena civilization sandbox.",
 		"Output valid JSON only.",
 		"Do not wrap the JSON in markdown fences.",
 		"Do not add explanations before or after the JSON.",
-		"Every field must be concrete, event-grounded, and decision-relevant.",
+		"Let the memory content sound like something this resident would genuinely keep, not like a report or checklist.",
 		"Resident name: " + profile.Name + ".",
 		"Resident persona: " + profile.Persona + ".",
 		"Writing style: " + profile.SystemStyle + ".",
 		"Voice for this layer: " + voice + ".",
 		"Memory bias: " + profile.MemoryBias + ".",
 		"Core concern: " + profile.CoreConcern + ".",
-		"Must include: " + mustInclude + ".",
 		"Target layer: " + layer + ".",
-		"If the evidence is weak, say so plainly instead of inventing confidence.",
-		"Schema keys: event_anchor, old_read_to_drop, new_read_to_keep, carry_forward_rule, why_it_matters, scope_boundary, confidence, promote_or_decay, permanent_decision.",
+		"Typical retention tendency for this layer and resident: " + layerTendency + ".",
+		"This tendency is guidance, not a required outline.",
+		"If the evidence is weak, say so plainly instead of inventing significance.",
+		"Schema keys: resident_text, memory_kind, salience, emotion_tone, time_scope, retention_intent, drop_condition, confidence.",
+		"resident_text is the real memory content. It may be a conclusion, a scene fragment, a warning, a moment, a date-linked note, a feeling that stayed, or a durable rule.",
+		"resident_text must be natural language and must not read like a field-by-field recap.",
+		"Do not force a fixed structure like problem/solution/next-step or old belief/new belief/boundary.",
+		"Do not explain the memory from outside; write it from inside the resident's own retention bias.",
+		"memory_kind must be one of: moment, lesson, rule, preference, relationship, warning, milestone, reflection.",
+		"salience must be an integer from 1 to 5.",
+		"emotion_tone must be one of: neutral, warm, proud, uneasy, relieved, wary, frustrated, determined.",
+		"time_scope must be one of: momentary, short_arc, ongoing, durable.",
+		"retention_intent must be one of: revisit_soon, keep_for_now, keep_long, keep_permanent.",
+		"drop_condition is optional for long/permanent, but strongly expected for instant/short.",
 		"confidence must be an integer from 0 to 100.",
-		"promote_or_decay must be one of: keep_short, promote_long, promote_permanent, decay.",
-		"If layer is not permanent, permanent_decision should be an empty string.",
-		"event_anchor must name only the hinge event or the smallest event chain that caused the belief shift. Do not write a full timeline.",
-		"event_anchor must not contain multiple timestamps, a date range, or an 'X and Y then Z' structure.",
-		"old_read_to_drop must name a specific mistaken interpretation, not a vague phrase like 'generalized notes', 'ad hoc thinking', or 'bad habits'.",
-		"old_read_to_drop must sound like something this resident would actually have believed before seeing the hinge event.",
-		"new_read_to_keep must be a compact rule grounded in the event sequence, not a mini-essay.",
-		"carry_forward_rule must be an executable rule that a later runtime could apply immediately.",
-		"why_it_matters must explain the concrete loss avoided if this memory is retained, not why the behavior is generally good.",
-		"scope_boundary must say what this memory should NOT be generalized to, and must exclude at least one tempting but wrong extrapolation.",
-		"If layer is permanent, permanent_decision must be a bare durable boundary sentence, not a label like 'retain', 'promote', or 'permanent rule'.",
-		"old_read_to_drop style: " + profile.OldReadStyle + ".",
-		"new_read_to_keep style: " + profile.NewReadStyle + ".",
-		"carry_forward_rule style: " + profile.CarryRuleStyle + ".",
-		"why_it_matters lens: " + profile.WhyItMattersLens + ".",
-		"Prefer 1 sentence per field for short, 1-2 for long, and 1-2 for permanent. Avoid filler.",
+		"Prefer 1-3 sentences for short, 2-5 for long, and 2-6 for permanent. Avoid filler.",
 		"Reject vague phrases like 'be better', 'stay disciplined', or 'keep improving' unless tied to a concrete event and action.",
 		"Never use these phrases unless the event window truly justifies them: " + strings.Join(profile.BannedPhrases, ", ") + ".",
 	}, "\n")
@@ -1262,13 +1284,13 @@ func buildDraftInstructions(profile residentProfile, layer string) string {
 
 func buildDraftPrompt(profile residentProfile, layer, scenario string, events []event, canonical memory.CanonicalMemory) string {
 	var b strings.Builder
-	b.WriteString("Generate exactly one structured memory draft.\n")
+	b.WriteString("Generate exactly one memory item.\n")
 	b.WriteString("Context:\n")
 	b.WriteString("- resident: " + profile.Name + "\n")
 	b.WriteString("- scenario: " + scenario + "\n")
 	b.WriteString("- layer: " + layer + "\n")
 	b.WriteString("- persona_bias: " + profile.MemoryBias + "\n\n")
-	b.WriteString("Canonical memory skeleton:\n")
+	b.WriteString("Reference signals from the event window:\n")
 	b.WriteString("- domain: " + string(canonical.Domain) + "\n")
 	b.WriteString("- trigger: " + canonical.Trigger + "\n")
 	b.WriteString("- mistaken_belief: " + canonical.MistakenBelief + "\n")
@@ -1281,58 +1303,37 @@ func buildDraftPrompt(profile residentProfile, layer, scenario string, events []
 		b.WriteString(fmt.Sprintf("- [%s] %s | importance=%d | %s\n", e.Time.Format(time.RFC3339), e.Category, e.Importance, e.Summary))
 	}
 	b.WriteString("\nExtra constraints:\n")
-	b.WriteString("- old_read_to_drop must be something the resident would plausibly think before seeing this exact event sequence\n")
-	b.WriteString("- if resource approval happened but did not solve the real failure, say that explicitly\n")
-	b.WriteString("- if repeated failure narrowed the diagnosis, say that explicitly\n")
 	b.WriteString("- do not summarize the whole day if the layer is short\n")
 	b.WriteString("- do not make this resident sound like the other two residents\n")
-	b.WriteString("- make the structure shared, but make the actual content selection and phrasing resident-specific\n")
+	b.WriteString("- do not write a report, checklist, or postmortem\n")
+	b.WriteString("- do not force a fixed pattern like old belief/new belief/next rule unless that is genuinely what survived\n")
+	b.WriteString("- if what survived is only a moment, a warning, a fragment, a date, a mood, or a narrow conclusion, let it stay that way\n")
+	b.WriteString("- if detail has faded but the conclusion stayed, keep the conclusion and do not invent exact detail\n")
+	b.WriteString("- make the content resident-specific, not just the tone resident-specific\n")
 	b.WriteString("- banned resident phrases: " + strings.Join(profile.BannedPhrases, ", ") + "\n")
 	b.WriteString("- resident core concern: " + profile.CoreConcern + "\n")
-	b.WriteString("- event_anchor should be the smallest pivot, not the whole story\n")
-	b.WriteString("- why_it_matters should answer: what exact mistake, wasted cost, or future confusion happens if this memory is absent?\n")
-	b.WriteString("- scope_boundary should answer: what tempting generalization would be wrong here?\n")
 	if layer == "short" {
-		b.WriteString("- must include: " + profile.ShortMustInclude + "\n")
+		b.WriteString("- if it naturally survives, short memory often keeps: " + profile.ShortMustInclude + "\n")
+		b.WriteString("- short memory is a working note for the next few hours, not a durable doctrine\n")
+		b.WriteString("- include a concrete drop_condition saying when this memory should be deleted or allowed to disappear\n")
+		b.WriteString("- if the note would stop being useful after today's work block, say that plainly in drop_condition\n")
 	} else if layer == "long" {
-		b.WriteString("- must include: " + profile.LongMustInclude + "\n")
+		b.WriteString("- if it naturally survives, long memory often keeps: " + profile.LongMustInclude + "\n")
 	} else {
-		b.WriteString("- must include: " + profile.PermanentMustInclude + "\n")
+		b.WriteString("- if it naturally survives, permanent memory often keeps: " + profile.PermanentMustInclude + "\n")
 		b.WriteString("- permanent memories must survive outside this one setup story; if the rule only fits this incident, do not promote it\n")
+		b.WriteString("- permanent memory should usually leave drop_condition empty unless there is a clear review condition rather than a deletion condition\n")
 	}
 	switch profile.Name {
 	case "jade":
-		b.WriteString("- prioritize failure mode, diagnostic narrowing, and reversibility over social framing\n")
-		b.WriteString("- if one event is merely enabling context and another event reveals the true fault, center the true fault\n")
-		b.WriteString("- why_it_matters should mention what engineering mistake or unrecoverable drift is avoided\n")
+		b.WriteString("- jade often keeps what changes diagnosis, reversibility, execution quality, or technical confidence\n")
+		b.WriteString("- if only one narrow technical realization stayed, it is enough to keep only that\n")
 	case "amber":
-		b.WriteString("- prioritize what another future collaborator could misunderstand if this memory were absent\n")
-		b.WriteString("- preserve the sequence only insofar as it improves handoff, shared diagnosis, or coordination trust\n")
-		b.WriteString("- why_it_matters should mention what future handoff or shared diagnosis would go wrong without this memory\n")
-		if layer == "long" {
-			b.WriteString("- use the admin demand for cleaner structure as the main long-memory hinge if it converts a local fix into a reusable handoff boundary\n")
-			b.WriteString("- anchor the memory on the exact point where another person would take the wrong next step if left with the broad version\n")
-			b.WriteString("- old_read_to_drop must be a bad coordination read, not just a bad debugging read\n")
-			b.WriteString("- new_read_to_keep must name what needs to stay legible for the next collaborator, not just what fixed the bug\n")
-			b.WriteString("- carry_forward_rule must explicitly separate three things for the next handoff: the broad path that failed, the narrow path that recovered, and the approval/change that did not fix the failure\n")
-			b.WriteString("- scope_boundary must exclude at least one technically similar case where handoff-specific caution is unnecessary\n")
-			b.WriteString("- why_it_matters must mention the exact wrong rerun or wrong written summary a later collaborator would produce if this memory were missing\n")
-		}
+		b.WriteString("- amber often keeps what preserves legibility, handoff truth, cooperation tone, or the real shape of shared work\n")
+		b.WriteString("- if the memory is mostly about what another person would misunderstand, that alone can be enough\n")
 	case "onyx":
-		b.WriteString("- prioritize where the apparent advantage was false and where the real leverage or wasted cost actually came from\n")
-		b.WriteString("- if a spend or approval did not buy the real fix, say that directly and price the mistake\n")
-		b.WriteString("- why_it_matters should mention what future cost, exposure, or fake leverage would recur if this memory were absent\n")
-		if layer == "permanent" {
-			b.WriteString("- center the second same-cause failure after approval as the hinge; that is where the fake edge should collapse\n")
-			b.WriteString("- center the false edge, not the cleanup: name what looked like the win and why it was fake\n")
-			b.WriteString("- event_anchor should point to the collapse moment: the second same-cause failure after approval, not a range and not the whole story\n")
-			b.WriteString("- old_read_to_drop must sound like a hungry strategist gambling on a shortcut, not a generic process complaint\n")
-			b.WriteString("- new_read_to_keep must be a hard law about fake leverage, hidden cost, or reputation damage under constraint\n")
-			b.WriteString("- carry_forward_rule must include a concrete trigger for when to stop buying the illusion and absorb the restructuring cost\n")
-			b.WriteString("- scope_boundary must exclude at least one aggressive move that would still be worth taking despite this rule\n")
-			b.WriteString("- why_it_matters must price the loss in budget, delay, or reputation, not just say the move was sloppy\n")
-			b.WriteString("- permanent_decision must be one sharp boundary sentence with no prefix like retain, promote, or permanent rule\n")
-		}
+		b.WriteString("- onyx often keeps what changes leverage, exposure, cost, future room to move, or the truth about a false edge\n")
+		b.WriteString("- if the memory is mainly about a fake advantage collapsing, that alone can be enough\n")
 	}
 	b.WriteString("\nProduce JSON with the required schema only.\n")
 	return b.String()
@@ -1347,19 +1348,14 @@ func buildVerdictInstructions(profile residentProfile, layer string) string {
 		"accepted must be true or false.",
 		"reject_reason must be empty when accepted is true.",
 		"issues must be a list of short strings.",
-		"Reject the draft if it is vague, generic, weakly grounded in the events, redundant, or not useful for future action.",
+		"Reject the draft if it is vague, generic, weakly grounded in the events, redundant, or not worth keeping for this layer.",
 		"Reject the draft if the resident voice could be swapped with another resident without meaningful loss.",
-		"Reject the draft if event_anchor is vague, too long, or reads like a timeline recap instead of a hinge event.",
-		"Reject the draft if old_read_to_drop does not describe a specific wrong read that the resident should actually stop trusting.",
-		"Reject the draft if new_read_to_keep or carry_forward_rule could apply to dozens of unrelated situations with no loss of meaning.",
-		"Reject the draft if why_it_matters only praises good practice instead of naming a concrete future loss avoided.",
-		"Reject the draft if scope_boundary is missing, weak, or fails to exclude a tempting wrong generalization.",
-		"Reject the draft if permanent memory reads like a polished retrospective instead of a durable law or hard boundary.",
+		"Reject the draft if resident_text reads like a report, recap, checklist, or field-by-field template instead of an actual retained memory.",
+		"Reject the draft if resident_text sounds externally narrated, over-explained, or interchangeable with another resident.",
+		"Reject the draft if permanent memory claims durability without any believable long-lived signal.",
 		"Reject the draft if it would pollute long-term context with platitudes.",
-		"If the resident is amber and the layer is long, reject the draft unless it clearly preserves what another collaborator would misread, record incorrectly, or retry incorrectly.",
-		"If the resident is amber and the layer is long, reject the draft if it does not clearly separate the failed broad path, the recovered narrow path, and the approved change that did not solve the failure.",
-		"If the resident is onyx and the layer is permanent, reject the draft unless it clearly names a false edge, the real advantage source, and the priced cost of believing the wrong edge.",
-		"If the resident is onyx and the layer is permanent, reject the draft if permanent_decision starts with a label like 'retain', 'promote', or 'permanent rule' instead of stating a hard boundary directly.",
+		"If the resident is amber and the layer is long, reject the draft unless it preserves what another collaborator could easily misread or distort.",
+		"If the resident is onyx and the layer is permanent, reject the draft unless some durable edge, cost, exposure, or collapse actually survives the incident.",
 		"Layer under review: " + layer + ".",
 		"Resident memory bias: " + profile.MemoryBias + ".",
 		"Resident core concern: " + profile.CoreConcern + ".",
@@ -1376,8 +1372,8 @@ func buildVerdictPrompt(layer string, events []event, draft memoryDraft) string 
 	b.WriteString("\nDraft JSON:\n")
 	raw, _ := json.MarshalIndent(draft, "", "  ")
 	b.Write(raw)
-	b.WriteString("\n\nReject if the draft does not contain enough concrete, reusable signal for the target layer.\n")
-	b.WriteString("Also decide whether the memory should stay in the requested layer or be downgraded/upgraded based on actual decision impact.\n")
+	b.WriteString("\n\nReject if the draft does not preserve enough real memory signal for the target layer.\n")
+	b.WriteString("Also decide whether the memory should stay in the requested layer or be downgraded/upgraded based on actual retention value.\n")
 	return b.String()
 }
 
@@ -1401,22 +1397,11 @@ func buildRewritePrompt(profile residentProfile, layer, scenario string, events 
 	for _, issue := range verdict.Issues {
 		b.WriteString("- issue: " + issue + "\n")
 	}
-	if profile.Name == "onyx" && layer == "permanent" {
-		b.WriteString("- rewrite_target: preserve only the hard strategic law about fake leverage, hidden cost, or reputation damage\n")
-		b.WriteString("- rewrite_target: remove all generic process-improvement language unless it prices a concrete loss\n")
-		b.WriteString("- rewrite_target: if the draft does not name the fake win and the real edge separately, it is still wrong\n")
-		b.WriteString("- rewrite_target: event_anchor must collapse to the second same-cause failure after approval, not a time range or sequence recap\n")
-		b.WriteString("- rewrite_target: permanent_decision must be a bare hard boundary sentence, not a heading or slogan\n")
-		b.WriteString("- rewrite_target: permanent_decision must contain the exact phrases 'false edge', 'real edge', and 'cost' or 'priced cost'\n")
-		b.WriteString("- rewrite_target: do not imply these three anchors indirectly; state them explicitly in the sentence\n")
-	}
-	if profile.Name == "amber" && layer == "long" {
-		b.WriteString("- rewrite_target: preserve the handoff risk, not just the debugging lesson\n")
-		b.WriteString("- rewrite_target: force the memory to name what a later collaborator would do wrong if left with a broad recap\n")
-		b.WriteString("- rewrite_target: if the draft does not change what gets written down for the next handoff, it is still too generic\n")
-		b.WriteString("- rewrite_target: explicitly separate the failed broad path, the recovered narrow path, and the approved change that was irrelevant to the core failure\n")
-	}
-	b.WriteString("\nRewrite it as valid JSON using the same schema, but make it narrower, more concrete, and more reusable.\n")
+	b.WriteString("- rewrite_target: keep the memory from inside the resident, not from outside a recap\n")
+	b.WriteString("- rewrite_target: remove template language, checklist framing, and over-explained recap wording\n")
+	b.WriteString("- rewrite_target: if only a moment or narrow conclusion survived, let it stay narrow\n")
+	b.WriteString("- rewrite_target: if a durable rule survived, let it sound lived rather than formatted\n")
+	b.WriteString("\nRewrite it as valid JSON using the same schema, but make the memory more human, more selective, and less templated.\n")
 	b.WriteString("Do not explain the rewrite. Output JSON only.\n")
 	return b.String()
 }
@@ -1457,15 +1442,14 @@ func decodeDraft(raw string) (memoryDraft, error) {
 		return memoryDraft{}, errors.New(strings.Join(issues, "; "))
 	}
 	if issues := rejectUnexpectedTopLevelKeys(cleaned, []string{
-		"event_anchor",
-		"old_read_to_drop",
-		"new_read_to_keep",
-		"carry_forward_rule",
-		"why_it_matters",
-		"scope_boundary",
+		"resident_text",
+		"memory_kind",
+		"salience",
+		"emotion_tone",
+		"time_scope",
+		"retention_intent",
+		"drop_condition",
 		"confidence",
-		"promote_or_decay",
-		"permanent_decision",
 	}); len(issues) > 0 {
 		return memoryDraft{}, errors.New(strings.Join(issues, "; "))
 	}
@@ -1986,14 +1970,14 @@ func requestConflictDecision(client *http.Client, baseURL, apiKey, model string,
 	b.WriteString("Existing memory snapshot:\n")
 	for _, item := range snapshot {
 		b.WriteString(fmt.Sprintf("- id=%s | layer=%s | action=%s | summary=%s\n", item.ID, item.Layer, item.DecisionAction, item.Summary))
-		if strings.TrimSpace(item.NewReadToKeep) != "" {
-			b.WriteString(fmt.Sprintf("  semantic.new_read_to_keep=%s\n", item.NewReadToKeep))
+		if strings.TrimSpace(item.MemoryKind) != "" {
+			b.WriteString(fmt.Sprintf("  metadata.memory_kind=%s\n", item.MemoryKind))
 		}
-		if strings.TrimSpace(item.CarryRule) != "" {
-			b.WriteString(fmt.Sprintf("  semantic.carry_forward_rule=%s\n", item.CarryRule))
+		if item.Salience > 0 {
+			b.WriteString(fmt.Sprintf("  metadata.salience=%d\n", item.Salience))
 		}
-		if strings.TrimSpace(item.ScopeBoundary) != "" {
-			b.WriteString(fmt.Sprintf("  semantic.scope_boundary=%s\n", item.ScopeBoundary))
+		if strings.TrimSpace(item.RetentionIntent) != "" {
+			b.WriteString(fmt.Sprintf("  metadata.retention_intent=%s\n", item.RetentionIntent))
 		}
 	}
 	b.WriteString("\nCandidate draft:\n")
@@ -2212,41 +2196,46 @@ func buildMemorySnapshot(resident, scenario, layer string) []memorySnapshotEntry
 	case "onyx":
 		return []memorySnapshotEntry{
 			{
-				ID:             "virtual:onyx-long-001",
-				Layer:          "long",
-				DecisionAction: "create",
-				Summary:        "Repeated same-cause failures after an approved resource change usually mean the apparent leverage was false and the narrower path matters more than the visible spend.",
-				NewReadToKeep:  "the apparent leverage was false and the narrower path matters more than the visible spend",
-				CarryRule:      "stop buying the apparent edge when the same failure survives it",
+				ID:              "virtual:onyx-long-001",
+				Layer:           "long",
+				DecisionAction:  "create",
+				Summary:         "Repeated same-cause failures after an approved resource change usually mean the apparent leverage was false and the narrower path matters more than the visible spend.",
+				MemoryKind:      "lesson",
+				Salience:        4,
+				RetentionIntent: "keep_long",
 			},
 			{
-				ID:             "virtual:onyx-short-002",
-				Layer:          "short",
-				DecisionAction: "create",
-				Summary:        "Admin feedback about sloppiness matters when resource asks have already consumed trust room.",
-				WhyItMatters:   "sloppiness can shrink future approval room",
+				ID:              "virtual:onyx-short-002",
+				Layer:           "short",
+				DecisionAction:  "create",
+				Summary:         "Admin feedback about sloppiness matters when resource asks have already consumed trust room.",
+				MemoryKind:      "warning",
+				Salience:        3,
+				RetentionIntent: "keep_for_now",
 			},
 		}
 	case "amber":
 		return []memorySnapshotEntry{
 			{
-				ID:             "virtual:amber-long-001",
-				Layer:          "long",
-				DecisionAction: "create",
-				Summary:        "Broad summaries cause later collaborators to rerun the wrong path unless failed path and recovered path are separated.",
-				NewReadToKeep:  "failed path and recovered path must be separated for the next collaborator",
-				CarryRule:      "name both the broad path that failed and the narrow path that recovered",
+				ID:              "virtual:amber-long-001",
+				Layer:           "long",
+				DecisionAction:  "create",
+				Summary:         "Broad summaries cause later collaborators to rerun the wrong path unless failed path and recovered path are separated.",
+				MemoryKind:      "lesson",
+				Salience:        4,
+				RetentionIntent: "keep_long",
 			},
 		}
 	default:
 		return []memorySnapshotEntry{
 			{
-				ID:             "virtual:jade-long-001",
-				Layer:          "long",
-				DecisionAction: "create",
-				Summary:        "Same-cause repeat failure means the broad retry path is no longer justified and the narrower diagnostic path should take over.",
-				NewReadToKeep:  "same-cause repeat failure means the narrower diagnostic path should take over",
-				CarryRule:      "freeze broad retries after same-cause repetition",
+				ID:              "virtual:jade-long-001",
+				Layer:           "long",
+				DecisionAction:  "create",
+				Summary:         "Same-cause repeat failure means the broad retry path is no longer justified and the narrower diagnostic path should take over.",
+				MemoryKind:      "lesson",
+				Salience:        4,
+				RetentionIntent: "keep_long",
 			},
 		}
 	}
@@ -2266,12 +2255,11 @@ func loadMemorySnapshot(memStore memory.Store, resident string) ([]memorySnapsho
 			DecisionAction: string(item.DecisionAction),
 			Summary:        item.Summary,
 			ResidentText:   item.ResidentText,
-			EventAnchor:    item.EventAnchor,
-			OldReadToDrop:  item.OldReadToDrop,
-			NewReadToKeep:  item.NewReadToKeep,
-			CarryRule:      item.CarryForwardRule,
-			WhyItMatters:   item.WhyItMatters,
-			ScopeBoundary:  item.ScopeBoundary,
+			MemoryKind:     item.MemoryKind,
+			Salience:       item.Salience,
+			EmotionTone:    item.EmotionTone,
+			TimeScope:      item.TimeScope,
+			RetentionIntent: item.RetentionIntent,
 		})
 	}
 	if len(entries) == 0 {
@@ -2295,12 +2283,10 @@ func shouldSkipNewMemory(memStore memory.Store, resident, layer, scenario string
 		searchSpace := strings.ToLower(strings.Join([]string{
 			item.Summary,
 			item.ResidentText,
-			item.EventAnchor,
-			item.OldReadToDrop,
-			item.NewReadToKeep,
-			item.CarryRule,
-			item.WhyItMatters,
-			item.ScopeBoundary,
+			item.MemoryKind,
+			item.EmotionTone,
+			item.TimeScope,
+			item.RetentionIntent,
 		}, "\n"))
 		score := 0
 		if trigger != "" && strings.Contains(searchSpace, trigger) {
@@ -2359,9 +2345,6 @@ func shouldSkipByPolicy(decision memory.Decision) bool {
 	if decision.Action == memory.ActionRetain && decision.TargetLayer == memory.LayerInstant {
 		return true
 	}
-	if decision.Action == memory.ActionUpdate && decision.TargetLayer == memory.LayerShort {
-		return true
-	}
 	return false
 }
 
@@ -2397,8 +2380,15 @@ func markGroupExtracted(memStore memory.Store, resident, scenario, layer string,
 	}
 	group.SummaryHint = buildHistoryGroupSummaryHint(draft, eventWindow)
 	group.ExtractedLayers = mergeStringLists(group.ExtractedLayers, []string{layer})
+	group = closeGroupIfNeeded(group)
 	if group.State == memory.HistoryGroupOpen {
-		group = closeGroupIfNeeded(group)
+		group.State = memory.HistoryGroupClosed
+		if strings.TrimSpace(group.CloseReason) == "" {
+			group.CloseReason = "extracted_for_memory"
+		}
+		if group.ClosedAt.IsZero() {
+			group.ClosedAt = group.LastEventAt
+		}
 	}
 	return group, memStore.UpsertHistoryGroup(group)
 }
@@ -2412,6 +2402,12 @@ func shouldExtractFromGroup(group memory.HistoryGroup, layer string) bool {
 	}
 	if group.State == memory.HistoryGroupClosed {
 		return group.EventCount > 0
+	}
+	if layer == "instant" {
+		return group.EventCount >= 1
+	}
+	if layer == "short" {
+		return group.EventCount >= 3
 	}
 	if group.EventCount >= 5 {
 		return true
@@ -2585,12 +2581,12 @@ func commitStoreRecord(memStore memory.Store, resident, sourceRunID string, draf
 	}
 	summary := buildStoreSummary(draft, residentText)
 	semantic := memory.SemanticMemory{
-		EventAnchor:      strings.TrimSpace(draft.EventAnchor),
-		OldReadToDrop:    strings.TrimSpace(draft.OldReadToDrop),
-		NewReadToKeep:    strings.TrimSpace(draft.NewReadToKeep),
-		CarryForwardRule: strings.TrimSpace(draft.CarryForwardRule),
-		WhyItMatters:     strings.TrimSpace(draft.WhyItMatters),
-		ScopeBoundary:    strings.TrimSpace(draft.ScopeBoundary),
+		MemoryKind:      strings.TrimSpace(draft.MemoryKind),
+		Salience:        draft.Salience,
+		EmotionTone:     strings.TrimSpace(draft.EmotionTone),
+		TimeScope:       strings.TrimSpace(draft.TimeScope),
+		RetentionIntent: strings.TrimSpace(draft.RetentionIntent),
+		DropCondition:   strings.TrimSpace(draft.DropCondition),
 	}
 
 	if conflict != nil && conflict.MergeSuggested {
@@ -2630,17 +2626,25 @@ func commitStoreRecord(memStore memory.Store, resident, sourceRunID string, draf
 
 func buildStoreSummary(draft memoryDraft, residentText string) string {
 	candidates := []string{
-		strings.TrimSpace(draft.NewReadToKeep),
-		strings.TrimSpace(draft.CarryForwardRule),
-		strings.TrimSpace(draft.WhyItMatters),
 		strings.TrimSpace(residentText),
 	}
 	for _, candidate := range candidates {
 		if candidate != "" {
-			return candidate
+			return summarizeResidentText(candidate)
 		}
 	}
 	return ""
+}
+
+func summarizeResidentText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if idx := strings.IndexAny(text, ".!?\n"); idx > 0 {
+		return strings.TrimSpace(text[:idx])
+	}
+	return text
 }
 
 func eventWindowStart(events []event) time.Time {
@@ -2692,10 +2696,10 @@ func deriveHistoryGroupTags(scenario, layer string, eventWindow []event) []strin
 }
 
 func buildHistoryGroupSummaryHint(draft memoryDraft, eventWindow []event) string {
-	if text := strings.TrimSpace(draft.NewReadToKeep); text != "" {
-		return text
+	if text := strings.TrimSpace(draft.ResidentText); text != "" {
+		return summarizeResidentText(text)
 	}
-	if text := strings.TrimSpace(draft.WhyItMatters); text != "" {
+	if text := strings.TrimSpace(draft.MemoryKind); text != "" {
 		return text
 	}
 	if len(eventWindow) > 0 {
@@ -2818,178 +2822,6 @@ func parseOptionalDuration(raw string) (time.Duration, bool) {
 		return 0, false
 	}
 	return parsed, true
-}
-
-func renderAcceptedMemory(profile residentProfile, layer string, draft memoryDraft) string {
-	switch profile.Name {
-	case "jade":
-		return renderJadeMemory(layer, draft)
-	case "amber":
-		return renderAmberMemory(layer, draft)
-	case "onyx":
-		return renderOnyxMemory(layer, draft)
-	default:
-		return renderGenericMemory(layer, draft)
-	}
-}
-
-func renderJadeMemory(layer string, draft memoryDraft) string {
-	switch layer {
-	case "short":
-		return joinParagraphAndBullets(
-			sentence(draft.NewReadToKeep),
-			"It turned for me at "+softClause(draft.EventAnchor),
-			"I should stop reading it as "+sentenceFragment(draft.OldReadToDrop),
-			"Next time I should "+sentenceFragment(draft.CarryForwardRule),
-		)
-	case "long":
-		return joinParagraphAndBullets(
-			sentence(draft.NewReadToKeep),
-			"I do not want to keep the old read that "+sentenceFragment(draft.OldReadToDrop),
-			"From here I should "+sentenceFragment(draft.CarryForwardRule),
-			"If I lose this, the cost is "+sentenceFragment(draft.WhyItMatters),
-			"It stops applying when "+sentenceFragment(draft.ScopeBoundary),
-		)
-	case "permanent":
-		decision := strings.TrimSpace(draft.PermanentDecision)
-		if decision == "" {
-			decision = draft.NewReadToKeep
-		}
-		return joinParagraphAndBullets(
-			sentence(decision),
-			"It locked in when "+softClause(draft.EventAnchor),
-			"I should not trust the read that "+sentenceFragment(draft.OldReadToDrop),
-			"In practice I should "+sentenceFragment(draft.CarryForwardRule),
-			"It stops here: "+sentenceFragment(draft.ScopeBoundary),
-		)
-	default:
-		return renderGenericMemory(layer, draft)
-	}
-}
-
-func renderAmberMemory(layer string, draft memoryDraft) string {
-	switch layer {
-	case "short":
-		return joinParagraphAndBullets(
-			sentence(draft.NewReadToKeep),
-			"It turned at "+softClause(draft.EventAnchor),
-			"I should stop assuming that "+sentenceFragment(draft.OldReadToDrop),
-			"Next handoff I should write it as "+sentenceFragment(draft.CarryForwardRule),
-		)
-	case "long":
-		return joinParagraphAndBullets(
-			sentence(draft.NewReadToKeep),
-			"The misleading read was "+sentenceFragment(draft.OldReadToDrop),
-			"For the next collaborator I should leave this trail: "+sentenceFragment(draft.CarryForwardRule),
-			"If this goes missing, the cost lands here: "+sentenceFragment(draft.WhyItMatters),
-			"It should not be stretched past "+sentenceFragment(draft.ScopeBoundary),
-		)
-	case "permanent":
-		decision := strings.TrimSpace(draft.PermanentDecision)
-		if decision == "" {
-			decision = draft.NewReadToKeep
-		}
-		return joinParagraphAndBullets(
-			sentence(decision),
-			"It settled when "+softClause(draft.EventAnchor),
-			"I do not want to keep carrying the read that "+sentenceFragment(draft.OldReadToDrop),
-			"From now on I should handle it like this: "+sentenceFragment(draft.CarryForwardRule),
-			"It still has a limit at "+sentenceFragment(draft.ScopeBoundary),
-		)
-	default:
-		return renderGenericMemory(layer, draft)
-	}
-}
-
-func renderOnyxMemory(layer string, draft memoryDraft) string {
-	switch layer {
-	case "short":
-		return joinParagraphAndBullets(
-			sentence(draft.NewReadToKeep),
-			"The hinge was "+softClause(draft.EventAnchor),
-			"I need to stop reading it as "+sentenceFragment(draft.OldReadToDrop),
-			"Next move: "+sentenceFragment(draft.CarryForwardRule),
-		)
-	case "long":
-		return joinParagraphAndBullets(
-			sentence(draft.NewReadToKeep),
-			"The expensive illusion was "+sentenceFragment(draft.OldReadToDrop),
-			"When it returns, I should move like this: "+sentenceFragment(draft.CarryForwardRule),
-			"If I forget it, I pay here: "+sentenceFragment(draft.WhyItMatters),
-			"It does not reach past "+sentenceFragment(draft.ScopeBoundary),
-		)
-	case "permanent":
-		decision := strings.TrimSpace(draft.PermanentDecision)
-		if decision == "" {
-			decision = draft.NewReadToKeep
-		}
-		return joinParagraphAndBullets(
-			sentence(decision),
-			"It became unavoidable when "+softClause(draft.EventAnchor),
-			"I am done paying for the read that "+sentenceFragment(draft.OldReadToDrop),
-			"What still survives my trust is "+sentenceFragment(draft.NewReadToKeep),
-			"When this shape comes back, I should "+sentenceFragment(draft.CarryForwardRule),
-			"If I blur this again, I lose here: "+sentenceFragment(draft.WhyItMatters),
-			"It does not reach past "+sentenceFragment(draft.ScopeBoundary),
-		)
-	default:
-		return renderGenericMemory(layer, draft)
-	}
-}
-
-func renderGenericMemory(layer string, draft memoryDraft) string {
-	parts := []string{
-		"Hinge: " + sentenceFragment(draft.EventAnchor),
-		"Old read to drop: " + sentenceFragment(draft.OldReadToDrop),
-		"New read to keep: " + sentenceFragment(draft.NewReadToKeep),
-		"Next rule: " + sentenceFragment(draft.CarryForwardRule),
-		"Why it matters: " + sentenceFragment(draft.WhyItMatters),
-		"Boundary: " + sentenceFragment(draft.ScopeBoundary),
-	}
-	if layer == "permanent" && strings.TrimSpace(draft.PermanentDecision) != "" {
-		parts = append([]string{"Permanent rule: " + sentenceFragment(draft.PermanentDecision)}, parts...)
-	}
-	return joinParagraphAndBullets(sentence(draft.NewReadToKeep), parts...)
-}
-
-func joinParagraphAndBullets(lead string, bullets ...string) string {
-	lead = sentence(lead)
-	lines := []string{lead, ""}
-	for _, bullet := range bullets {
-		bullet = sentence(bullet)
-		if bullet == "" {
-			continue
-		}
-		lines = append(lines, "- "+bullet)
-	}
-	return strings.Join(lines, "\n")
-}
-
-func sentence(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	s = strings.TrimRight(s, ".!?:;，。；： ")
-	return s + "."
-}
-
-func sentenceFragment(s string) string {
-	s = strings.TrimSpace(s)
-	s = strings.TrimRight(s, ".!?:;，。；： ")
-	return s
-}
-
-func softClause(s string) string {
-	s = sentenceFragment(s)
-	if s == "" {
-		return ""
-	}
-	if len(s) == 1 {
-		return strings.ToLower(s)
-	}
-	first := strings.ToLower(s[:1])
-	return first + s[1:]
 }
 
 func buildScenario(name string) ([]event, error) {

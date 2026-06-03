@@ -126,8 +126,8 @@ func TestShouldSkipByPolicy(t *testing.T) {
 	if !shouldSkipByPolicy(memoryDecision("retain", "instant")) {
 		t.Fatal("expected retain instant to skip new memory")
 	}
-	if !shouldSkipByPolicy(memoryDecision("update", "short")) {
-		t.Fatal("expected update short to skip new memory")
+	if shouldSkipByPolicy(memoryDecision("update", "short")) {
+		t.Fatal("did not expect update short to skip new memory")
 	}
 	if shouldSkipByPolicy(memoryDecision("promote", "permanent")) {
 		t.Fatal("did not expect permanent promote to skip new memory")
