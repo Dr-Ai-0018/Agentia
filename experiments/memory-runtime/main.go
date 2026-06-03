@@ -155,6 +155,15 @@ type adjudicationDecision struct {
 	ReasonCodes  []string `json:"reason_codes"`
 }
 
+type memoryReviewDecision struct {
+	Action         string   `json:"action"`
+	TargetLayer    string   `json:"target_layer"`
+	TargetMemoryID string   `json:"target_memory_id,omitempty"`
+	ReasonCodes    []string `json:"reason_codes"`
+	ReviewAfter    string   `json:"review_after,omitempty"`
+	ExpiresAfter   string   `json:"expires_after,omitempty"`
+}
+
 type memorySnapshotEntry struct {
 	ID              string `json:"id"`
 	Layer           string `json:"layer"`
@@ -283,6 +292,11 @@ type decayScanRecord struct {
 	RecommendedAction string   `json:"recommended_action,omitempty"`
 	TargetLayer       string   `json:"target_layer,omitempty"`
 	ReasonCodes       []string `json:"reason_codes,omitempty"`
+	AppliedAction     string   `json:"applied_action,omitempty"`
+	AppliedLayer      string   `json:"applied_layer,omitempty"`
+	AppliedReasons    []string `json:"applied_reasons,omitempty"`
+	AppliedTargetID   string   `json:"applied_target_memory_id,omitempty"`
+	ReviewError       string   `json:"review_error,omitempty"`
 }
 
 type memoryDraft struct {
@@ -389,19 +403,30 @@ func main() {
 		return
 	}
 
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if !*applyDecay && apiKey == "" {
+		exitf("OPENAI_API_KEY is required")
+	}
+
 	if *applyDecay {
-		result, err := applyDecayScan(memStore, profile.Name, time.Now().UTC())
+		now := time.Now().UTC()
+		if apiKey == "" {
+			result, err := applyDecayScan(memStore, profile.Name, now)
+			if err != nil {
+				exitf("apply decay: %v", err)
+			}
+			out, _ := json.Marshal(result)
+			fmt.Println(string(out))
+			return
+		}
+		client := &http.Client{Timeout: 5 * time.Minute}
+		result, err := applyDecayScanWithAI(client, *baseURL, apiKey, *model, memStore, profile, now)
 		if err != nil {
 			exitf("apply decay: %v", err)
 		}
 		out, _ := json.Marshal(result)
 		fmt.Println(string(out))
 		return
-	}
-
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		exitf("OPENAI_API_KEY is required")
 	}
 
 	layersToRun := []string{strings.TrimSpace(*layer)}
@@ -1192,6 +1217,25 @@ func validateAdjudicationDecision(decision adjudicationDecision) []string {
 	return issues
 }
 
+func validateMemoryReviewDecision(decision memoryReviewDecision) []string {
+	var issues []string
+	if !map[string]bool{"delete": true, "retain": true, "review": true, "promote": true, "decay": true, "promote_long": true, "merge_into_long": true}[decision.Action] {
+		issues = append(issues, "action has invalid enum value")
+	}
+	if !map[string]bool{"instant": true, "short": true, "long": true, "permanent": true}[decision.TargetLayer] {
+		issues = append(issues, "target_layer has invalid enum value")
+	}
+	if len(decision.ReasonCodes) == 0 {
+		issues = append(issues, "reason_codes is empty")
+	}
+	if decision.Action == "merge_into_long" && strings.TrimSpace(decision.TargetMemoryID) == "" {
+		issues = append(issues, "target_memory_id is required when action is merge_into_long")
+	}
+	issues = append(issues, validateOptionalDurationString("review_after", decision.ReviewAfter)...)
+	issues = append(issues, validateOptionalDurationString("expires_after", decision.ExpiresAfter)...)
+	return issues
+}
+
 func normalizeConflictDecision(decision *conflictDecision) *conflictDecision {
 	if decision == nil {
 		return nil
@@ -1920,13 +1964,45 @@ func decodeAdjudicationDecision(raw string) (adjudicationDecision, error) {
 	return decision, nil
 }
 
+func decodeMemoryReviewDecision(raw string) (memoryReviewDecision, error) {
+	var decision memoryReviewDecision
+	cleaned := cleanJSON(strings.TrimSpace(raw))
+	cleaned = trimTrailingBrokenObjectField(cleaned)
+	if issues := duplicateJSONObjectKeys(cleaned); len(issues) > 0 {
+		return memoryReviewDecision{}, errors.New(strings.Join(issues, "; "))
+	}
+	if issues := rejectUnexpectedTopLevelKeys(cleaned, []string{
+		"action",
+		"target_layer",
+		"target_memory_id",
+		"reason_codes",
+		"review_after",
+		"expires_after",
+	}); len(issues) > 0 {
+		return memoryReviewDecision{}, errors.New(strings.Join(issues, "; "))
+	}
+	if err := json.Unmarshal([]byte(cleaned), &decision); err != nil {
+		return memoryReviewDecision{}, err
+	}
+	decision.ReviewAfter = normalizeOptionalDurationLiteral(decision.ReviewAfter)
+	decision.ExpiresAfter = normalizeOptionalDurationLiteral(decision.ExpiresAfter)
+	if issues := validateMemoryReviewDecision(decision); len(issues) > 0 {
+		return memoryReviewDecision{}, errors.New(strings.Join(issues, "; "))
+	}
+	return decision, nil
+}
+
 func normalizeOptionalDurationLiteral(raw string) string {
 	value := strings.TrimSpace(strings.ToLower(raw))
 	switch value {
-	case "", "null", "never", "none", "n/a":
+	case "", "null", "never", "none", "n/a", "na", "0", "0s", "zero":
 		return ""
 	default:
-		return raw
+		trimmed := strings.TrimSpace(raw)
+		if _, err := time.Parse(time.RFC3339, trimmed); err == nil {
+			return ""
+		}
+		return trimmed
 	}
 }
 
@@ -2245,6 +2321,56 @@ func buildAdjudicationPayload(model, cacheKey, prompt string) requestPayload {
 			},
 		}},
 		ToolChoice:        functionToolChoice{Type: "function", Name: "adjudicate_memory"},
+		ParallelToolCalls: &parallelToolCalls,
+		Stream:            true,
+		Store:             false,
+	}
+}
+
+func buildMemoryReviewPayload(model, cacheKey, prompt string) requestPayload {
+	parallelToolCalls := false
+	return requestPayload{
+		Model:          model,
+		Instructions:   "You are a memory review judge. Decide whether the due memory should be deleted, retained, extended for review, or promoted/demoted. Use the provided function tool only.",
+		PromptCacheKey: cacheKey,
+		Input: []inputMessage{
+			{Role: "user", Content: prompt},
+		},
+		Tools: []responseTool{{
+			Type:        "function",
+			Name:        "review_due_memory",
+			Description: "Decide how a due memory should be handled at review time.",
+			Strict:      true,
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"action": map[string]any{
+						"type": "string",
+						"enum": []string{"delete", "retain", "review", "promote", "decay", "promote_long", "merge_into_long"},
+					},
+					"target_layer": map[string]any{
+						"type": "string",
+						"enum": []string{"instant", "short", "long", "permanent"},
+					},
+					"target_memory_id": map[string]any{
+						"type": []string{"string", "null"},
+					},
+					"reason_codes": map[string]any{
+						"type":  "array",
+						"items": map[string]any{"type": "string"},
+					},
+					"review_after": map[string]any{
+						"type": []string{"string", "null"},
+					},
+					"expires_after": map[string]any{
+						"type": []string{"string", "null"},
+					},
+				},
+				"required":             []string{"action", "target_layer", "target_memory_id", "reason_codes", "review_after", "expires_after"},
+				"additionalProperties": false,
+			},
+		}},
+		ToolChoice:        functionToolChoice{Type: "function", Name: "review_due_memory"},
 		ParallelToolCalls: &parallelToolCalls,
 		Stream:            true,
 		Store:             false,
@@ -3020,6 +3146,24 @@ func recallEvidence(memStore memory.Store, resident, memoryID, outDir string) (m
 	return result, nil
 }
 
+func recallGroupsForRecord(memStore memory.Store, resident string, record memory.AbstractMemory) ([]memory.HistoryGroup, error) {
+	groups, err := memStore.ListHistoryGroups(resident)
+	if err != nil {
+		return nil, err
+	}
+	groupByID := make(map[string]memory.HistoryGroup, len(groups))
+	for _, group := range groups {
+		groupByID[group.GroupUUID] = group
+	}
+	recalled := make([]memory.HistoryGroup, 0, len(record.SourceGroupIDs))
+	for _, groupID := range record.SourceGroupIDs {
+		if group, ok := groupByID[groupID]; ok {
+			recalled = append(recalled, group)
+		}
+	}
+	return recalled, nil
+}
+
 func runDecayScan(memStore memory.Store, resident string, now time.Time) (decayScanResult, error) {
 	records, err := memStore.ListAbstractMemories(resident)
 	if err != nil {
@@ -3075,6 +3219,55 @@ func applyDecayScan(memStore memory.Store, resident string, now time.Time) (deca
 		result.Records[i].ReviewAt = formatOptionalTime(updated.ReviewAt)
 		result.Records[i].ExpiresAt = formatOptionalTime(updated.ExpiresAt)
 		result.Records[i].HardExpiresAt = formatOptionalTime(updated.HardExpiresAt)
+		result.Records[i].AppliedReasons = append([]string(nil), updated.ReasonCodes...)
+	}
+	return result, nil
+}
+
+func applyDecayScanWithAI(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, now time.Time) (decayScanResult, error) {
+	result, err := runDecayScan(memStore, profile.Name, now)
+	if err != nil {
+		return decayScanResult{}, err
+	}
+	result.Applied = true
+	records, err := memStore.ListAbstractMemories(profile.Name)
+	if err != nil {
+		return decayScanResult{}, err
+	}
+	byID := make(map[string]memory.AbstractMemory, len(records))
+	for _, record := range records {
+		byID[record.ID] = record
+	}
+	for i := range result.Records {
+		scan := result.Records[i]
+		record, ok := byID[scan.ID]
+		if !ok {
+			continue
+		}
+		updated, applied, reviewDecision, reviewErr, err := applyDueMemoryDecision(client, baseURL, apiKey, model, memStore, profile, record, now, scan.TriggeredBy)
+		if err != nil {
+			return decayScanResult{}, err
+		}
+		if !applied {
+			continue
+		}
+		if err := memStore.UpsertAbstractMemory(updated); err != nil {
+			return decayScanResult{}, err
+		}
+		result.Records[i].Status = string(updated.Status)
+		result.Records[i].Layer = string(updated.Layer)
+		result.Records[i].ReviewAt = formatOptionalTime(updated.ReviewAt)
+		result.Records[i].ExpiresAt = formatOptionalTime(updated.ExpiresAt)
+		result.Records[i].HardExpiresAt = formatOptionalTime(updated.HardExpiresAt)
+		result.Records[i].AppliedReasons = append([]string(nil), updated.ReasonCodes...)
+		if reviewDecision != nil {
+			result.Records[i].AppliedAction = reviewDecision.Action
+			result.Records[i].AppliedLayer = reviewDecision.TargetLayer
+			result.Records[i].AppliedTargetID = strings.TrimSpace(reviewDecision.TargetMemoryID)
+		}
+		if reviewErr != nil {
+			result.Records[i].ReviewError = reviewErr.Error()
+		}
 	}
 	return result, nil
 }
@@ -3143,6 +3336,379 @@ func applyConservativeDecay(record memory.AbstractMemory, now time.Time, trigger
 	}
 
 	return record, false
+}
+
+func applyDueMemoryDecision(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, record memory.AbstractMemory, now time.Time, triggers []string) (memory.AbstractMemory, bool, *memoryReviewDecision, error, error) {
+	triggered := make(map[string]bool, len(triggers))
+	for _, trigger := range triggers {
+		triggered[trigger] = true
+	}
+	if triggered["hard_expired"] && (record.Layer == memory.LayerInstant || record.Layer == memory.LayerShort) {
+		updated, applied := applyConservativeDecay(record, now, triggers)
+		return updated, applied, nil, nil, nil
+	}
+	result, decision, err := requestDueMemoryReview(client, baseURL, apiKey, model, memStore, profile, record, triggers, now)
+	_ = result
+	if err != nil {
+		updated, applied := applyConservativeDecay(record, now, triggers)
+		return updated, applied, nil, err, nil
+	}
+	if decision == nil {
+		return record, false, nil, nil, nil
+	}
+	switch decision.Action {
+	case "promote_long", "merge_into_long":
+		updated, applied, err := applyReviewedLongSynthesis(client, baseURL, apiKey, model, memStore, profile, record, *decision, now)
+		return updated, applied, decision, nil, err
+	}
+	updated := record
+	switch decision.Action {
+	case "delete":
+		updated.Status = memory.StatusDeleted
+		updated.UpdatedAt = now
+		updated.LastConfirmedAt = now
+		updated.ReasonCodes = append([]string(nil), decision.ReasonCodes...)
+		return updated, true, decision, nil, nil
+	case "review", "retain", "promote", "decay":
+		updated.UpdatedAt = now
+		updated.LastConfirmedAt = now
+		updated.Status = memory.StatusReview
+		updated.Layer = memory.Layer(decision.TargetLayer)
+		updated.ReasonCodes = append([]string(nil), decision.ReasonCodes...)
+		if parsed, ok := parseOptionalDuration(decision.ReviewAfter); ok {
+			updated.ReviewAt = now.Add(parsed)
+		}
+		if parsed, ok := parseOptionalDuration(decision.ExpiresAfter); ok {
+			updated.ExpiresAt = now.Add(parsed)
+		}
+		if updated.HardExpiresAt.IsZero() || (!updated.ExpiresAt.IsZero() && updated.HardExpiresAt.Before(updated.ExpiresAt)) {
+			updated.HardExpiresAt = now.Add(deriveHardExpiryOffset(updated.Layer, updated.ExpiresAt, now))
+		}
+		return updated, true, decision, nil, nil
+	default:
+		return record, false, decision, nil, nil
+	}
+}
+
+func applyReviewedLongSynthesis(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, record memory.AbstractMemory, decision memoryReviewDecision, now time.Time) (memory.AbstractMemory, bool, error) {
+	evidenceGroups, err := recallGroupsForRecord(memStore, profile.Name, record)
+	if err != nil {
+		return record, false, err
+	}
+
+	var mergeTarget *memory.AbstractMemory
+	if decision.Action == "merge_into_long" {
+		targetID := strings.TrimSpace(decision.TargetMemoryID)
+		target, ok, err := memStore.GetAbstractMemory(profile.Name, targetID)
+		if err != nil {
+			return record, false, err
+		}
+		if !ok {
+			return record, false, fmt.Errorf("merge target not found: %s", targetID)
+		}
+		if target.Layer != memory.LayerLong && target.Layer != memory.LayerPermanent {
+			return record, false, fmt.Errorf("merge target must be long/permanent, got %s", target.Layer)
+		}
+		mergeTarget = &target
+	}
+
+	synthResult, synthDraft, err := requestReviewedLongSynthesis(client, baseURL, apiKey, model, memStore, profile, record, decision, evidenceGroups, mergeTarget, now)
+	_ = synthResult
+	if err != nil {
+		return record, false, err
+	}
+	if issues := append(localRawDraftIssues(profile, "long", synthResult.OutputText), localDraftIssues(profile, "long", synthDraft)...); len(issues) > 0 {
+		return record, false, fmt.Errorf("reviewed long synthesis rejected by local gate: %s", strings.Join(issues, "; "))
+	}
+
+	longRecord := memory.Record{
+		ID:        fmt.Sprintf("%s-long-review-%s", profile.Name, now.Format("20060102T150405Z")),
+		Layer:     memory.LayerLong,
+		Domain:    record.Domain,
+		Status:    memory.StatusActive,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if mergeTarget != nil {
+		longRecord = mergeTarget.Record
+		longRecord.Layer = memory.LayerLong
+		longRecord.Status = memory.StatusActive
+		longRecord.UpdatedAt = now
+		longRecord.LastConfirmedAt = now
+	}
+
+	reviewDecision := memory.Decision{
+		Action:      memory.ActionPromote,
+		TargetLayer: memory.LayerLong,
+		TTL:         30 * 24 * time.Hour,
+		ReviewAfter: 7 * 24 * time.Hour,
+		ReasonCodes: append([]string(nil), decision.ReasonCodes...),
+	}
+	if parsed, ok := parseOptionalDuration(decision.ReviewAfter); ok {
+		reviewDecision.ReviewAfter = parsed
+	}
+	if parsed, ok := parseOptionalDuration(decision.ExpiresAfter); ok {
+		reviewDecision.TTL = parsed
+	}
+	longRecord = memory.ApplyDecision(now, longRecord, reviewDecision)
+
+	longMemory := memory.AbstractMemory{
+		Record:         longRecord,
+		Resident:       profile.Name,
+		Summary:        buildStoreSummary(synthDraft, synthDraft.ResidentText),
+		ResidentText:   strings.TrimSpace(synthDraft.ResidentText),
+		Semantic:       semanticFromDraft(synthDraft),
+		DecisionAction: memory.ActionPromote,
+		SourceRunID:    synthResult.ResponseID,
+		SourceGroupIDs: append([]string(nil), record.SourceGroupIDs...),
+		ParentMemoryIDs: []string{
+			record.ID,
+		},
+	}
+	if mergeTarget != nil {
+		longMemory.Record.ID = mergeTarget.ID
+		longMemory.SourceGroupIDs = mergeStringLists(mergeTarget.SourceGroupIDs, record.SourceGroupIDs)
+		longMemory.ParentMemoryIDs = mergeStringLists(mergeTarget.ParentMemoryIDs, []string{record.ID})
+		if mergeTarget.CreatedAt.Before(longMemory.CreatedAt) && !mergeTarget.CreatedAt.IsZero() {
+			longMemory.CreatedAt = mergeTarget.CreatedAt
+		}
+	}
+	if err := memStore.UpsertAbstractMemory(longMemory); err != nil {
+		return record, false, err
+	}
+
+	updated := record
+	updated.Status = memory.StatusDeleted
+	updated.UpdatedAt = now
+	updated.LastConfirmedAt = now
+	updated.ReasonCodes = mergeStringLists(decision.ReasonCodes, []string{"absorbed_into_long_memory"})
+	return updated, true, nil
+}
+
+func semanticFromDraft(draft memoryDraft) memory.SemanticMemory {
+	return memory.SemanticMemory{
+		MemoryKind:      strings.TrimSpace(draft.MemoryKind),
+		Salience:        draft.Salience,
+		EmotionTone:     strings.TrimSpace(draft.EmotionTone),
+		TimeScope:       strings.TrimSpace(draft.TimeScope),
+		RetentionIntent: strings.TrimSpace(draft.RetentionIntent),
+		DropCondition:   strings.TrimSpace(draft.DropCondition),
+	}
+}
+
+func requestReviewedLongSynthesis(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, record memory.AbstractMemory, decision memoryReviewDecision, evidenceGroups []memory.HistoryGroup, mergeTarget *memory.AbstractMemory, now time.Time) (streamResult, memoryDraft, error) {
+	var b strings.Builder
+	b.WriteString("Generate one reviewed long-memory item from an older due memory.\n")
+	b.WriteString("Resident: " + profile.Name + "\n")
+	b.WriteString("Current time (UTC): " + now.UTC().Format(time.RFC3339) + "\n")
+	b.WriteString("Review action: " + decision.Action + "\n")
+	b.WriteString("Target layer: long\n")
+	b.WriteString("Resident persona: " + profile.Persona + "\n")
+	b.WriteString("Resident style: " + profile.SystemStyle + "\n")
+	b.WriteString("Resident memory bias: " + profile.MemoryBias + "\n")
+	b.WriteString("Resident core concern: " + profile.CoreConcern + "\n\n")
+	b.WriteString("Source due memory:\n")
+	b.WriteString("- id: " + record.ID + "\n")
+	b.WriteString("- layer: " + string(record.Layer) + "\n")
+	b.WriteString("- summary: " + record.EffectiveSummary() + "\n")
+	if strings.TrimSpace(record.ResidentText) != "" {
+		b.WriteString("- resident_text: " + strings.TrimSpace(record.ResidentText) + "\n")
+	}
+	if !record.CreatedAt.IsZero() {
+		b.WriteString("- created_at: " + record.CreatedAt.UTC().Format(time.RFC3339) + "\n")
+	}
+	if !record.UpdatedAt.IsZero() {
+		b.WriteString("- updated_at: " + record.UpdatedAt.UTC().Format(time.RFC3339) + "\n")
+	}
+	if strings.TrimSpace(record.Semantic.TimeScope) != "" {
+		b.WriteString("- time_scope: " + strings.TrimSpace(record.Semantic.TimeScope) + "\n")
+	}
+	if strings.TrimSpace(record.Semantic.RetentionIntent) != "" {
+		b.WriteString("- retention_intent: " + strings.TrimSpace(record.Semantic.RetentionIntent) + "\n")
+	}
+	if strings.TrimSpace(record.Semantic.DropCondition) != "" {
+		b.WriteString("- drop_condition: " + strings.TrimSpace(record.Semantic.DropCondition) + "\n")
+	}
+	if len(record.ReasonCodes) > 0 {
+		b.WriteString("- existing_reason_codes: " + strings.Join(record.ReasonCodes, ", ") + "\n")
+	}
+	if mergeTarget != nil {
+		b.WriteString("\nExisting target memory to merge into:\n")
+		b.WriteString("- id: " + mergeTarget.ID + "\n")
+		b.WriteString("- layer: " + string(mergeTarget.Layer) + "\n")
+		b.WriteString("- summary: " + mergeTarget.EffectiveSummary() + "\n")
+		if strings.TrimSpace(mergeTarget.ResidentText) != "" {
+			b.WriteString("- resident_text: " + strings.TrimSpace(mergeTarget.ResidentText) + "\n")
+		}
+		if len(mergeTarget.ReasonCodes) > 0 {
+			b.WriteString("- reason_codes: " + strings.Join(mergeTarget.ReasonCodes, ", ") + "\n")
+		}
+	}
+	if candidates, err := loadLongMemoryCandidates(memStore, profile.Name, record.ID); err == nil && len(candidates) > 0 {
+		b.WriteString("\nCurrent long-lived memory candidates:\n")
+		for _, candidate := range candidates {
+			b.WriteString(fmt.Sprintf("- id=%s layer=%s summary=%s\n", candidate.ID, candidate.Layer, candidate.Summary))
+		}
+	}
+	if len(evidenceGroups) > 0 {
+		b.WriteString("\nEvidence groups behind the source memory:\n")
+		for _, group := range evidenceGroups {
+			b.WriteString(fmt.Sprintf("- group=%s created_at=%s state=%s events=%d tags=%s summary_hint=%s\n",
+				group.GroupUUID,
+				group.CreatedAt.UTC().Format(time.RFC3339),
+				group.State,
+				group.EventCount,
+				strings.Join(group.Tags, ","),
+				group.SummaryHint,
+			))
+		}
+	}
+	b.WriteString("\nRules:\n")
+	b.WriteString("- output valid JSON only using the standard memory draft schema\n")
+	b.WriteString("- write a real long memory, not a review note about the promotion process\n")
+	b.WriteString("- preserve only what still matters across repeated situations in this stage\n")
+	b.WriteString("- do not force problem/solution/next-step or old/new belief templates\n")
+	b.WriteString("- if details faded, keep only what truly survived; do not fabricate exact facts\n")
+	b.WriteString("- if merging into an existing long memory, revise that long memory so it absorbs the source cleanly instead of sounding appended\n")
+	b.WriteString("- if the source still sounds like a same-day working note, abstract it upward until it becomes stage-reusable\n")
+	b.WriteString("- long memory should remain revisable, not eternal doctrine\n")
+
+	payload := requestPayload{
+		Model:          model,
+		Instructions:   buildDraftInstructions(profile, "long"),
+		PromptCacheKey: profile.PromptCacheKey + "-reviewed-long-synthesis-v1",
+		Input: []inputMessage{
+			{Role: "user", Content: b.String()},
+		},
+		Stream: true,
+		Store:  false,
+	}
+	result, err := postStream(client, baseURL, apiKey, payload, false)
+	if err != nil {
+		return streamResult{}, memoryDraft{}, err
+	}
+	draft, err := decodeDraft(result.OutputText)
+	if err != nil {
+		return result, memoryDraft{}, fmt.Errorf("decode reviewed long synthesis: %w; raw=%s", err, result.OutputText)
+	}
+	return result, draft, nil
+}
+
+func loadLongMemoryCandidates(memStore memory.Store, resident, excludeID string) ([]memorySnapshotEntry, error) {
+	snapshot, err := loadMemorySnapshot(memStore, resident)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]memorySnapshotEntry, 0, len(snapshot))
+	for _, entry := range snapshot {
+		if entry.ID == excludeID {
+			continue
+		}
+		if entry.Layer != "long" && entry.Layer != "permanent" {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+func deriveHardExpiryOffset(layer memory.Layer, expiresAt, now time.Time) time.Duration {
+	base := expiresAt
+	if base.IsZero() {
+		base = now
+	}
+	switch layer {
+	case memory.LayerInstant:
+		return base.Sub(now) + 4*time.Hour
+	case memory.LayerShort:
+		return base.Sub(now) + 24*time.Hour
+	case memory.LayerLong:
+		return base.Sub(now) + 30*24*time.Hour
+	case memory.LayerPermanent:
+		return base.Sub(now) + 365*24*time.Hour
+	default:
+		return base.Sub(now) + 24*time.Hour
+	}
+}
+
+func requestDueMemoryReview(client *http.Client, baseURL, apiKey, model string, memStore memory.Store, profile residentProfile, record memory.AbstractMemory, triggers []string, now time.Time) (streamResult, *memoryReviewDecision, error) {
+	var b strings.Builder
+	b.WriteString("Review one due memory and decide whether it should be deleted, retained, extended, or moved.\n")
+	b.WriteString("Resident: " + profile.Name + "\n")
+	b.WriteString("Current time (UTC): " + now.UTC().Format(time.RFC3339) + "\n")
+	b.WriteString("Memory id: " + record.ID + "\n")
+	b.WriteString("Current layer: " + string(record.Layer) + "\n")
+	b.WriteString("Current status: " + string(record.Status) + "\n")
+	b.WriteString("Triggered by: " + strings.Join(triggers, ", ") + "\n")
+	b.WriteString("Resident memory bias: " + profile.MemoryBias + "\n")
+	b.WriteString("Resident core concern: " + profile.CoreConcern + "\n\n")
+	b.WriteString("Current memory:\n")
+	b.WriteString("- summary: " + record.EffectiveSummary() + "\n")
+	if strings.TrimSpace(record.ResidentText) != "" {
+		b.WriteString("- resident_text: " + strings.TrimSpace(record.ResidentText) + "\n")
+	}
+	if strings.TrimSpace(record.Semantic.TimeScope) != "" {
+		b.WriteString("- time_scope: " + strings.TrimSpace(record.Semantic.TimeScope) + "\n")
+	}
+	if strings.TrimSpace(record.Semantic.RetentionIntent) != "" {
+		b.WriteString("- retention_intent: " + strings.TrimSpace(record.Semantic.RetentionIntent) + "\n")
+	}
+	if strings.TrimSpace(record.Semantic.DropCondition) != "" {
+		b.WriteString("- drop_condition: " + strings.TrimSpace(record.Semantic.DropCondition) + "\n")
+	}
+	b.WriteString("- created_at: " + formatOptionalTime(record.CreatedAt) + "\n")
+	b.WriteString("- updated_at: " + formatOptionalTime(record.UpdatedAt) + "\n")
+	b.WriteString("- last_accessed_at: " + formatOptionalTime(record.LastAccessedAt) + "\n")
+	b.WriteString("- review_at: " + formatOptionalTime(record.ReviewAt) + "\n")
+	b.WriteString("- expires_at: " + formatOptionalTime(record.ExpiresAt) + "\n")
+	b.WriteString("- hard_expires_at: " + formatOptionalTime(record.HardExpiresAt) + "\n")
+	evidenceGroups, _ := recallGroupsForRecord(memStore, profile.Name, record)
+	if len(evidenceGroups) > 0 {
+		b.WriteString("\nEvidence groups:\n")
+		for _, group := range evidenceGroups {
+			b.WriteString(fmt.Sprintf("- group=%s state=%s events=%d tags=%s summary_hint=%s\n", group.GroupUUID, group.State, group.EventCount, strings.Join(group.Tags, ","), group.SummaryHint))
+		}
+	}
+	if candidates, err := loadLongMemoryCandidates(memStore, profile.Name, record.ID); err == nil && len(candidates) > 0 {
+		b.WriteString("\nExisting long-lived memory candidates:\n")
+		for _, candidate := range candidates {
+			b.WriteString(fmt.Sprintf("- id=%s layer=%s summary=%s\n", candidate.ID, candidate.Layer, candidate.Summary))
+			if strings.TrimSpace(candidate.ResidentText) != "" {
+				b.WriteString("  resident_text: " + strings.TrimSpace(candidate.ResidentText) + "\n")
+			}
+		}
+	}
+	b.WriteString("\nRules:\n")
+	b.WriteString("- if this is short-lived working memory that no longer affects current decisions, prefer delete\n")
+	b.WriteString("- if it is still active but not worth promoting, prefer review with a short extension\n")
+	b.WriteString("- use promote_long only when a short-lived memory has clearly stabilized into long memory and deserves a new long-memory representation\n")
+	b.WriteString("- use merge_into_long only when the idea already belongs inside an existing long-memory pattern rather than as a fresh short memory\n")
+	b.WriteString("- if an existing long memory already expresses the durable pattern and this due short memory mainly sharpens or reinforces it, prefer merge_into_long and set target_memory_id to that long memory id\n")
+	b.WriteString("- if the short memory still reads like a same-day caution but its real surviving value is a stage-level pattern, do not keep it alive just because the wording is vivid; either delete it or promote/merge the durable part\n")
+	b.WriteString("- do not choose retain or review merely because the memory is well-written; only choose them if the content is still actively needed in its current layer\n")
+	b.WriteString("- promote only when a non-short memory should move upward without generating a fresh long-memory review path\n")
+	b.WriteString("- decay only when it should explicitly move to a lower layer instead of disappearing\n")
+	b.WriteString("- retain only when it should stay at the same layer with refreshed timing\n")
+	payload := buildMemoryReviewPayload(model, profile.PromptCacheKey+"-"+string(record.Layer)+"-due-review-v1", b.String())
+	result, err := postStream(client, baseURL, apiKey, payload, false)
+	if err != nil {
+		return streamResult{}, nil, err
+	}
+	for _, item := range result.FunctionCalls {
+		name := item.Name
+		if name == "" {
+			name = item.CallName
+		}
+		if item.Type != "function_call" || name != "review_due_memory" {
+			continue
+		}
+		decision, err := decodeMemoryReviewDecision(item.Arguments)
+		if err != nil {
+			return result, nil, err
+		}
+		return result, &decision, nil
+	}
+	return result, nil, fmt.Errorf("review_due_memory function call missing")
 }
 
 func formatOptionalTime(ts time.Time) string {
