@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -23,8 +24,11 @@ type schedulerConfig struct {
 	SameCategoryCooldown     time.Duration
 	FailureStreakThreshold   int
 	MicroDigestEventCount    int
+	MicroDigestMinSpan       time.Duration
 	MicroDigestInterval      time.Duration
 	DailyDigestHour          int
+	DailyDigestMinEvents     int
+	DailyDigestMinImportance int
 	HighLevelRebuildDays     int
 }
 
@@ -46,11 +50,29 @@ type generatedMemory struct {
 	RetentionTTL string `json:"retention_ttl"`
 }
 
+type historyGroup struct {
+	GroupUUID    string    `json:"group_uuid"`
+	Resident     string    `json:"resident"`
+	CreatedAt    time.Time `json:"created_at"`
+	ClosedAt     time.Time `json:"closed_at"`
+	SourceKind   string    `json:"source_kind"`
+	EventCount   int       `json:"event_count"`
+	Tags         []string  `json:"tags"`
+	SummaryHint  string    `json:"summary_hint"`
+	EventRounds  []int     `json:"event_rounds"`
+	Extracted    bool      `json:"extracted"`
+	ExtractNotes []string  `json:"extract_notes,omitempty"`
+}
+
 type memoryRecord struct {
+	ID               string    `json:"id"`
 	Layer            string    `json:"layer"`
 	CreatedAt        time.Time `json:"created_at"`
 	ExpiresAt        time.Time `json:"expires_at"`
+	ReviewAt         time.Time `json:"review_at"`
+	Status           string    `json:"status"`
 	Content          string    `json:"content"`
+	SourceGroupIDs   []string  `json:"source_group_ids,omitempty"`
 	KeepPrompt       string    `json:"keep_prompt,omitempty"`
 	DeletionProposal string    `json:"deletion_proposal,omitempty"`
 }
@@ -65,6 +87,11 @@ type schedulerState struct {
 	ImportantEvents          []event
 	LastSeenDay              string
 	MemoryLedger             []memoryRecord
+	HistoryGroups            []historyGroup
+	CurrentGroup             *historyGroup
+	NextMemoryID             int
+	NextGroupID              int
+	SeenEvents               []event
 }
 
 type decision struct {
@@ -77,9 +104,22 @@ type decision struct {
 	TriggerMicroDigest      bool              `json:"trigger_micro_digest"`
 	TriggerDailyDigest      bool              `json:"trigger_daily_digest"`
 	TriggerHighLevelRebuild bool              `json:"trigger_high_level_rebuild"`
+	OpenedHistoryGroup      string            `json:"opened_history_group,omitempty"`
+	CloseHistoryGroup       string            `json:"closed_history_group,omitempty"`
 	Reasons                 []string          `json:"reasons"`
 	Generated               []generatedMemory `json:"generated,omitempty"`
 	RetentionAlerts         []string          `json:"retention_alerts,omitempty"`
+	RetentionActions        []string          `json:"retention_actions,omitempty"`
+}
+
+type experimentResult struct {
+	Resident      string         `json:"resident"`
+	Scenario      string         `json:"scenario"`
+	Config        schedulerConfig `json:"config"`
+	Summary       map[string]any `json:"summary"`
+	Decisions     []decision     `json:"decisions,omitempty"`
+	HistoryGroups []historyGroup `json:"history_groups,omitempty"`
+	MemoryLedger  []memoryRecord `json:"memory_ledger,omitempty"`
 }
 
 func main() {
@@ -87,8 +127,27 @@ func main() {
 		scenario = flag.String("scenario", "baseline", "Scenario: baseline|busy-day|quiet-day")
 		resident = flag.String("resident", "jade", "Resident: jade|amber|onyx")
 		render   = flag.Bool("render", false, "Print full decision stream")
+		matrix   = flag.Bool("matrix", false, "Run all residents across all scenarios")
+		outDir   = flag.String("out-dir", "", "Optional output directory for result files")
 	)
 	flag.Parse()
+
+	cfg := defaultConfig()
+
+	if *matrix {
+		results, err := runMatrix(cfg)
+		if err != nil {
+			exitf("%v", err)
+		}
+		if strings.TrimSpace(*outDir) != "" {
+			if err := writeMatrixResult(*outDir, results); err != nil {
+				exitf("%v", err)
+			}
+		}
+		raw, _ := json.MarshalIndent(results, "", "  ")
+		fmt.Println(string(raw))
+		return
+	}
 
 	events, err := buildScenario(strings.ToLower(strings.TrimSpace(*scenario)))
 	if err != nil {
@@ -100,22 +159,35 @@ func main() {
 		exitf("%v", err)
 	}
 
-	cfg := defaultConfig()
-	decisions := runScheduler(events, cfg, profile)
-	summary := summarize(decisions, profile)
-
-	out, _ := json.Marshal(summary)
-	fmt.Println(string(out))
-
-	if *render {
-		raw, _ := json.MarshalIndent(decisions, "", "  ")
-		fmt.Println("----- decisions begin -----")
-		fmt.Println(string(raw))
-		fmt.Println("----- decisions end -----")
+	result := runExperiment(events, cfg, profile, strings.ToLower(strings.TrimSpace(*scenario)), *render)
+	if strings.TrimSpace(*outDir) != "" {
+		if err := writeSingleResult(*outDir, result); err != nil {
+			exitf("%v", err)
+		}
 	}
+
+	raw, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Println(string(raw))
 }
 
-func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) []decision {
+func runExperiment(events []event, cfg schedulerConfig, profile residentProfile, scenario string, render bool) experimentResult {
+	state, decisions := runScheduler(events, cfg, profile)
+	summary := summarize(decisions, profile, state)
+	result := experimentResult{
+		Resident: profile.Name,
+		Scenario: scenario,
+		Config:   cfg,
+		Summary:  summary,
+	}
+	if render {
+		result.Decisions = decisions
+		result.HistoryGroups = state.HistoryGroups
+		result.MemoryLedger = activeMemoryOnly(state.MemoryLedger)
+	}
+	return result
+}
+
+func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) (schedulerState, []decision) {
 	state := schedulerState{
 		LastShortByCategory:      make(map[string]time.Time),
 		LastHighLevelRebuildTime: events[0].Time,
@@ -131,11 +203,17 @@ func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) 
 		}
 
 		d.RetentionAlerts = append(d.RetentionAlerts, checkRetentionAlerts(profile, state.MemoryLedger, e.Time)...)
+		d.RetentionActions = append(d.RetentionActions, applyRetentionActions(&state, e.Time)...)
+		maybeRotateHistoryGroup(&state, profile, e, &d)
+		state.SeenEvents = append(state.SeenEvents, e)
 
 		instantRecord := memoryRecord{
+			ID:        nextMemoryID(&state, "instant"),
 			Layer:     "instant",
 			CreatedAt: e.Time,
 			ExpiresAt: e.Time.Add(profile.InstantTTL),
+			ReviewAt:  e.Time.Add(profile.InstantTTL),
+			Status:    "active",
 			Content:   e.Summary,
 		}
 		state.MemoryLedger = append(state.MemoryLedger, instantRecord)
@@ -165,13 +243,18 @@ func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) 
 				RetentionTTL: profile.ShortTTL.String(),
 			})
 			state.MemoryLedger = append(state.MemoryLedger, memoryRecord{
-				Layer:     "short",
-				CreatedAt: e.Time,
-				ExpiresAt: e.Time.Add(profile.ShortTTL),
-				Content:   content,
+				ID:             nextMemoryID(&state, "short"),
+				Layer:          "short",
+				CreatedAt:      e.Time,
+				ExpiresAt:      e.Time.Add(profile.ShortTTL),
+				ReviewAt:       e.Time.Add(profile.ShortTTL),
+				Status:         "active",
+				Content:        content,
+				SourceGroupIDs: currentGroupIDs(state),
 			})
 			state.LastShortReflectionRound = e.Round
 			state.LastShortByCategory[e.Category] = e.Time
+			markCurrentGroupExtracted(&state, "short reflection extracted")
 		}
 
 		if shouldTriggerMicroDigest(e, state, cfg) {
@@ -186,11 +269,16 @@ func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) 
 					RetentionTTL: profile.LongTTL.String(),
 				})
 				state.MemoryLedger = append(state.MemoryLedger, memoryRecord{
-					Layer:     "long",
-					CreatedAt: e.Time,
-					ExpiresAt: e.Time.Add(profile.LongTTL),
-					Content:   content,
+					ID:             nextMemoryID(&state, "long"),
+					Layer:          "long",
+					CreatedAt:      e.Time,
+					ExpiresAt:      e.Time.Add(profile.LongTTL),
+					ReviewAt:       e.Time.Add(profile.LongTTL),
+					Status:         "active",
+					Content:        content,
+					SourceGroupIDs: collectRecentGroupIDs(state, 2),
 				})
+				markCurrentGroupExtracted(&state, "micro digest extracted")
 			}
 			state.LastMicroDigestTime = e.Time
 			state.ImportantEvents = nil
@@ -208,10 +296,14 @@ func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) 
 				RetentionTTL: profile.LongTTL.String(),
 			})
 			state.MemoryLedger = append(state.MemoryLedger, memoryRecord{
-				Layer:     "long",
-				CreatedAt: e.Time,
-				ExpiresAt: e.Time.Add(profile.LongTTL),
-				Content:   content,
+				ID:             nextMemoryID(&state, "long"),
+				Layer:          "long",
+				CreatedAt:      e.Time,
+				ExpiresAt:      e.Time.Add(profile.LongTTL),
+				ReviewAt:       e.Time.Add(profile.LongTTL),
+				Status:         "active",
+				Content:        content,
+				SourceGroupIDs: collectGroupsForDay(state, dayKey),
 			})
 			state.LastDailyDigestDay = dayKey
 		}
@@ -227,10 +319,14 @@ func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) 
 				RetentionTTL: profile.PermanentReview.String(),
 			})
 			state.MemoryLedger = append(state.MemoryLedger, memoryRecord{
-				Layer:     "permanent",
-				CreatedAt: e.Time,
-				ExpiresAt: e.Time.Add(profile.PermanentReview),
-				Content:   content,
+				ID:             nextMemoryID(&state, "permanent"),
+				Layer:          "permanent",
+				CreatedAt:      e.Time,
+				ExpiresAt:      e.Time.Add(profile.PermanentReview),
+				ReviewAt:       e.Time.Add(profile.PermanentReview),
+				Status:         "active",
+				Content:        content,
+				SourceGroupIDs: collectRecentGroupIDs(state, 3),
 			})
 			state.LastHighLevelRebuildTime = e.Time
 		}
@@ -240,7 +336,8 @@ func runScheduler(events []event, cfg schedulerConfig, profile residentProfile) 
 		decisions = append(decisions, d)
 	}
 
-	return decisions
+	closeOpenGroup(&state, events[len(events)-1].Time, "scenario_end")
+	return state, decisions
 }
 
 func renderShortReflection(profile residentProfile, window []event, trigger event, state schedulerState) string {
@@ -358,21 +455,24 @@ func shortReflectionReason(e event, state schedulerState, cfg schedulerConfig) [
 }
 
 func shouldTriggerMicroDigest(e event, state schedulerState, cfg schedulerConfig) bool {
-	if len(state.ImportantEvents) >= cfg.MicroDigestEventCount {
+	if qualifiesForMicroDigest(state.ImportantEvents, cfg) {
 		return true
 	}
 	if state.LastMicroDigestTime.IsZero() {
 		return false
 	}
-	return e.Time.Sub(state.LastMicroDigestTime) >= cfg.MicroDigestInterval
+	if e.Time.Sub(state.LastMicroDigestTime) < cfg.MicroDigestInterval {
+		return false
+	}
+	return qualifiesForMicroDigest(state.ImportantEvents, cfg)
 }
 
 func microDigestReason(e event, state schedulerState, cfg schedulerConfig) []string {
 	reasons := []string{}
-	if len(state.ImportantEvents) >= cfg.MicroDigestEventCount {
+	if qualifiesForMicroDigest(state.ImportantEvents, cfg) {
 		reasons = append(reasons, fmt.Sprintf("important event count reached %d", len(state.ImportantEvents)))
 	}
-	if !state.LastMicroDigestTime.IsZero() && e.Time.Sub(state.LastMicroDigestTime) >= cfg.MicroDigestInterval {
+	if !state.LastMicroDigestTime.IsZero() && e.Time.Sub(state.LastMicroDigestTime) >= cfg.MicroDigestInterval && qualifiesForMicroDigest(state.ImportantEvents, cfg) {
 		reasons = append(reasons, fmt.Sprintf("micro digest interval reached %s", cfg.MicroDigestInterval))
 	}
 	return reasons
@@ -383,10 +483,11 @@ func shouldTriggerDailyDigest(e event, state schedulerState, cfg schedulerConfig
 	if state.LastDailyDigestDay == dayKey {
 		return false
 	}
+	dayEvents := eventsSinceDayStart(state, dayKey)
 	if e.Time.Hour() >= cfg.DailyDigestHour {
-		return true
+		return dailyDigestEligible(dayEvents, cfg)
 	}
-	return state.LastSeenDay != "" && state.LastSeenDay != dayKey && state.LastDailyDigestDay != state.LastSeenDay
+	return state.LastSeenDay != "" && state.LastSeenDay != dayKey && state.LastDailyDigestDay != state.LastSeenDay && dailyDigestEligible(eventsSinceDayStart(state, state.LastSeenDay), cfg)
 }
 
 func dailyDigestReason(e event, state schedulerState, cfg schedulerConfig) []string {
@@ -401,7 +502,7 @@ func shouldTriggerHighLevelRebuild(e event, state schedulerState, cfg schedulerC
 	return int(e.Time.Sub(state.LastHighLevelRebuildTime).Hours()/24) >= cfg.HighLevelRebuildDays
 }
 
-func summarize(decisions []decision, profile residentProfile) map[string]any {
+func summarize(decisions []decision, profile residentProfile, state schedulerState) map[string]any {
 	summary := map[string]any{
 		"resident":                 profile.Name,
 		"total_events":             len(decisions),
@@ -415,6 +516,7 @@ func summarize(decisions []decision, profile residentProfile) map[string]any {
 	generatedKinds := map[string]int{}
 	layers := map[string]int{}
 	alerts := 0
+	retentionActions := 0
 	for _, d := range decisions {
 		categorySet[d.EventCategory] = struct{}{}
 		if d.TriggerShortReflection {
@@ -434,6 +536,7 @@ func summarize(decisions []decision, profile residentProfile) map[string]any {
 			layers[g.Layer]++
 		}
 		alerts += len(d.RetentionAlerts)
+		retentionActions += len(d.RetentionActions)
 	}
 
 	categories := make([]string, 0, len(categorySet))
@@ -445,6 +548,13 @@ func summarize(decisions []decision, profile residentProfile) map[string]any {
 	summary["generated_memory_counts"] = generatedKinds
 	summary["generated_layer_counts"] = layers
 	summary["retention_alert_count"] = alerts
+	summary["retention_action_count"] = retentionActions
+	summary["history_group_count"] = len(state.HistoryGroups)
+	summary["extracted_group_count"] = countExtractedGroups(state.HistoryGroups)
+	summary["active_memory_count"] = countActiveMemory(state.MemoryLedger)
+	summary["expired_memory_count"] = countByStatus(state.MemoryLedger, "expired")
+	summary["promoted_memory_count"] = countByStatus(state.MemoryLedger, "promoted")
+	summary["dropped_memory_count"] = countByStatus(state.MemoryLedger, "dropped")
 	return summary
 }
 
@@ -453,9 +563,12 @@ func defaultConfig() schedulerConfig {
 		ShortReflectionMinRounds: 3,
 		SameCategoryCooldown:     2 * time.Hour,
 		FailureStreakThreshold:   2,
-		MicroDigestEventCount:    5,
+		MicroDigestEventCount:    4,
+		MicroDigestMinSpan:       2 * time.Hour,
 		MicroDigestInterval:      8 * time.Hour,
 		DailyDigestHour:          23,
+		DailyDigestMinEvents:     2,
+		DailyDigestMinImportance: 3,
 		HighLevelRebuildDays:     5,
 	}
 }
@@ -545,6 +658,305 @@ func buildScenario(name string) ([]event, error) {
 	default:
 		return nil, fmt.Errorf("unsupported scenario %q", name)
 	}
+}
+
+func maybeRotateHistoryGroup(state *schedulerState, profile residentProfile, e event, d *decision) {
+	shouldOpen := state.CurrentGroup == nil
+	if !shouldOpen {
+		if state.CurrentGroup.EventCount >= 4 || e.Category == "admin_feedback" || e.Category == "recovery" || e.Category == "strategy_shift" {
+			closeOpenGroup(state, e.Time, "rotation")
+			shouldOpen = true
+		}
+	}
+	if shouldOpen {
+		state.NextGroupID++
+		group := historyGroup{
+			GroupUUID:   fmt.Sprintf("%s-group-%03d", profile.Name, state.NextGroupID),
+			Resident:    profile.Name,
+			CreatedAt:   e.Time,
+			SourceKind:  "dialogue_window",
+			Tags:        []string{},
+			EventRounds: []int{},
+		}
+		state.CurrentGroup = &group
+		d.OpenedHistoryGroup = group.GroupUUID
+	}
+	appendToCurrentGroup(state, e)
+}
+
+func appendToCurrentGroup(state *schedulerState, e event) {
+	if state.CurrentGroup == nil {
+		return
+	}
+	state.CurrentGroup.EventCount++
+	state.CurrentGroup.Tags = appendUnique(state.CurrentGroup.Tags, e.Category)
+	state.CurrentGroup.EventRounds = append(state.CurrentGroup.EventRounds, e.Round)
+	state.CurrentGroup.SummaryHint = e.Summary
+}
+
+func closeOpenGroup(state *schedulerState, at time.Time, note string) {
+	if state.CurrentGroup == nil {
+		return
+	}
+	state.CurrentGroup.ClosedAt = at
+	if note != "" {
+		state.CurrentGroup.ExtractNotes = append(state.CurrentGroup.ExtractNotes, note)
+	}
+	state.HistoryGroups = append(state.HistoryGroups, *state.CurrentGroup)
+	state.CurrentGroup = nil
+}
+
+func markCurrentGroupExtracted(state *schedulerState, note string) {
+	if state.CurrentGroup == nil {
+		return
+	}
+	state.CurrentGroup.Extracted = true
+	if note != "" {
+		state.CurrentGroup.ExtractNotes = append(state.CurrentGroup.ExtractNotes, note)
+	}
+}
+
+func currentGroupIDs(state schedulerState) []string {
+	if state.CurrentGroup == nil {
+		return nil
+	}
+	return []string{state.CurrentGroup.GroupUUID}
+}
+
+func collectRecentGroupIDs(state schedulerState, n int) []string {
+	ids := []string{}
+	for i := len(state.HistoryGroups) - 1; i >= 0 && len(ids) < n; i-- {
+		ids = append(ids, state.HistoryGroups[i].GroupUUID)
+	}
+	if state.CurrentGroup != nil && len(ids) < n {
+		ids = append(ids, state.CurrentGroup.GroupUUID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func collectGroupsForDay(state schedulerState, dayKey string) []string {
+	ids := []string{}
+	for _, g := range state.HistoryGroups {
+		if g.CreatedAt.Format("2006-01-02") == dayKey || g.ClosedAt.Format("2006-01-02") == dayKey {
+			ids = append(ids, g.GroupUUID)
+		}
+	}
+	if state.CurrentGroup != nil && state.CurrentGroup.CreatedAt.Format("2006-01-02") == dayKey {
+		ids = append(ids, state.CurrentGroup.GroupUUID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func applyRetentionActions(state *schedulerState, now time.Time) []string {
+	actions := []string{}
+	for i := range state.MemoryLedger {
+		record := &state.MemoryLedger[i]
+		if record.Status != "active" {
+			continue
+		}
+		if now.Before(record.ReviewAt) {
+			continue
+		}
+		switch record.Layer {
+		case "instant":
+			record.Status = "expired"
+			actions = append(actions, record.ID+": expired instant memory after immediate use window")
+		case "short":
+			if shouldPromoteShortRecord(*record) {
+				record.Status = "promoted"
+				actions = append(actions, record.ID+": promoted short memory candidate for later long-memory review")
+			} else {
+				record.Status = "dropped"
+				actions = append(actions, record.ID+": dropped short working note after TTL")
+			}
+		case "long":
+			record.Status = "review_due"
+			actions = append(actions, record.ID+": long memory reached review window")
+		case "permanent":
+			record.Status = "review_due"
+			actions = append(actions, record.ID+": permanent memory requires low-frequency audit")
+		}
+	}
+	return actions
+}
+
+func activeMemoryOnly(records []memoryRecord) []memoryRecord {
+	active := make([]memoryRecord, 0, len(records))
+	for _, record := range records {
+		if record.Status == "active" || record.Status == "review_due" {
+			active = append(active, record)
+		}
+	}
+	return active
+}
+
+func writeSingleResult(outDir string, result experimentResult) error {
+	runDir := filepath.Join(outDir, fmt.Sprintf("%s-%s-%s", result.Resident, result.Scenario, time.Now().UTC().Format("20060102T150405Z")))
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return err
+	}
+	raw, _ := json.MarshalIndent(result, "", "  ")
+	return os.WriteFile(filepath.Join(runDir, "result.json"), raw, 0o644)
+}
+
+func writeMatrixResult(outDir string, results map[string]any) error {
+	runDir := filepath.Join(outDir, "matrix-"+time.Now().UTC().Format("20060102T150405Z"))
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return err
+	}
+	raw, _ := json.MarshalIndent(results, "", "  ")
+	return os.WriteFile(filepath.Join(runDir, "summary.json"), raw, 0o644)
+}
+
+func runMatrix(cfg schedulerConfig) (map[string]any, error) {
+	residents := []string{"jade", "amber", "onyx"}
+	scenarios := []string{"baseline", "busy-day", "quiet-day"}
+	results := []map[string]any{}
+	findings := map[string]bool{
+		"sparse_short_reflection_on_quiet_day": true,
+		"daily_digest_present_on_quiet_day":    true,
+		"history_groups_created":               true,
+		"retention_actions_observed":           true,
+	}
+
+	for _, resident := range residents {
+		profile, err := buildResidentProfile(resident)
+		if err != nil {
+			return nil, err
+		}
+		for _, scenario := range scenarios {
+			events, err := buildScenario(scenario)
+			if err != nil {
+				return nil, err
+			}
+			result := runExperiment(events, cfg, profile, scenario, false)
+			results = append(results, map[string]any{
+				"resident": resident,
+				"scenario": scenario,
+				"summary":  result.Summary,
+			})
+			if scenario == "quiet-day" && result.Summary["short_reflection_count"].(int) > 1 {
+				findings["sparse_short_reflection_on_quiet_day"] = false
+			}
+			if scenario == "quiet-day" && result.Summary["daily_digest_count"].(int) < 1 {
+				findings["daily_digest_present_on_quiet_day"] = false
+			}
+			if result.Summary["history_group_count"].(int) < 1 {
+				findings["history_groups_created"] = false
+			}
+			if result.Summary["retention_action_count"].(int) < 1 {
+				findings["retention_actions_observed"] = false
+			}
+		}
+	}
+
+	return map[string]any{
+		"config":   cfg,
+		"results":  results,
+		"findings": findings,
+	}, nil
+}
+
+func nextMemoryID(state *schedulerState, layer string) string {
+	state.NextMemoryID++
+	return fmt.Sprintf("%s-%03d", layer, state.NextMemoryID)
+}
+
+func appendUnique(items []string, value string) []string {
+	for _, item := range items {
+		if item == value {
+			return items
+		}
+	}
+	return append(items, value)
+}
+
+func countExtractedGroups(groups []historyGroup) int {
+	count := 0
+	for _, group := range groups {
+		if group.Extracted {
+			count++
+		}
+	}
+	return count
+}
+
+func countActiveMemory(records []memoryRecord) int {
+	return countByStatus(records, "active") + countByStatus(records, "review_due")
+}
+
+func countByStatus(records []memoryRecord, status string) int {
+	count := 0
+	for _, record := range records {
+		if record.Status == status {
+			count++
+		}
+	}
+	return count
+}
+
+func qualifiesForMicroDigest(events []event, cfg schedulerConfig) bool {
+	if len(events) < cfg.MicroDigestEventCount {
+		return false
+	}
+	first := events[0].Time
+	last := events[len(events)-1].Time
+	if last.Sub(first) < cfg.MicroDigestMinSpan {
+		return false
+	}
+	categories := map[string]struct{}{}
+	for _, event := range events {
+		categories[event.Category] = struct{}{}
+	}
+	return len(categories) >= 2
+}
+
+func dailyDigestEligible(events []event, cfg schedulerConfig) bool {
+	if len(events) < cfg.DailyDigestMinEvents {
+		return false
+	}
+	maxImportance := 0
+	for _, event := range events {
+		if event.Importance > maxImportance {
+			maxImportance = event.Importance
+		}
+	}
+	return maxImportance >= cfg.DailyDigestMinImportance
+}
+
+func shouldPromoteShortRecord(record memoryRecord) bool {
+	content := strings.ToLower(record.Content)
+	strongSignals := 0
+	for _, marker := range []string{
+		"carry forward",
+		"default behavior",
+		"default move",
+		"resource policy",
+		"administrator",
+		"relationship",
+		"strategy digest",
+		"lessons digest",
+	} {
+		if strings.Contains(content, marker) {
+			strongSignals++
+		}
+	}
+	if len(record.SourceGroupIDs) >= 2 {
+		strongSignals++
+	}
+	return strongSignals >= 2
+}
+
+func eventsSinceDayStart(state schedulerState, dayKey string) []event {
+	events := []event{}
+	for _, seen := range state.SeenEvents {
+		if seen.Time.Format("2006-01-02") == dayKey {
+			events = append(events, seen)
+		}
+	}
+	return events
 }
 
 func interpretEvent(profile residentProfile, e event) string {
