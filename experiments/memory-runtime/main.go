@@ -1069,6 +1069,21 @@ func localDraftIssues(profile residentProfile, layer string, draft memoryDraft) 
 		if strings.Contains(lower, "not decoration") || strings.Contains(lower, "part of the work, not") {
 			issues = append(issues, "long memory is leaning on polished contrast phrasing")
 		}
+		if profile.Name == "jade" {
+			if strings.Contains(lower, "finished recovery") || strings.Contains(lower, "count a fix as real") {
+				issues = append(issues, "jade long memory still sounds like a polished engineering maxim")
+			}
+		}
+		if profile.Name == "amber" {
+			if strings.Contains(lower, "when alignment matters") || strings.Contains(lower, "it is worth ") {
+				issues = append(issues, "amber long memory is slipping into advice instead of remembered social drift")
+			}
+		}
+		if profile.Name == "onyx" {
+			if strings.Contains(lower, "it is worth ") || strings.Contains(lower, "should ") {
+				issues = append(issues, "onyx long memory is slipping into generic advice instead of priced strategic memory")
+			}
+		}
 		drop := strings.ToLower(strings.TrimSpace(draft.DropCondition))
 		if drop != "" {
 			if strings.HasPrefix(drop, "drop if this stage stops") || strings.Contains(drop, "repeated evidence shows") {
@@ -1658,6 +1673,10 @@ func buildDraftPrompt(profile residentProfile, layer, scenario string, events []
 	case "jade":
 		b.WriteString("- jade often keeps what changes diagnosis, reversibility, execution quality, or technical confidence\n")
 		b.WriteString("- if only one narrow technical realization stayed, it is enough to keep only that\n")
+		if layer == "long" {
+			b.WriteString("- jade long memory should sound like a retained engineering read, not like a polished reliability slogan\n")
+			b.WriteString("- prefer the surviving test for whether a fix can be trusted over a grand statement about what recovery means\n")
+		}
 		if layer == "permanent" {
 			b.WriteString("- for jade permanent memory, stay in engineering reality: system boundaries, causal diagnosis, path narrowing, reversibility, reliability\n")
 			b.WriteString("- do not center trust, handoff, coordination, or social structure unless they are clearly subordinate to engineering reliability\n")
@@ -1672,6 +1691,10 @@ func buildDraftPrompt(profile residentProfile, layer, scenario string, events []
 	case "onyx":
 		b.WriteString("- onyx often keeps what changes leverage, exposure, cost, future room to move, or the truth about a false edge\n")
 		b.WriteString("- if the memory is mainly about a fake advantage collapsing, that alone can be enough\n")
+		if layer == "long" {
+			b.WriteString("- onyx long memory should read like a priced strategic scar or leverage pattern, not generic discipline advice\n")
+			b.WriteString("- prefer the remembered false edge and its cost over a clean recommendation sentence\n")
+		}
 		if layer == "short" {
 			b.WriteString("- onyx short memory should read like a tactical self-warning before the next move, not like a polished strategic recap\n")
 			b.WriteString("- prefer a sharp priced caution over a three-part explanation\n")
