@@ -768,7 +768,7 @@ func finalizeLayerRun(memStore memory.Store, profile residentProfile, layer, sce
 		ObservedCache:  finalDraftResult.ObservedPromptCacheKey,
 		RecordState:    recordState,
 	}
-	if err := commitStoreRecord(memStore, profile.Name, finalDraftResult.ResponseID, memoryText, recordState, recordDecision, conflictDecisionPtr, []string{historyGroup.GroupUUID}); err != nil {
+	if err := commitStoreRecord(memStore, profile.Name, finalDraftResult.ResponseID, finalDraft, memoryText, recordState, recordDecision, conflictDecisionPtr, []string{historyGroup.GroupUUID}); err != nil {
 		return layerRunSummary{}, fmt.Errorf("commit store record: %w", err)
 	}
 
@@ -2540,9 +2540,18 @@ func recallEvidence(memStore memory.Store, resident, memoryID, outDir string) (m
 	return result, nil
 }
 
-func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary string, state memory.Record, decision memory.Decision, conflict *conflictDecision, sourceGroupIDs []string) error {
+func commitStoreRecord(memStore memory.Store, resident, sourceRunID string, draft memoryDraft, residentText string, state memory.Record, decision memory.Decision, conflict *conflictDecision, sourceGroupIDs []string) error {
 	if memStore == nil {
 		return nil
+	}
+	summary := buildStoreSummary(draft, residentText)
+	semantic := memory.SemanticMemory{
+		EventAnchor:      strings.TrimSpace(draft.EventAnchor),
+		OldReadToDrop:    strings.TrimSpace(draft.OldReadToDrop),
+		NewReadToKeep:    strings.TrimSpace(draft.NewReadToKeep),
+		CarryForwardRule: strings.TrimSpace(draft.CarryForwardRule),
+		WhyItMatters:     strings.TrimSpace(draft.WhyItMatters),
+		ScopeBoundary:    strings.TrimSpace(draft.ScopeBoundary),
 	}
 
 	if conflict != nil && conflict.MergeSuggested {
@@ -2557,6 +2566,8 @@ func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary str
 				existing.Record = state
 				existing.Record.ID = targetID
 				existing.Summary = summary
+				existing.ResidentText = residentText
+				existing.Semantic = semantic
 				existing.DecisionAction = decision.Action
 				existing.SourceRunID = sourceRunID
 				existing.SourceGroupIDs = mergeStringLists(existing.SourceGroupIDs, sourceGroupIDs)
@@ -2570,10 +2581,27 @@ func commitStoreRecord(memStore memory.Store, resident, sourceRunID, summary str
 		Record:         state,
 		Resident:       resident,
 		Summary:        summary,
+		ResidentText:   residentText,
+		Semantic:       semantic,
 		DecisionAction: decision.Action,
 		SourceRunID:    sourceRunID,
 		SourceGroupIDs: append([]string(nil), sourceGroupIDs...),
 	})
+}
+
+func buildStoreSummary(draft memoryDraft, residentText string) string {
+	candidates := []string{
+		strings.TrimSpace(draft.NewReadToKeep),
+		strings.TrimSpace(draft.CarryForwardRule),
+		strings.TrimSpace(draft.WhyItMatters),
+		strings.TrimSpace(residentText),
+	}
+	for _, candidate := range candidates {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func eventWindowStart(events []event) time.Time {

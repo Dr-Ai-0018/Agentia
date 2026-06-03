@@ -54,14 +54,25 @@ type HistoryGroup struct {
 
 type AbstractMemory struct {
 	Record
-	Resident        string   `json:"resident"`
-	Summary         string   `json:"summary"`
-	DecisionAction  Action   `json:"decision_action"`
-	SourceRunID     string   `json:"source_run_id,omitempty"`
-	SourceGroupIDs  []string `json:"source_group_ids"`
-	ParentMemoryIDs []string `json:"parent_memory_ids"`
-	Boundary        string   `json:"boundary,omitempty"`
-	Confidence      float64  `json:"confidence,omitempty"`
+	Resident        string         `json:"resident"`
+	Summary         string         `json:"summary"`
+	ResidentText    string         `json:"resident_text,omitempty"`
+	Semantic        SemanticMemory `json:"semantic,omitempty"`
+	DecisionAction  Action         `json:"decision_action"`
+	SourceRunID     string         `json:"source_run_id,omitempty"`
+	SourceGroupIDs  []string       `json:"source_group_ids"`
+	ParentMemoryIDs []string       `json:"parent_memory_ids"`
+	Boundary        string         `json:"boundary,omitempty"`
+	Confidence      float64        `json:"confidence,omitempty"`
+}
+
+type SemanticMemory struct {
+	EventAnchor      string `json:"event_anchor,omitempty"`
+	OldReadToDrop    string `json:"old_read_to_drop,omitempty"`
+	NewReadToKeep    string `json:"new_read_to_keep,omitempty"`
+	CarryForwardRule string `json:"carry_forward_rule,omitempty"`
+	WhyItMatters     string `json:"why_it_matters,omitempty"`
+	ScopeBoundary    string `json:"scope_boundary,omitempty"`
 }
 
 type SnapshotEntry struct {
@@ -196,10 +207,30 @@ func BuildSnapshot(records []AbstractMemory, limit int) []SnapshotEntry {
 			ID:             record.ID,
 			Layer:          record.Layer,
 			DecisionAction: record.DecisionAction,
-			Summary:        record.Summary,
+			Summary:        record.EffectiveSummary(),
 		})
 	}
 	return entries
+}
+
+func (m AbstractMemory) EffectiveSummary() string {
+	if strings.TrimSpace(m.Summary) != "" {
+		return strings.TrimSpace(m.Summary)
+	}
+	if strings.TrimSpace(m.ResidentText) != "" {
+		return strings.TrimSpace(m.ResidentText)
+	}
+	parts := []string{
+		strings.TrimSpace(m.Semantic.NewReadToKeep),
+		strings.TrimSpace(m.Semantic.CarryForwardRule),
+		strings.TrimSpace(m.Semantic.WhyItMatters),
+	}
+	for _, part := range parts {
+		if part != "" {
+			return part
+		}
+	}
+	return ""
 }
 
 type FileStore struct {
