@@ -10,6 +10,7 @@
 计划覆盖：
 
 - `self_status`
+- `self_reboot`
 - `self_snapshot_create`
 - `self_request_memory`
 - `self_request_disk`
@@ -35,6 +36,12 @@
 
 ```bash
 go run ./experiments/broker-self-actions --agent jade --action self_status
+```
+
+重启绑定实例：
+
+```bash
+go run ./experiments/broker-self-actions --agent jade --action self_reboot
 ```
 
 创建绑定实例快照：
@@ -66,6 +73,9 @@ go run ./experiments/broker-self-actions --agent jade --action forbidden_cross_v
 - `self_status`
   - 自动把 `agent` 映射到绑定实例
   - 读取真实 Incus `info/config/snapshot` 数据
+- `self_reboot`
+  - 只允许重启绑定实例
+  - 返回重启前后实例信息
 - `self_snapshot_create`
   - 在绑定实例上真实创建快照
 - `self_request_memory`

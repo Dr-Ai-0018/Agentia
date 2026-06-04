@@ -38,13 +38,13 @@ type residentBinding struct {
 
 func main() {
 	var (
-		agent          = flag.String("agent", "jade", "Resident identity: jade|amber|onyx")
-		action         = flag.String("action", "self_status", "Action: self_status|self_snapshot_create|self_request_memory|self_request_disk|forbidden_cross_vm")
-		reason         = flag.String("reason", "experiment run", "Reason string")
-		label          = flag.String("label", "", "Optional snapshot label")
-		requestedMem   = flag.String("requested-memory", "4GiB", "Requested memory for self_request_memory")
-		requestedDisk  = flag.String("requested-disk", "16GiB", "Requested disk for self_request_disk")
-		renderRequest  = flag.Bool("render-request", false, "Print the synthesized request envelope")
+		agent         = flag.String("agent", "jade", "Resident identity: jade|amber|onyx")
+		action        = flag.String("action", "self_status", "Action: self_status|self_reboot|self_snapshot_create|self_request_memory|self_request_disk|forbidden_cross_vm")
+		reason        = flag.String("reason", "experiment run", "Reason string")
+		label         = flag.String("label", "", "Optional snapshot label")
+		requestedMem  = flag.String("requested-memory", "4GiB", "Requested memory for self_request_memory")
+		requestedDisk = flag.String("requested-disk", "16GiB", "Requested disk for self_request_disk")
+		renderRequest = flag.Bool("render-request", false, "Print the synthesized request envelope")
 	)
 	flag.Parse()
 
@@ -103,6 +103,8 @@ func handle(req requestEnvelope) (responseEnvelope, error) {
 	switch req.Action {
 	case "self_status":
 		return handleSelfStatus(binding, req)
+	case "self_reboot":
+		return handleSelfReboot(binding, req)
 	case "self_snapshot_create":
 		return handleSnapshotCreate(binding, req)
 	case "self_request_memory":
@@ -144,6 +146,33 @@ func handle(req requestEnvelope) (responseEnvelope, error) {
 	default:
 		return responseEnvelope{}, fmt.Errorf("unsupported action %q", req.Action)
 	}
+}
+
+func handleSelfReboot(binding residentBinding, req requestEnvelope) (responseEnvelope, error) {
+	before, err := runIncus("info", binding.Instance)
+	if err != nil {
+		return responseEnvelope{}, err
+	}
+	if _, err := runIncus("restart", binding.Instance); err != nil {
+		return responseEnvelope{}, err
+	}
+	after, err := runIncus("info", binding.Instance)
+	if err != nil {
+		return responseEnvelope{}, err
+	}
+	return responseEnvelope{
+		OK:        true,
+		RequestID: req.RequestID,
+		Agent:     binding.Agent,
+		Instance:  binding.Instance,
+		Action:    req.Action,
+		Decision:  "approved",
+		Message:   "bound instance rebooted successfully",
+		Data: map[string]any{
+			"before_info": before,
+			"after_info":  after,
+		},
+	}, nil
 }
 
 func handleSelfStatus(binding residentBinding, req requestEnvelope) (responseEnvelope, error) {
