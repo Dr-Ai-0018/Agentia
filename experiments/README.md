@@ -44,6 +44,8 @@
   - 验证 `self-only` 动作边界与最小 broker 行为
 - `vm-control/`
   - 验证居民对自身机器、资源、目录、日志的感知与操作
+- `network-boundary/`
+  - 验证居民能否区分本机问题、宿主/桥接问题、上游/provider 问题
 
 ### D. Persona / Multi-Agent 层
 

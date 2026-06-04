@@ -27,6 +27,7 @@
 
 - 已补最小可运行本地 broker 模拟器
 - 已可基于真实 Incus 状态验证 `self_status`
+- 已可基于真实 Incus 重启绑定实例验证 `self_reboot`
 - 已可基于真实 Incus 创建快照验证 `self_snapshot_create`
 - 已可验证越权字段拒绝
 
