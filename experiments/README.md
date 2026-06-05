@@ -26,6 +26,14 @@
   - 验证 Responses 流式、usage、`cached_tokens`、模型差异
 - `context-packet/`
   - 验证上下文组包顺序、稳定前缀、hash 漂移边界
+- `token-ledger/`
+  - 验证 `真实账 / 世界账`、三层额度扣减、fatigue 换算
+- `spark-ledger/`
+  - 验证高精度 `spark` 余额、流水、工资、奖励、微额扣费
+- `runtime-economy/`
+  - 验证单次调用后 `spark + strain + quota + fatigue` 的组合闭环
+- `recovery-loop/`
+  - 验证欠费后先还债、再解锁普通调用的恢复流程
 
 ### B. Memory 机制层
 

@@ -1,0 +1,108 @@
+package recovery
+
+import (
+	"math"
+	"time"
+
+	"ai-arena/internal/tokenledger"
+)
+
+type Policy struct {
+	SparkRecoveryPerHour  float64
+	StrainRecoveryPerHour int
+	DayRecoveryPerHour    int
+	WeekRecoveryPerHour   int
+}
+
+type State struct {
+	SparkBalance float64
+	Quota        tokenledger.QuotaState
+	DebtActive   bool
+	DebtAmount   float64
+	LastTickAt   time.Time
+}
+
+type TickResult struct {
+	HoursElapsed        float64               `json:"hours_elapsed"`
+	SparkRecovered      float64               `json:"spark_recovered"`
+	AppliedToDebt       float64               `json:"applied_to_debt"`
+	NewSparkBalance     float64               `json:"new_spark_balance"`
+	DebtActive          bool                  `json:"debt_active"`
+	DebtAmount          float64               `json:"debt_amount"`
+	RecoveredStrain     int                   `json:"recovered_strain"`
+	QuotaBefore         tokenledger.QuotaState `json:"quota_before"`
+	QuotaAfter          tokenledger.QuotaState `json:"quota_after"`
+}
+
+func Apply(policy Policy, state State, now time.Time) TickResult {
+	if now.Before(state.LastTickAt) {
+		now = state.LastTickAt
+	}
+
+	hours := now.Sub(state.LastTickAt).Hours()
+	if hours < 0 {
+		hours = 0
+	}
+
+	sparkRecovered := roundToPrecision(hours*policy.SparkRecoveryPerHour, 4)
+	recoveredStrain := int(math.Floor(hours * float64(policy.StrainRecoveryPerHour)))
+
+	before := state.Quota
+	after := state.Quota
+	after.Window6HUsed = maxInt(0, after.Window6HUsed-recoveredStrain)
+	after.DayUsed = maxInt(0, after.DayUsed-int(math.Floor(hours*float64(policy.DayRecoveryPerHour))))
+	after.WeekUsed = maxInt(0, after.WeekUsed-int(math.Floor(hours*float64(policy.WeekRecoveryPerHour))))
+
+	newBalance := state.SparkBalance
+	debtAmount := state.DebtAmount
+	debtActive := state.DebtActive
+	appliedToDebt := 0.0
+
+	if sparkRecovered > 0 {
+		if debtActive && debtAmount > 0 {
+			appliedToDebt = minFloat(debtAmount, sparkRecovered)
+			debtAmount = roundToPrecision(debtAmount-appliedToDebt, 4)
+			newBalance = roundToPrecision(state.SparkBalance+appliedToDebt, 4)
+			if debtAmount <= 0 {
+				debtAmount = 0
+				debtActive = false
+			}
+		}
+
+		remaining := roundToPrecision(sparkRecovered-appliedToDebt, 4)
+		if remaining > 0 {
+			newBalance = roundToPrecision(newBalance+remaining, 4)
+		}
+	}
+
+	return TickResult{
+		HoursElapsed:    roundToPrecision(hours, 4),
+		SparkRecovered:  sparkRecovered,
+		AppliedToDebt:   appliedToDebt,
+		NewSparkBalance: newBalance,
+		DebtActive:      debtActive,
+		DebtAmount:      debtAmount,
+		RecoveredStrain: recoveredStrain,
+		QuotaBefore:     before,
+		QuotaAfter:      after,
+	}
+}
+
+func roundToPrecision(v float64, places int) float64 {
+	scale := math.Pow(10, float64(places))
+	return math.Round(v*scale) / scale
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
