@@ -1,6 +1,7 @@
 package newborn
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -50,5 +51,43 @@ func TestFallbackAcceptance(t *testing.T) {
 	got := fallbackAcceptance(nil, "broker_preflight_denied")
 	if got == "" {
 		t.Fatalf("expected fallback acceptance text")
+	}
+}
+
+func TestParseDecisionResultFromFunctionCall(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				Name:      "decide_next_action",
+				Arguments: `{"situation":"fresh boot","next_action":"guest_exec","reason":"inspect first","command":"whoami","message":""}`,
+			},
+		},
+	}
+
+	decision, err := parseDecisionResult(result)
+	if err != nil {
+		t.Fatalf("parse decision result: %v", err)
+	}
+	if decision.NextAction != "guest_exec" {
+		t.Fatalf("unexpected next action: %s", decision.NextAction)
+	}
+	if decision.Command != "whoami" {
+		t.Fatalf("unexpected command: %s", decision.Command)
+	}
+}
+
+func TestCompactObservationForHistory(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 120; i++ {
+		b.WriteString("line\n")
+	}
+
+	compacted := compactObservationForHistory(b.String())
+	if !strings.Contains(compacted, "[observation truncated for context reuse:") {
+		t.Fatalf("expected truncation marker, got %q", compacted)
+	}
+	if len(compacted) > maxObservationHistoryChars+200 {
+		t.Fatalf("compacted observation too large: %d", len(compacted))
 	}
 }

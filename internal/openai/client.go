@@ -17,22 +17,39 @@ type Message struct {
 }
 
 type RequestPayload struct {
-	Model          string    `json:"model"`
-	Instructions   string    `json:"instructions"`
-	PromptCacheKey string    `json:"prompt_cache_key"`
-	Input          []Message `json:"input"`
-	Stream         bool      `json:"stream"`
-	Store          bool      `json:"store"`
+	Model             string         `json:"model"`
+	Instructions      string         `json:"instructions"`
+	PromptCacheKey    string         `json:"prompt_cache_key"`
+	Input             []Message      `json:"input"`
+	Tools             []ResponseTool `json:"tools,omitempty"`
+	ToolChoice        any            `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool          `json:"parallel_tool_calls,omitempty"`
+	Stream            bool           `json:"stream"`
+	Store             bool           `json:"store"`
 }
 
 type StreamResult struct {
 	ResponseID             string
 	ObservedPromptCacheKey string
 	OutputText             string
+	FunctionCalls          []ResponseItem
 	InputTokens            int
 	CachedTokens           int
 	OutputTokens           int
 	RequestID              string
+}
+
+type ResponseTool struct {
+	Type        string         `json:"type"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+	Strict      bool           `json:"strict,omitempty"`
+}
+
+type FunctionToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
 }
 
 type usageEnvelope struct {
@@ -47,22 +64,34 @@ type usageEnvelope struct {
 }
 
 type responseEnvelope struct {
-	ID             string        `json:"id"`
-	PromptCacheKey string        `json:"prompt_cache_key"`
-	OutputText     string        `json:"output_text"`
-	Usage          usageEnvelope `json:"usage"`
-	Output         []struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"output"`
+	ID             string         `json:"id"`
+	PromptCacheKey string         `json:"prompt_cache_key"`
+	OutputText     string         `json:"output_text"`
+	Usage          usageEnvelope  `json:"usage"`
+	Output         []ResponseItem `json:"output"`
+}
+
+type ResponseItem struct {
+	Type      string `json:"type"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+	CallName  string `json:"call_name,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+	ID        string `json:"id,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Content   []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content,omitempty"`
 }
 
 type streamingEvent struct {
-	Type     string           `json:"type"`
-	Delta    string           `json:"delta"`
-	Response responseEnvelope `json:"response"`
+	Type      string           `json:"type"`
+	Delta     string           `json:"delta"`
+	Arguments string           `json:"arguments"`
+	ItemID    string           `json:"item_id"`
+	Item      ResponseItem     `json:"item"`
+	Response  responseEnvelope `json:"response"`
 }
 
 func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayload, verbose bool) (StreamResult, error) {
@@ -135,6 +164,18 @@ func ParseSSE(r io.Reader, verbose bool) (StreamResult, error) {
 			if verbose && evt.Delta != "" {
 				fmt.Print(evt.Delta)
 			}
+		case "response.output_item.added", "response.output_item.done":
+			if evt.Item.Type == "function_call" {
+				mergeFunctionCall(&result, evt.Item)
+			}
+		case "response.function_call_arguments.delta":
+			if evt.ItemID != "" && evt.Delta != "" {
+				appendFunctionCallArguments(&result, evt.ItemID, evt.Delta)
+			}
+		case "response.function_call_arguments.done":
+			if evt.ItemID != "" && evt.Arguments != "" {
+				setFunctionCallArguments(&result, evt.ItemID, evt.Arguments)
+			}
 		case "response.completed", "response.done":
 			applyResponseEnvelope(&result, evt.Response)
 		}
@@ -186,6 +227,9 @@ func applyResponseEnvelope(dst *StreamResult, resp responseEnvelope) {
 
 	var b strings.Builder
 	for _, item := range resp.Output {
+		if item.Type == "function_call" {
+			mergeFunctionCall(dst, item)
+		}
 		for _, part := range item.Content {
 			if part.Type == "output_text" {
 				b.WriteString(part.Text)
@@ -193,4 +237,71 @@ func applyResponseEnvelope(dst *StreamResult, resp responseEnvelope) {
 		}
 	}
 	dst.OutputText = b.String()
+}
+
+func mergeFunctionCall(dst *StreamResult, item ResponseItem) {
+	for i := range dst.FunctionCalls {
+		if sameFunctionCall(dst.FunctionCalls[i], item) {
+			if item.Name != "" {
+				dst.FunctionCalls[i].Name = item.Name
+			}
+			if item.CallName != "" {
+				dst.FunctionCalls[i].CallName = item.CallName
+			}
+			if item.Arguments != "" {
+				dst.FunctionCalls[i].Arguments = item.Arguments
+			}
+			if item.CallID != "" {
+				dst.FunctionCalls[i].CallID = item.CallID
+			}
+			if item.ID != "" {
+				dst.FunctionCalls[i].ID = item.ID
+			}
+			if item.Status != "" {
+				dst.FunctionCalls[i].Status = item.Status
+			}
+			return
+		}
+	}
+	dst.FunctionCalls = append(dst.FunctionCalls, item)
+}
+
+func appendFunctionCallArguments(dst *StreamResult, itemID, delta string) {
+	for i := range dst.FunctionCalls {
+		if dst.FunctionCalls[i].ID == itemID || dst.FunctionCalls[i].CallID == itemID {
+			dst.FunctionCalls[i].Arguments += delta
+			return
+		}
+	}
+	dst.FunctionCalls = append(dst.FunctionCalls, ResponseItem{
+		Type:      "function_call",
+		ID:        itemID,
+		CallID:    itemID,
+		Arguments: delta,
+	})
+}
+
+func setFunctionCallArguments(dst *StreamResult, itemID, arguments string) {
+	for i := range dst.FunctionCalls {
+		if dst.FunctionCalls[i].ID == itemID || dst.FunctionCalls[i].CallID == itemID {
+			dst.FunctionCalls[i].Arguments = arguments
+			return
+		}
+	}
+	dst.FunctionCalls = append(dst.FunctionCalls, ResponseItem{
+		Type:      "function_call",
+		ID:        itemID,
+		CallID:    itemID,
+		Arguments: arguments,
+	})
+}
+
+func sameFunctionCall(a, b ResponseItem) bool {
+	if a.ID != "" && b.ID != "" && a.ID == b.ID {
+		return true
+	}
+	if a.CallID != "" && b.CallID != "" && a.CallID == b.CallID {
+		return true
+	}
+	return false
 }
