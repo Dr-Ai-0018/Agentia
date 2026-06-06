@@ -115,6 +115,14 @@ func (a *App) RunStatus(residentID string) (brokerstate.ResidentStatus, error) {
 	return a.service(false).SelfStatus(residentID)
 }
 
+func (a *App) RunPrepareSpec(residentID string, spec CallSpec) (brokerstate.PreparedAdmission, error) {
+	prepared, _, err := a.service(false).PrepareAdmission(residentID, spec.Kind, spec.Usage, spec.Penalties)
+	if err != nil {
+		return brokerstate.PreparedAdmission{}, err
+	}
+	return prepared, nil
+}
+
 func (a *App) RunRecover(residentID string, hours float64, now time.Time) (RecoveryOutput, error) {
 	service := a.service(false)
 	status, err := service.SelfStatus(residentID)
@@ -165,6 +173,15 @@ func (a *App) RunAdmitSpec(residentID string, spec CallSpec, apply bool) (broker
 		Activity:   spec.Activity,
 		Apply:      apply,
 	})
+}
+
+func SpecFromUsage(kind runtimeguard.CallKind, usage tokenledger.Usage, penalties tokenledger.Penalties, activity tokenledger.ActivityType) CallSpec {
+	return CallSpec{
+		Kind:      kind,
+		Usage:     usage,
+		Penalties: penalties,
+		Activity:  activity,
+	}
 }
 
 func DefaultSpecForKind(callKind runtimeguard.CallKind, now time.Time) (CallSpec, error) {

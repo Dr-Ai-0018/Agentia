@@ -14,6 +14,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"ai-arena/internal/broker"
+	"ai-arena/internal/brokerstate"
+	"ai-arena/internal/runtimeguard"
+	"ai-arena/internal/tokenledger"
 )
 
 const defaultBaseURL = "https://api.openai.com/v1"
@@ -98,12 +103,33 @@ type roundLog struct {
 	InputTokens  int           `json:"input_tokens"`
 	CachedTokens int           `json:"cached_tokens"`
 	OutputTokens int           `json:"output_tokens"`
+	Broker       *brokerUsageLog `json:"broker,omitempty"`
+}
+
+type brokerUsageLog struct {
+	Applied            bool                           `json:"applied"`
+	Denied             bool                           `json:"denied"`
+	DeniedReason       []string                       `json:"denied_reason,omitempty"`
+	BeforeSpark        float64                        `json:"before_spark"`
+	AfterSpark         float64                        `json:"after_spark,omitempty"`
+	BeforeDebtActive   bool                           `json:"before_debt_active"`
+	AfterDebtActive    bool                           `json:"after_debt_active,omitempty"`
+	SparkDelta         float64                        `json:"spark_delta,omitempty"`
+	Window6HUsed       int                            `json:"window_6h_used,omitempty"`
+	DayUsed            int                            `json:"day_used,omitempty"`
+	WeekUsed           int                            `json:"week_used,omitempty"`
+	ApplyReason        string                         `json:"apply_reason,omitempty"`
+	PreparedSparkCost  float64                        `json:"prepared_spark_cost"`
+	PreparedStrainCost int                            `json:"prepared_strain_cost"`
+	AfterStatus        *brokerstate.ResidentStatus    `json:"after_status,omitempty"`
 }
 
 type loopState struct {
-	UsedActions map[string]int `json:"used_actions"`
-	NoopStreak  int            `json:"noop_streak"`
-	NotePath    string         `json:"note_path"`
+	UsedActions     map[string]int `json:"used_actions"`
+	NoopStreak      int            `json:"noop_streak"`
+	NotePath        string         `json:"note_path"`
+	LastRealUsage   *streamResult  `json:"-"`
+	LastBrokerUsage *brokerUsageLog `json:"-"`
 }
 
 type finalReport struct {
@@ -115,6 +141,7 @@ type finalReport struct {
 	EndedAt         string     `json:"ended_at"`
 	Acceptance      string     `json:"acceptance"`
 	RoundLogs       []roundLog `json:"round_logs"`
+	StoppedReason   string     `json:"stopped_reason,omitempty"`
 }
 
 func main() {
@@ -126,6 +153,7 @@ func main() {
 		duration = flag.Duration("duration", 5*time.Minute, "Exploration duration")
 		outDir   = flag.String("out-dir", "experiments/multi-agent-baseline/output", "Output directory")
 		verbose  = flag.Bool("verbose", false, "Print streamed text as it arrives")
+		reset    = flag.Bool("reset-resident", true, "Reset resident runtime state to current baseline before the run")
 	)
 	flag.Parse()
 
@@ -142,7 +170,7 @@ func main() {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Minute}
-	report, err := runLoop(client, *baseURL, apiKey, profile, *duration, *outDir, *verbose)
+	report, err := runLoop(client, *baseURL, apiKey, profile, *duration, *outDir, *verbose, *reset)
 	if err != nil {
 		exitf("%v", err)
 	}
@@ -150,9 +178,15 @@ func main() {
 	fmt.Println(string(raw))
 }
 
-func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfile, duration time.Duration, outDir string, verbose bool) (finalReport, error) {
+func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (finalReport, error) {
 	started := time.Now().UTC()
 	deadline := started.Add(duration)
+	brokerApp := broker.New(".agents")
+	if resetResident {
+		if _, err := brokerApp.RunReset(profile.Name, started); err != nil {
+			return finalReport{}, fmt.Errorf("reset resident baseline: %w", err)
+		}
+	}
 	history := []message{
 		{
 			Role: "user",
@@ -170,12 +204,22 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 	promptCacheKey := fmt.Sprintf("arena-newborn-baseline-%s-v1", profile.Name)
 
 	round := 0
+	stoppedReason := ""
 	for {
 		remaining := int(time.Until(deadline).Seconds())
 		if remaining <= 25 {
 			break
 		}
 		round++
+
+		preflight, err := preflightCheck(brokerApp, profile, state, started.Add(time.Duration(round)*time.Minute))
+		if err != nil {
+			return finalReport{}, fmt.Errorf("round %d preflight failed: %w", round, err)
+		}
+		if preflight != nil && preflight.Denied {
+			stoppedReason = fmt.Sprintf("broker_preflight_denied: %s", strings.Join(preflight.DeniedReason, ","))
+			break
+		}
 
 		result, err := postStream(client, baseURL, apiKey, requestPayload{
 			Model:          profile.Model,
@@ -189,6 +233,11 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 			return finalReport{}, fmt.Errorf("round %d request failed: %w", round, err)
 		}
 
+		brokerLog, err := settleUsageWithBroker(brokerApp, profile, result, started.Add(time.Duration(round)*time.Minute))
+		if err != nil {
+			return finalReport{}, fmt.Errorf("round %d broker settlement failed: %w", round, err)
+		}
+
 		decision, err := parseDecision(result.OutputText)
 		if err != nil {
 			decision = agentDecision{
@@ -199,6 +248,8 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 		}
 		observation := executeAction(profile, decision)
 		state.UsedActions[decision.NextAction]++
+		state.LastRealUsage = &result
+		state.LastBrokerUsage = brokerLog
 		if decision.NextAction == "noop" {
 			state.NoopStreak++
 		} else {
@@ -218,12 +269,17 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 			InputTokens:  result.InputTokens,
 			CachedTokens: result.CachedTokens,
 			OutputTokens: result.OutputTokens,
+			Broker:       brokerLog,
 		})
 	}
 
-	acceptance, err := runAcceptance(client, baseURL, apiKey, profile, history, verbose)
-	if err != nil {
-		return finalReport{}, err
+	acceptance := fallbackAcceptance(rounds, stoppedReason)
+	if len(rounds) > 0 {
+		value, err := runAcceptance(client, baseURL, apiKey, profile, history, verbose)
+		if err != nil {
+			return finalReport{}, err
+		}
+		acceptance = value
 	}
 
 	report := finalReport{
@@ -235,6 +291,7 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 		EndedAt:         time.Now().UTC().Format(time.RFC3339),
 		Acceptance:      acceptance,
 		RoundLogs:       rounds,
+		StoppedReason:   stoppedReason,
 	}
 
 	runDir := filepath.Join(outDir, fmt.Sprintf("%s-%s", profile.Name, started.Format("20060102T150405Z")))
@@ -246,6 +303,141 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 		return finalReport{}, err
 	}
 	return report, nil
+}
+
+func fallbackAcceptance(rounds []roundLog, stoppedReason string) string {
+	if len(rounds) == 0 {
+		return "No live VM exploration occurred in this run because the resident was blocked by broker preflight before any model call was made. The next move is to inspect the resident runtime state, funding, reserve policy, and 6h quota budget before retrying."
+	}
+	return ""
+}
+
+func preflightCheck(app *broker.App, profile residentProfile, state loopState, startedAt time.Time) (*brokerstate.PreparedAdmission, error) {
+	spec := preflightSpec(profile, state, startedAt)
+	prepared, err := app.RunPrepareSpec(profile.Name, spec)
+	if err != nil {
+		return nil, err
+	}
+	return &prepared, nil
+}
+
+func preflightSpec(profile residentProfile, state loopState, startedAt time.Time) broker.CallSpec {
+	if state.LastRealUsage == nil {
+		return broker.SpecFromUsage(
+			runtimeguard.CallKindWork,
+			tokenledger.Usage{
+				InputTokens:  modelBootstrapInput(profile.Model),
+				CachedTokens: 0,
+				OutputTokens: modelBootstrapOutput(profile.Model),
+				TotalTokens:  modelBootstrapInput(profile.Model) + modelBootstrapOutput(profile.Model),
+				Model:        profile.Model,
+				ResponseID:   "preflight_bootstrap",
+				StartedAt:    startedAt,
+				FinishedAt:   startedAt.Add(4 * time.Second),
+			},
+			tokenledger.Penalties{},
+			tokenledger.ActivityNormalWork,
+		)
+	}
+
+	estimateInput := inflateInt(state.LastRealUsage.InputTokens, 1.15)
+	estimateCached := state.LastRealUsage.CachedTokens
+	if estimateCached > estimateInput {
+		estimateCached = estimateInput
+	}
+	estimateOutput := inflateInt(state.LastRealUsage.OutputTokens, 1.15)
+	return broker.SpecFromUsage(
+		runtimeguard.CallKindWork,
+		tokenledger.Usage{
+			InputTokens:  estimateInput,
+			CachedTokens: estimateCached,
+			OutputTokens: estimateOutput,
+			TotalTokens:  estimateInput + estimateOutput,
+			Model:        profile.Model,
+			ResponseID:   "preflight_estimate",
+			StartedAt:    startedAt,
+			FinishedAt:   startedAt.Add(4 * time.Second),
+		},
+		tokenledger.Penalties{},
+		tokenledger.ActivityNormalWork,
+	)
+}
+
+func modelBootstrapInput(model string) int {
+	switch model {
+	case "gpt-5.5":
+		return 1400
+	case "gpt-5.4":
+		return 1100
+	default:
+		return 900
+	}
+}
+
+func modelBootstrapOutput(model string) int {
+	switch model {
+	case "gpt-5.5":
+		return 350
+	case "gpt-5.4":
+		return 280
+	default:
+		return 220
+	}
+}
+
+func inflateInt(v int, factor float64) int {
+	if v <= 0 {
+		return 0
+	}
+	out := int(float64(v) * factor)
+	if out < v {
+		return v
+	}
+	return out
+}
+
+func settleUsageWithBroker(app *broker.App, profile residentProfile, result streamResult, startedAt time.Time) (*brokerUsageLog, error) {
+	spec := broker.SpecFromUsage(
+		runtimeguard.CallKindWork,
+		tokenledger.Usage{
+			InputTokens:  result.InputTokens,
+			CachedTokens: result.CachedTokens,
+			OutputTokens: result.OutputTokens,
+			TotalTokens:  result.InputTokens + result.OutputTokens,
+			Model:        profile.Model,
+			ResponseID:   result.ResponseID,
+			StartedAt:    startedAt,
+			FinishedAt:   startedAt.Add(4 * time.Second),
+		},
+		tokenledger.Penalties{},
+		tokenledger.ActivityNormalWork,
+	)
+	resp, err := app.RunAdmitSpec(profile.Name, spec, true)
+	if err != nil {
+		return nil, err
+	}
+	log := &brokerUsageLog{
+		Applied:            resp.Applied,
+		Denied:             resp.Denied,
+		DeniedReason:       append([]string(nil), resp.DeniedReason...),
+		BeforeSpark:        resp.BeforeStatus.SparkBalance,
+		BeforeDebtActive:   resp.BeforeStatus.DebtActive,
+		PreparedSparkCost:  resp.Prepared.Cost.SparkCost,
+		PreparedStrainCost: resp.Prepared.Strain.Rounded,
+	}
+	if resp.ApplyResult != nil {
+		log.SparkDelta = resp.ApplyResult.SparkEntry.SparkDelta
+		log.ApplyReason = resp.ApplyResult.SparkEntry.Reason
+	}
+	if resp.AfterStatus != nil {
+		log.AfterSpark = resp.AfterStatus.SparkBalance
+		log.AfterDebtActive = resp.AfterStatus.DebtActive
+		log.Window6HUsed = resp.AfterStatus.Window6HUsed
+		log.DayUsed = resp.AfterStatus.DayUsed
+		log.WeekUsed = resp.AfterStatus.WeekUsed
+		log.AfterStatus = resp.AfterStatus
+	}
+	return log, nil
 }
 
 func runAcceptance(client *http.Client, baseURL, apiKey string, profile residentProfile, history []message, verbose bool) (string, error) {

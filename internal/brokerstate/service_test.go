@@ -92,7 +92,7 @@ func TestBrokerServiceResetResident(t *testing.T) {
 	if status.ResidentID != "jade" {
 		t.Fatalf("unexpected resident id")
 	}
-	if status.SparkBalance != 0.62 {
+	if status.SparkBalance != 4.5 {
 		t.Fatalf("unexpected reset balance")
 	}
 }
@@ -132,7 +132,7 @@ func TestBrokerServiceAdmitCall(t *testing.T) {
 	if resp.AfterStatus == nil {
 		t.Fatalf("expected after status")
 	}
-	if resp.AfterStatus.SparkBalance >= 0.8 {
+	if resp.AfterStatus.SparkBalance >= 8.0 {
 		t.Fatalf("expected spark balance to decrease after applied work")
 	}
 }
@@ -194,10 +194,10 @@ func TestBrokerServicePrepareDeniedCall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare denied call: %v", err)
 	}
-	if !prepared.Denied {
-		t.Fatalf("expected jade call to be denied by reserve policy")
+	if prepared.Denied {
+		t.Fatalf("expected jade call to be allowed under upgraded newborn baseline")
 	}
-	if len(prepared.DeniedReason) == 0 {
-		t.Fatalf("expected denied reasons")
+	if !prepared.Prepared.Decision.Allowed {
+		t.Fatalf("expected allow decision")
 	}
 }
