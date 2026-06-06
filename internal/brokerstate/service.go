@@ -46,6 +46,10 @@ func NewBrokerService(sessions *SessionManager) *BrokerService {
 	return &BrokerService{sessions: sessions}
 }
 
+func ErrUnknownCallKind(kind runtimeguard.CallKind) error {
+	return fmt.Errorf("unknown call kind: %s", kind)
+}
+
 func (s *BrokerService) SelfStatus(residentID string) (ResidentStatus, error) {
 	if residentID == "" {
 		return ResidentStatus{}, fmt.Errorf("resident id is required")

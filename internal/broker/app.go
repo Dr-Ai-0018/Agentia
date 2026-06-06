@@ -1,7 +1,6 @@
 package broker
 
 import (
-	"fmt"
 	"time"
 
 	"ai-arena/internal/brokerstate"
@@ -35,6 +34,13 @@ type ResetOutput struct {
 	SnapshotPath string                     `json:"snapshot_path"`
 }
 
+type CallSpec struct {
+	Kind      runtimeguard.CallKind
+	Usage     tokenledger.Usage
+	Penalties tokenledger.Penalties
+	Activity  tokenledger.ActivityType
+}
+
 type App struct {
 	root string
 }
@@ -56,64 +62,32 @@ func (a *App) RunDemo(residentID string, start time.Time) (DemoOutput, error) {
 		return DemoOutput{}, err
 	}
 
-	preparedWork, err := engine.PrepareCall(runtimeguard.CallKindWork, tokenledger.Usage{
-		InputTokens:  1200,
-		CachedTokens: 800,
-		OutputTokens: 300,
-		TotalTokens:  1500,
-		Model:        "gpt-5.4",
-		ResponseID:   "resp_plan_1",
-		StartedAt:    start.Add(5 * time.Minute),
-		FinishedAt:   start.Add(5*time.Minute + 4*time.Second),
-	}, tokenledger.Penalties{ToolCallCount: 2})
+	workSpec := DefaultWorkSpec(start, "resp_plan_1")
+	preparedWork, err := engine.PrepareCall(workSpec.Kind, workSpec.Usage, workSpec.Penalties)
 	if err != nil {
 		return DemoOutput{}, err
 	}
 
-	preparedFinal, err := engine.PrepareCall(runtimeguard.CallKindFinalNotice, tokenledger.Usage{
-		InputTokens:  700,
-		CachedTokens: 300,
-		OutputTokens: 600,
-		TotalTokens:  1300,
-		Model:        "gpt-5.4",
-		ResponseID:   "resp_final_notice",
-		StartedAt:    start.Add(45 * time.Minute),
-		FinishedAt:   start.Add(45*time.Minute + 3*time.Second),
-	}, tokenledger.Penalties{ToolCallCount: 1})
+	finalSpec := DefaultFinalNoticeSpec(start.Add(40*time.Minute), "resp_final_notice")
+	preparedFinal, err := engine.PrepareCall(finalSpec.Kind, finalSpec.Usage, finalSpec.Penalties)
 	if err != nil {
 		return DemoOutput{}, err
 	}
-	appliedFinal, err := engine.ApplyCall(preparedFinal, tokenledger.ActivityNormalWork)
+	appliedFinal, err := engine.ApplyCall(preparedFinal, finalSpec.Activity)
 	if err != nil {
 		return DemoOutput{}, err
 	}
 
 	recovery2h := engine.TickRecovery(start.Add(2 * time.Hour))
-	preparedAfter2h, err := engine.PrepareCall(runtimeguard.CallKindWork, tokenledger.Usage{
-		InputTokens:  100,
-		CachedTokens: 80,
-		OutputTokens: 50,
-		TotalTokens:  150,
-		Model:        "gpt-5.4-mini",
-		ResponseID:   "resp_after_2h",
-		StartedAt:    start.Add(2 * time.Hour),
-		FinishedAt:   start.Add(2*time.Hour + 2*time.Second),
-	}, tokenledger.Penalties{})
+	recoverySpec2h := RecoveryProbeSpec(start.Add(2*time.Hour), "resp_after_2h")
+	preparedAfter2h, err := engine.PrepareCall(recoverySpec2h.Kind, recoverySpec2h.Usage, recoverySpec2h.Penalties)
 	if err != nil {
 		return DemoOutput{}, err
 	}
 
 	recovery3h := engine.TickRecovery(start.Add(3 * time.Hour))
-	preparedAfter3h, err := engine.PrepareCall(runtimeguard.CallKindWork, tokenledger.Usage{
-		InputTokens:  100,
-		CachedTokens: 80,
-		OutputTokens: 50,
-		TotalTokens:  150,
-		Model:        "gpt-5.4-mini",
-		ResponseID:   "resp_after_3h",
-		StartedAt:    start.Add(3 * time.Hour),
-		FinishedAt:   start.Add(3*time.Hour + 2*time.Second),
-	}, tokenledger.Penalties{})
+	recoverySpec3h := RecoveryProbeSpec(start.Add(3*time.Hour), "resp_after_3h")
+	preparedAfter3h, err := engine.PrepareCall(recoverySpec3h.Kind, recoverySpec3h.Usage, recoverySpec3h.Penalties)
 	if err != nil {
 		return DemoOutput{}, err
 	}
@@ -175,49 +149,87 @@ func (a *App) RunReset(residentID string, now time.Time) (ResetOutput, error) {
 }
 
 func (a *App) RunAdmit(residentID string, callKind runtimeguard.CallKind, apply bool, now time.Time) (brokerstate.AdmitResponse, error) {
-	var usage tokenledger.Usage
-	var penalties tokenledger.Penalties
-	var activity tokenledger.ActivityType
+	spec, err := DefaultSpecForKind(callKind, now)
+	if err != nil {
+		return brokerstate.AdmitResponse{}, err
+	}
+	return a.RunAdmitSpec(residentID, spec, apply)
+}
 
+func (a *App) RunAdmitSpec(residentID string, spec CallSpec, apply bool) (brokerstate.AdmitResponse, error) {
+	return a.service(false).AdmitCall(brokerstate.AdmitRequest{
+		ResidentID: residentID,
+		Kind:       spec.Kind,
+		Usage:      spec.Usage,
+		Penalties:  spec.Penalties,
+		Activity:   spec.Activity,
+		Apply:      apply,
+	})
+}
+
+func DefaultSpecForKind(callKind runtimeguard.CallKind, now time.Time) (CallSpec, error) {
 	switch callKind {
 	case runtimeguard.CallKindWork:
-		usage = tokenledger.Usage{
+		return DefaultWorkSpec(now, "resp_admit_work"), nil
+	case runtimeguard.CallKindFinalNotice:
+		return DefaultFinalNoticeSpec(now, "resp_admit_final"), nil
+	default:
+		return CallSpec{}, brokerstate.ErrUnknownCallKind(callKind)
+	}
+}
+
+func DefaultWorkSpec(start time.Time, responseID string) CallSpec {
+	return CallSpec{
+		Kind: runtimeguard.CallKindWork,
+		Usage: tokenledger.Usage{
 			InputTokens:  1200,
 			CachedTokens: 800,
 			OutputTokens: 300,
 			TotalTokens:  1500,
 			Model:        "gpt-5.4",
-			ResponseID:   "resp_admit_work",
-			StartedAt:    now,
-			FinishedAt:   now.Add(4 * time.Second),
-		}
-		penalties = tokenledger.Penalties{ToolCallCount: 2}
-		activity = tokenledger.ActivityNormalWork
-	case runtimeguard.CallKindFinalNotice:
-		usage = tokenledger.Usage{
+			ResponseID:   responseID,
+			StartedAt:    start,
+			FinishedAt:   start.Add(4 * time.Second),
+		},
+		Penalties: tokenledger.Penalties{ToolCallCount: 2},
+		Activity:  tokenledger.ActivityNormalWork,
+	}
+}
+
+func DefaultFinalNoticeSpec(start time.Time, responseID string) CallSpec {
+	return CallSpec{
+		Kind: runtimeguard.CallKindFinalNotice,
+		Usage: tokenledger.Usage{
 			InputTokens:  700,
 			CachedTokens: 300,
 			OutputTokens: 600,
 			TotalTokens:  1300,
 			Model:        "gpt-5.4",
-			ResponseID:   "resp_admit_final",
-			StartedAt:    now,
-			FinishedAt:   now.Add(3 * time.Second),
-		}
-		penalties = tokenledger.Penalties{ToolCallCount: 1}
-		activity = tokenledger.ActivityNormalWork
-	default:
-		return brokerstate.AdmitResponse{}, fmt.Errorf("unknown admit kind: %s", callKind)
+			ResponseID:   responseID,
+			StartedAt:    start,
+			FinishedAt:   start.Add(3 * time.Second),
+		},
+		Penalties: tokenledger.Penalties{ToolCallCount: 1},
+		Activity:  tokenledger.ActivityNormalWork,
 	}
+}
 
-	return a.service(false).AdmitCall(brokerstate.AdmitRequest{
-		ResidentID: residentID,
-		Kind:       callKind,
-		Usage:      usage,
-		Penalties:  penalties,
-		Activity:   activity,
-		Apply:      apply,
-	})
+func RecoveryProbeSpec(start time.Time, responseID string) CallSpec {
+	return CallSpec{
+		Kind: runtimeguard.CallKindWork,
+		Usage: tokenledger.Usage{
+			InputTokens:  100,
+			CachedTokens: 80,
+			OutputTokens: 50,
+			TotalTokens:  150,
+			Model:        "gpt-5.4-mini",
+			ResponseID:   responseID,
+			StartedAt:    start,
+			FinishedAt:   start.Add(2 * time.Second),
+		},
+		Penalties: tokenledger.Penalties{},
+		Activity:  tokenledger.ActivityNormalWork,
+	}
 }
 
 func (a *App) service(demo bool) *brokerstate.BrokerService {
