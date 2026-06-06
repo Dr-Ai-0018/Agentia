@@ -21,7 +21,7 @@ func (w *WorldBridge) RecordResidentMessage(profile ResidentProfile, body string
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("message delivered to Chenglin and recorded in world state:\nmessage_id=%s\ncreated_at=%s\nbody=%s", msg.ID, msg.CreatedAt, msg.Body), nil
+	return fmt.Sprintf("message delivered to Chenglin and recorded in world state:\nmessage_id=%s\nstatus=%s\ncreated_at=%s\nbody=%s", msg.ID, worldstate.StatusPending, msg.CreatedAt, msg.Body), nil
 }
 
 func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit int) string {
@@ -31,9 +31,16 @@ func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit i
 	}
 
 	lines := []string{"Recent world messages involving you:"}
-	for i := len(messages) - 1; i >= 0; i-- {
+	for i := 0; i < len(messages); i++ {
 		msg := messages[i]
-		lines = append(lines, fmt.Sprintf("- [%s] %s -> %s: %s", msg.CreatedAt, msg.From, msg.To, oneLine(msg.Body)))
+		suffix := ""
+		if msg.ReplyToID != "" {
+			suffix = fmt.Sprintf(" reply_to=%s", msg.ReplyToID)
+		}
+		if msg.DefaultFeedback {
+			suffix += " default_feedback=true"
+		}
+		lines = append(lines, fmt.Sprintf("- [%s] status=%s %s -> %s%s: %s", msg.CreatedAt, msg.Status, msg.From, msg.To, suffix, oneLine(msg.Body)))
 	}
 	return strings.Join(lines, "\n")
 }

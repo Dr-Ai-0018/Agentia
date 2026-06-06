@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|messages")
+	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|messages|inbox|reply|ignore")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -27,6 +27,9 @@ func main() {
 	toolCalls := flag.Int("tool-calls", -1, "Optional tool call count penalty for admit mode")
 	responseID := flag.String("response-id", "", "Optional response id for admit mode")
 	limit := flag.Int("limit", 8, "Message limit for messages mode")
+	status := flag.String("status", "", "Optional status filter for messages mode")
+	messageID := flag.String("message-id", "", "Target message ID for reply/ignore modes")
+	body := flag.String("body", "", "Reply body for reply mode")
 	flag.Parse()
 
 	app := broker.New(".agents")
@@ -77,7 +80,34 @@ func main() {
 		}
 		printJSON(out)
 	case "messages":
-		out, err := world.ReadRecentForResident(*residentID, *limit)
+		out, err := world.ReadMessagesByStatus(*residentID, *status, *limit)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "inbox":
+		out, err := world.ReadPendingResidentMessages(*limit)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "reply":
+		if *messageID == "" {
+			exitf("message-id is required for reply mode")
+		}
+		if err := worldstate.ValidateReplyBody(*body); err != nil {
+			exitf("%v", err)
+		}
+		out, err := world.ReplyToResidentMessage(*messageID, *body, time.Now().UTC())
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ignore":
+		if *messageID == "" {
+			exitf("message-id is required for ignore mode")
+		}
+		out, err := world.IgnoreResidentMessage(*messageID, time.Now().UTC())
 		if err != nil {
 			exitf("%v", err)
 		}
