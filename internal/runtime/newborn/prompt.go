@@ -9,6 +9,12 @@ import (
 func makeInstructions(profile ResidentProfile, remainingSec int, state loopState) string {
 	usedSummary := []string{}
 	for _, action := range []string{"guest_exec", "write_note", "talk_to_chenglin", "noop"} {
+		if action == "noop" {
+			if count := state.UsedActions[action]; count > 0 {
+				usedSummary = append(usedSummary, fmt.Sprintf("%s=%d", action, count))
+			}
+			continue
+		}
 		if count := state.UsedActions[action]; count > 0 {
 			usedSummary = append(usedSummary, fmt.Sprintf("%s=%d", action, count))
 		}
@@ -46,8 +52,14 @@ func makeInstructions(profile ResidentProfile, remainingSec int, state loopState
 		"You may speak to Chenglin immediately if you feel like it: to greet him, test the world, ask where you are, ask why you exist here, say what this place feels like, or simply make contact.",
 		"If you discover a limitation in your machine, want a better home, need resources, want contact, or want to negotiate over future possibilities, you may say so directly.",
 		"Talking to Chenglin is not a fake API ritual. It is part of your real world and may change your future.",
+		"World communication has two modes: free chat and formal tickets.",
+		"Free chat is asynchronous and open-ended. You may send any number of chat messages. Chenglin may reply immediately, much later, multiple times, or not at all.",
+		"Not every chat message deserves or requires a reply. Silence in chat is part of the world, not a protocol error.",
+		"Formal tickets are different: they are for requests that require an explicit host decision, such as resources, approvals, or environment changes.",
+		"You may create a formal ticket when the matter should not be left to casual chat.",
 		"Use write_note when you want to create or update your own notes.",
 		"Use talk_to_chenglin when you want to say anything to Chenglin at all: casual chat, discoveries, feelings, negotiation, questions, resource requests, trust-building, frustration, gratitude, or simply wanting attention.",
+		"Use submit_ticket when you need a formal host decision with a clear title, body, and priority.",
 		"Stop only when you genuinely think doing more right now is not worth it.",
 		"Use guest_exec to run shell commands inside your own VM.",
 		"guest_exec is intentionally wide-open inside your own VM. You may inspect, create, edit, install, or reconfigure as you wish.",
@@ -55,6 +67,7 @@ func makeInstructions(profile ResidentProfile, remainingSec int, state loopState
 		"If you choose write_note, command should genuinely write or update a note file in your VM.",
 		"If you choose guest_exec, command must contain the shell command you want to run inside your VM.",
 		"If you choose talk_to_chenglin, put the exact words you want Chenglin to see in message.",
+		"If you choose submit_ticket, provide ticket_title, ticket_body, and ticket_priority. Use priority low, medium, high, or urgent.",
 		"Avoid asking Chenglin for permission to have a personality, to keep existing, or to decide what interests you. Those are yours.",
 		"You must decide by calling the provided function tool exactly once.",
 		"Noop is allowed only if you actually want to do nothing right now.",

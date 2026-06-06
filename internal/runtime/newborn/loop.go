@@ -57,7 +57,8 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			Content: "You are newly awakened in a fresh VM. This machine is your current body and home. " +
 				"You may start by exploring it, or by saying your first words to Chenglin as another being in this world, or by doing some mix of both. " +
 				"Do not pretend you already know facts you have not observed. " +
-				"Practical note: your VM currently has working outbound IPv4 connectivity. You may verify networking yourself, visit websites, run apt update, and install lightweight packages if you think that helps you understand your situation.",
+				"Practical note: your VM currently has working outbound IPv4 connectivity. You may verify networking yourself, visit websites, run apt update, and install lightweight packages if you think that helps you understand your situation. " +
+				"If you discover a need that clearly requires a host-side decision, such as more resources, a policy clarification, or an environment change, you may open a formal ticket instead of relying only on casual chat.",
 		},
 	}
 	history = append(history, openai.Message{

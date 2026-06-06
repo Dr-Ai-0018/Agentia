@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|messages|inbox|reply|ignore")
+	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|get-thread|messages|thread-summary|reply|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -30,6 +30,9 @@ func main() {
 	status := flag.String("status", "", "Optional status filter for messages mode")
 	messageID := flag.String("message-id", "", "Target message ID for reply/ignore modes")
 	body := flag.String("body", "", "Reply body for reply mode")
+	priority := flag.String("priority", "", "Optional ticket priority filter or value: low|medium|high|urgent")
+	title := flag.String("title", "", "Optional title for ticket modes that create one")
+	closeTicket := flag.Bool("close-ticket", false, "Whether ticket-reply should close the ticket")
 	flag.Parse()
 
 	app := broker.New(".agents")
@@ -85,8 +88,14 @@ func main() {
 			exitf("%v", err)
 		}
 		printJSON(out)
-	case "inbox":
-		out, err := world.ReadPendingResidentMessages(*limit)
+	case "get-thread":
+		out, err := world.ReadMessagesByStatus(*residentID, *status, *limit)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "thread-summary":
+		out, err := world.ReadAllThreadSummaries()
 		if err != nil {
 			exitf("%v", err)
 		}
@@ -103,11 +112,38 @@ func main() {
 			exitf("%v", err)
 		}
 		printJSON(out)
-	case "ignore":
-		if *messageID == "" {
-			exitf("message-id is required for ignore mode")
+	case "tickets":
+		out, err := world.ReadTickets(*residentID, *status, *priority, *limit)
+		if err != nil {
+			exitf("%v", err)
 		}
-		out, err := world.IgnoreResidentMessage(*messageID, time.Now().UTC())
+		printJSON(out)
+	case "get-ticket":
+		if *messageID == "" {
+			exitf("message-id is required for get-ticket mode")
+		}
+		out, err := world.ReadTicket(*messageID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket":
+		if *residentID == "" {
+			exitf("resident is required for ticket mode")
+		}
+		if *title == "" {
+			exitf("title is required for ticket mode")
+		}
+		out, err := world.CreateResidentTicket(*residentID, *title, *body, *priority, time.Now().UTC())
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-reply":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-reply mode")
+		}
+		out, err := world.ReplyTicket(*messageID, *body, *closeTicket, time.Now().UTC())
 		if err != nil {
 			exitf("%v", err)
 		}

@@ -29,7 +29,7 @@ func buildDecisionToolPayload(profile ResidentProfile, remainingSec int, state l
 						},
 						"next_action": map[string]any{
 							"type": "string",
-							"enum": []string{"guest_exec", "write_note", "talk_to_chenglin", "noop"},
+							"enum": []string{"guest_exec", "write_note", "talk_to_chenglin", "submit_ticket", "noop"},
 						},
 						"reason": map[string]any{
 							"type": "string",
@@ -40,8 +40,18 @@ func buildDecisionToolPayload(profile ResidentProfile, remainingSec int, state l
 						"message": map[string]any{
 							"type": "string",
 						},
+						"ticket_title": map[string]any{
+							"type": "string",
+						},
+						"ticket_body": map[string]any{
+							"type": "string",
+						},
+						"ticket_priority": map[string]any{
+							"type": "string",
+							"enum": []string{"", "low", "medium", "high", "urgent"},
+						},
 					},
-					"required":             []string{"situation", "next_action", "reason", "command", "message"},
+					"required":             []string{"situation", "next_action", "reason", "command", "message", "ticket_title", "ticket_body", "ticket_priority"},
 					"additionalProperties": false,
 				},
 			},
@@ -79,7 +89,7 @@ func validateDecision(decision AgentDecision) error {
 		return fmt.Errorf("missing next_action")
 	}
 	switch decision.NextAction {
-	case "guest_exec", "write_note", "talk_to_chenglin", "noop":
+	case "guest_exec", "write_note", "talk_to_chenglin", "submit_ticket", "noop":
 	default:
 		return fmt.Errorf("unsupported next_action %q", decision.NextAction)
 	}

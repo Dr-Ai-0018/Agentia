@@ -42,6 +42,12 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 			return "talk_to_chenglin failed: " + err.Error()
 		}
 		return observation
+	case "submit_ticket":
+		observation, err := e.world.CreateResidentTicket(profile, decision.TicketTitle, decision.TicketBody, decision.TicketPriority, time.Now().UTC())
+		if err != nil {
+			return "submit_ticket failed: " + err.Error()
+		}
+		return observation
 	default:
 		return "no operation executed"
 	}

@@ -3,11 +3,14 @@ package newborn
 import "ai-arena/internal/brokerstate"
 
 type AgentDecision struct {
-	Situation  string `json:"situation"`
-	NextAction string `json:"next_action"`
-	Command    string `json:"command,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Reason     string `json:"reason"`
+	Situation      string `json:"situation"`
+	NextAction     string `json:"next_action"`
+	Command        string `json:"command,omitempty"`
+	Message        string `json:"message,omitempty"`
+	TicketTitle    string `json:"ticket_title,omitempty"`
+	TicketBody     string `json:"ticket_body,omitempty"`
+	TicketPriority string `json:"ticket_priority,omitempty"`
+	Reason         string `json:"reason"`
 }
 
 type BrokerUsageLog struct {

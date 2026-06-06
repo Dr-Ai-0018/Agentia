@@ -15,12 +15,19 @@ import (
 const (
 	DirectionResidentToChenglin = "resident_to_chenglin"
 	DirectionChenglinToResident = "chenglin_to_resident"
-	DirectionSystemToResident   = "system_to_resident"
 
 	StatusPending   = "pending"
 	StatusReplied   = "replied"
-	StatusIgnored   = "ignored"
 	StatusDelivered = "delivered"
+
+	TicketPriorityLow    = "low"
+	TicketPriorityMedium = "medium"
+	TicketPriorityHigh   = "high"
+	TicketPriorityUrgent = "urgent"
+
+	TicketStatusOpen     = "open"
+	TicketStatusAnswered = "answered"
+	TicketStatusClosed   = "closed"
 )
 
 type Store struct {
@@ -36,7 +43,6 @@ type Message struct {
 	Body              string `json:"body"`
 	CreatedAt         string `json:"created_at"`
 	ReplyToID         string `json:"reply_to_id,omitempty"`
-	AutoFeedbackForID string `json:"auto_feedback_for_id,omitempty"`
 }
 
 type ThreadMessage struct {
@@ -46,6 +52,52 @@ type ThreadMessage struct {
 	ProcessedBy       string `json:"processed_by,omitempty"`
 	DefaultFeedback   bool   `json:"default_feedback,omitempty"`
 	NeedsHostDecision bool   `json:"needs_host_decision,omitempty"`
+}
+
+type ResidentThreadSummary struct {
+	Resident           string `json:"resident"`
+	LastMessageAt      string `json:"last_message_at,omitempty"`
+	LastDirection      string `json:"last_direction,omitempty"`
+	LastStatus         string `json:"last_status,omitempty"`
+	LastPreview        string `json:"last_preview,omitempty"`
+	PendingCount       int    `json:"pending_count"`
+	RepliedCount       int    `json:"replied_count"`
+	DeliveredCount     int    `json:"delivered_count"`
+	NeedsHostAttention bool   `json:"needs_host_attention"`
+}
+
+type Ticket struct {
+	ID         string        `json:"id"`
+	Resident   string        `json:"resident"`
+	Title      string        `json:"title"`
+	Body       string        `json:"body"`
+	Priority   string        `json:"priority"`
+	Status     string        `json:"status"`
+	CreatedAt  string        `json:"created_at"`
+	UpdatedAt  string        `json:"updated_at"`
+	OpenedBy   string        `json:"opened_by"`
+	Replies    []TicketReply `json:"replies"`
+}
+
+type TicketReply struct {
+	ID        string `json:"id"`
+	From      string `json:"from"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+}
+
+type ResidentTicketSummary struct {
+	ID           string `json:"id"`
+	Resident     string `json:"resident"`
+	Title        string `json:"title"`
+	Priority     string `json:"priority"`
+	Status       string `json:"status"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+	LastReplyAt  string `json:"last_reply_at,omitempty"`
+	LastPreview  string `json:"last_preview,omitempty"`
+	ReplyCount   int    `json:"reply_count"`
+	NeedsReply   bool   `json:"needs_reply"`
 }
 
 func New(root string) *Store {
@@ -104,40 +156,7 @@ func (s *Store) ReplyToResidentMessage(messageID, body string, now time.Time) (M
 }
 
 func (s *Store) IgnoreResidentMessage(messageID string, now time.Time) (Message, error) {
-	target, err := s.findMessage(messageID)
-	if err != nil {
-		return Message{}, err
-	}
-	if target.Direction != DirectionResidentToChenglin {
-		return Message{}, fmt.Errorf("message %s is not a resident_to_chenglin message", messageID)
-	}
-	status, err := s.MessageStatus(messageID)
-	if err != nil {
-		return Message{}, err
-	}
-	if status != StatusPending {
-		return Message{}, fmt.Errorf("message %s is already processed with status %s", messageID, status)
-	}
-
-	body := fmt.Sprintf(
-		"Your message from %s was received by the world, but Chenglin chose not to reply right now. Treat that as real signal, not as a frozen state. Continue acting from your current evidence instead of waiting.",
-		target.CreatedAt,
-	)
-	msg := Message{
-		ID:                fmt.Sprintf("system-%s", now.UTC().Format("20060102T150405.000000000Z")),
-		Direction:         DirectionSystemToResident,
-		Resident:          target.Resident,
-		From:              "system",
-		To:                target.Resident,
-		Body:              body,
-		CreatedAt:         now.UTC().Format(time.RFC3339),
-		ReplyToID:         target.ID,
-		AutoFeedbackForID: target.ID,
-	}
-	if err := s.append(msg, now); err != nil {
-		return Message{}, err
-	}
-	return msg, nil
+	return Message{}, errors.New("chat messages are free-form and do not support explicit ignore; simply do not reply")
 }
 
 func (s *Store) ReadRecentForResident(resident string, limit int) ([]ThreadMessage, error) {
@@ -213,6 +232,52 @@ func (s *Store) ReadMessagesByStatus(resident, status string, limit int) ([]Thre
 	if limit > 0 && len(out) > limit {
 		return out[len(out)-limit:], nil
 	}
+	return out, nil
+}
+
+func (s *Store) ReadAllThreadSummaries() ([]ResidentThreadSummary, error) {
+	all, err := s.readAll()
+	if err != nil {
+		return nil, err
+	}
+
+	residents := map[string]struct{}{}
+	for _, msg := range all {
+		if strings.TrimSpace(msg.Resident) != "" {
+			residents[msg.Resident] = struct{}{}
+		}
+	}
+
+	out := make([]ResidentThreadSummary, 0, len(residents))
+	for resident := range residents {
+		thread := deriveThread(all, resident)
+		if len(thread) == 0 {
+			continue
+		}
+		summary := ResidentThreadSummary{Resident: resident}
+		last := thread[len(thread)-1]
+		summary.LastMessageAt = last.CreatedAt
+		summary.LastDirection = last.Direction
+		summary.LastStatus = last.Status
+		summary.LastPreview = previewText(last.Body, 160)
+
+		for _, item := range thread {
+			switch item.Status {
+			case StatusPending:
+				summary.PendingCount++
+				summary.NeedsHostAttention = true
+			case StatusReplied:
+				summary.RepliedCount++
+			case StatusDelivered:
+				summary.DeliveredCount++
+			}
+		}
+		out = append(out, summary)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].LastMessageAt > out[j].LastMessageAt
+	})
 	return out, nil
 }
 
@@ -329,23 +394,6 @@ func deriveThread(all []Message, resident string) []ThreadMessage {
 					thread[idx].NeedsHostDecision = false
 				}
 			}
-		case DirectionSystemToResident:
-			item.Status = StatusDelivered
-			if msg.AutoFeedbackForID != "" {
-				item.DefaultFeedback = true
-			}
-			targetID := msg.AutoFeedbackForID
-			if targetID == "" {
-				targetID = msg.ReplyToID
-			}
-			if targetID != "" {
-				if idx, ok := indexByID[targetID]; ok {
-					thread[idx].Status = StatusIgnored
-					thread[idx].ProcessedAt = msg.CreatedAt
-					thread[idx].ProcessedBy = "system"
-					thread[idx].NeedsHostDecision = false
-				}
-			}
 		default:
 			item.Status = StatusDelivered
 		}
@@ -361,4 +409,203 @@ func ValidateReplyBody(body string) error {
 		return errors.New("reply body cannot be empty")
 	}
 	return nil
+}
+
+func ValidateTicketPriority(priority string) error {
+	switch normalizeTicketPriority(priority) {
+	case TicketPriorityLow, TicketPriorityMedium, TicketPriorityHigh, TicketPriorityUrgent:
+		return nil
+	default:
+		return fmt.Errorf("invalid ticket priority %q", priority)
+	}
+}
+
+func (s *Store) CreateResidentTicket(resident, title, body, priority string, now time.Time) (Ticket, error) {
+	if strings.TrimSpace(title) == "" {
+		return Ticket{}, errors.New("ticket title cannot be empty")
+	}
+	if strings.TrimSpace(body) == "" {
+		return Ticket{}, errors.New("ticket body cannot be empty")
+	}
+	if err := ValidateTicketPriority(priority); err != nil {
+		return Ticket{}, err
+	}
+
+	ticket := Ticket{
+		ID:        fmt.Sprintf("ticket-%s-%s", resident, now.UTC().Format("20060102T150405.000000000Z")),
+		Resident:  resident,
+		Title:     strings.TrimSpace(title),
+		Body:      strings.TrimSpace(body),
+		Priority:  normalizeTicketPriority(priority),
+		Status:    TicketStatusOpen,
+		CreatedAt: now.UTC().Format(time.RFC3339),
+		UpdatedAt: now.UTC().Format(time.RFC3339),
+		OpenedBy:  resident,
+	}
+	if err := s.writeTicket(ticket); err != nil {
+		return Ticket{}, err
+	}
+	return ticket, nil
+}
+
+func (s *Store) ReplyTicket(ticketID, body string, closeTicket bool, now time.Time) (Ticket, error) {
+	if err := ValidateReplyBody(body); err != nil {
+		return Ticket{}, err
+	}
+	ticket, err := s.loadTicket(ticketID)
+	if err != nil {
+		return Ticket{}, err
+	}
+	if ticket.Status == TicketStatusClosed {
+		return Ticket{}, fmt.Errorf("ticket %s is already closed", ticketID)
+	}
+	ticket.Replies = append(ticket.Replies, TicketReply{
+		ID:        fmt.Sprintf("ticket-reply-%s", now.UTC().Format("20060102T150405.000000000Z")),
+		From:      "chenglin",
+		Body:      strings.TrimSpace(body),
+		CreatedAt: now.UTC().Format(time.RFC3339),
+	})
+	if closeTicket {
+		ticket.Status = TicketStatusClosed
+	} else {
+		ticket.Status = TicketStatusAnswered
+	}
+	ticket.UpdatedAt = now.UTC().Format(time.RFC3339)
+	if err := s.writeTicket(ticket); err != nil {
+		return Ticket{}, err
+	}
+	return ticket, nil
+}
+
+func (s *Store) ReadTickets(resident, status, priority string, limit int) ([]ResidentTicketSummary, error) {
+	tickets, err := s.loadAllTickets()
+	if err != nil {
+		return nil, err
+	}
+
+	resident = strings.TrimSpace(resident)
+	status = strings.TrimSpace(status)
+	priority = normalizeTicketPriority(priority)
+
+	out := make([]ResidentTicketSummary, 0, len(tickets))
+	for _, ticket := range tickets {
+		if resident != "" && ticket.Resident != resident {
+			continue
+		}
+		if status != "" && ticket.Status != status {
+			continue
+		}
+		if priority != "" && ticket.Priority != priority {
+			continue
+		}
+		out = append(out, summarizeTicket(ticket))
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].UpdatedAt > out[j].UpdatedAt
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (s *Store) ReadTicket(ticketID string) (Ticket, error) {
+	return s.loadTicket(ticketID)
+}
+
+func (s *Store) ticketDir() string {
+	return filepath.Join(s.root, "world", "tickets")
+}
+
+func (s *Store) writeTicket(ticket Ticket) error {
+	if err := os.MkdirAll(s.ticketDir(), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(ticket, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.ticketDir(), ticket.ID+".json"), raw, 0o644)
+}
+
+func (s *Store) loadTicket(ticketID string) (Ticket, error) {
+	raw, err := os.ReadFile(filepath.Join(s.ticketDir(), ticketID+".json"))
+	if err != nil {
+		return Ticket{}, err
+	}
+	var ticket Ticket
+	if err := json.Unmarshal(raw, &ticket); err != nil {
+		return Ticket{}, err
+	}
+	return ticket, nil
+}
+
+func (s *Store) loadAllTickets() ([]Ticket, error) {
+	dir := s.ticketDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]Ticket, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		ticket, err := s.loadTicket(strings.TrimSuffix(entry.Name(), ".json"))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ticket)
+	}
+	return out, nil
+}
+
+func summarizeTicket(ticket Ticket) ResidentTicketSummary {
+	summary := ResidentTicketSummary{
+		ID:         ticket.ID,
+		Resident:   ticket.Resident,
+		Title:      ticket.Title,
+		Priority:   ticket.Priority,
+		Status:     ticket.Status,
+		CreatedAt:  ticket.CreatedAt,
+		UpdatedAt:  ticket.UpdatedAt,
+		ReplyCount: len(ticket.Replies),
+		NeedsReply: ticket.Status == TicketStatusOpen,
+		LastPreview: previewText(ticket.Body, 160),
+	}
+	if len(ticket.Replies) > 0 {
+		last := ticket.Replies[len(ticket.Replies)-1]
+		summary.LastReplyAt = last.CreatedAt
+		summary.LastPreview = previewText(last.Body, 160)
+	}
+	return summary
+}
+
+func normalizeTicketPriority(priority string) string {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "", TicketPriorityMedium:
+		return strings.TrimSpace(strings.ToLower(priority))
+	case TicketPriorityLow:
+		return TicketPriorityLow
+	case TicketPriorityHigh:
+		return TicketPriorityHigh
+	case TicketPriorityUrgent:
+		return TicketPriorityUrgent
+	default:
+		return strings.ToLower(strings.TrimSpace(priority))
+	}
+}
+
+func previewText(s string, limit int) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	if limit > 0 && len(s) > limit {
+		return s[:limit] + "..."
+	}
+	return s
 }
