@@ -4,16 +4,21 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type ActionExecutor interface {
 	Execute(profile ResidentProfile, decision AgentDecision) string
 }
 
-type IncusActionExecutor struct{}
+type IncusActionExecutor struct {
+	world *WorldBridge
+}
 
 func NewIncusActionExecutor() *IncusActionExecutor {
-	return &IncusActionExecutor{}
+	return &IncusActionExecutor{
+		world: NewWorldBridge(".agents"),
+	}
 }
 
 func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDecision) string {
@@ -32,7 +37,11 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 		if strings.TrimSpace(decision.Message) == "" {
 			return "talk_to_chenglin denied: message is required"
 		}
-		return "you spoke to Chenglin:\n" + decision.Message
+		observation, err := e.world.RecordResidentMessage(profile, decision.Message, time.Now().UTC())
+		if err != nil {
+			return "talk_to_chenglin failed: " + err.Error()
+		}
+		return observation
 	default:
 		return "no operation executed"
 	}

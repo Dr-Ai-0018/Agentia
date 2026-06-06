@@ -19,6 +19,7 @@ type Runner struct {
 	actions   ActionExecutor
 	budget    *BudgetController
 	reports   *ReportWriter
+	world     *WorldBridge
 }
 
 type loopState struct {
@@ -37,6 +38,7 @@ func NewRunner(client *http.Client, baseURL, apiKey string) *Runner {
 		actions:   NewIncusActionExecutor(),
 		budget:    NewBudgetController(broker.New(".agents")),
 		reports:   NewReportWriter(),
+		world:     NewWorldBridge(".agents"),
 	}
 }
 
@@ -58,6 +60,10 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				"Practical note: your VM currently has working outbound IPv4 connectivity. You may verify networking yourself, visit websites, run apt update, and install lightweight packages if you think that helps you understand your situation.",
 		},
 	}
+	history = append(history, openai.Message{
+		Role:    "user",
+		Content: r.world.BuildResidentWorldContext(profile, 6),
+	})
 
 	state := loopState{
 		UsedActions: map[string]int{},

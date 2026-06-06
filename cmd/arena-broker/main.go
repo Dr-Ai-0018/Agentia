@@ -10,10 +10,11 @@ import (
 	"ai-arena/internal/broker"
 	"ai-arena/internal/runtimeguard"
 	"ai-arena/internal/tokenledger"
+	"ai-arena/internal/worldstate"
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit")
+	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|messages")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -25,9 +26,11 @@ func main() {
 	totalTokens := flag.Int("total-tokens", -1, "Optional total tokens for admit mode")
 	toolCalls := flag.Int("tool-calls", -1, "Optional tool call count penalty for admit mode")
 	responseID := flag.String("response-id", "", "Optional response id for admit mode")
+	limit := flag.Int("limit", 8, "Message limit for messages mode")
 	flag.Parse()
 
 	app := broker.New(".agents")
+	world := worldstate.New(".agents")
 
 	switch *mode {
 	case "demo":
@@ -69,6 +72,12 @@ func main() {
 			toolCalls:    *toolCalls,
 			responseID:   *responseID,
 		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "messages":
+		out, err := world.ReadRecentForResident(*residentID, *limit)
 		if err != nil {
 			exitf("%v", err)
 		}
