@@ -136,3 +136,68 @@ func TestBrokerServiceAdmitCall(t *testing.T) {
 		t.Fatalf("expected spark balance to decrease after applied work")
 	}
 }
+
+func TestBrokerServicePrepareAndApplySeparated(t *testing.T) {
+	store := New(t.TempDir())
+	registry := NewRegistry(DefaultResidentProfiles())
+	manager := NewSessionManager(store, registry, DefaultRuntimeConfig())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+	manager.rootNow = func() time.Time { return now }
+	service := NewBrokerService(manager)
+
+	prepared, engine, err := service.PrepareAdmission("amber", "work", tokenledger.Usage{
+		InputTokens:  1200,
+		CachedTokens: 800,
+		OutputTokens: 300,
+		TotalTokens:  1500,
+		Model:        "gpt-5.4",
+		FinishedAt:   now.Add(time.Minute),
+	}, tokenledger.Penalties{ToolCallCount: 2})
+	if err != nil {
+		t.Fatalf("prepare admission: %v", err)
+	}
+	if prepared.Denied {
+		t.Fatalf("expected prepared call to be allowed")
+	}
+	if engine == nil {
+		t.Fatalf("expected engine")
+	}
+
+	applied, after, _, err := service.ApplyPreparedCall(engine, prepared, tokenledger.ActivityNormalWork)
+	if err != nil {
+		t.Fatalf("apply prepared call: %v", err)
+	}
+	if applied.State.ResidentID != "amber" {
+		t.Fatalf("unexpected resident id after apply")
+	}
+	if after.SparkBalance >= prepared.BeforeStatus.SparkBalance {
+		t.Fatalf("expected spark balance to decrease")
+	}
+}
+
+func TestBrokerServicePrepareDeniedCall(t *testing.T) {
+	store := New(t.TempDir())
+	registry := NewRegistry(DefaultResidentProfiles())
+	manager := NewSessionManager(store, registry, DefaultRuntimeConfig())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+	manager.rootNow = func() time.Time { return now }
+	service := NewBrokerService(manager)
+
+	prepared, _, err := service.PrepareAdmission("jade", "work", tokenledger.Usage{
+		InputTokens:  1200,
+		CachedTokens: 800,
+		OutputTokens: 300,
+		TotalTokens:  1500,
+		Model:        "gpt-5.4",
+		FinishedAt:   now.Add(time.Minute),
+	}, tokenledger.Penalties{ToolCallCount: 2})
+	if err != nil {
+		t.Fatalf("prepare denied call: %v", err)
+	}
+	if !prepared.Denied {
+		t.Fatalf("expected jade call to be denied by reserve policy")
+	}
+	if len(prepared.DeniedReason) == 0 {
+		t.Fatalf("expected denied reasons")
+	}
+}

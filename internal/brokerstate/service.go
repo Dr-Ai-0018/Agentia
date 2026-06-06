@@ -14,6 +14,14 @@ type BrokerService struct {
 	sessions *SessionManager
 }
 
+type PreparedAdmission struct {
+	ResidentID   string                   `json:"resident_id"`
+	BeforeStatus ResidentStatus           `json:"before_status"`
+	Prepared     runtimecore.PreparedCall `json:"prepared"`
+	Denied       bool                     `json:"denied"`
+	DeniedReason []string                 `json:"denied_reason,omitempty"`
+}
+
 type AdmitRequest struct {
 	ResidentID string
 	Kind       runtimeguard.CallKind
@@ -86,45 +94,74 @@ func (s *BrokerService) ResetResident(residentID string, now time.Time) (Residen
 }
 
 func (s *BrokerService) AdmitCall(req AdmitRequest) (AdmitResponse, error) {
-	if req.ResidentID == "" {
-		return AdmitResponse{}, fmt.Errorf("resident id is required")
-	}
-	engine, status, err := s.sessions.LoadResident(req.ResidentID)
-	if err != nil {
-		return AdmitResponse{}, err
-	}
-	prepared, err := engine.PrepareCall(req.Kind, req.Usage, req.Penalties)
+	prepared, engine, err := s.PrepareAdmission(req.ResidentID, req.Kind, req.Usage, req.Penalties)
 	if err != nil {
 		return AdmitResponse{}, err
 	}
 
 	resp := AdmitResponse{
-		BeforeStatus: status,
-		Prepared:     prepared,
+		BeforeStatus: prepared.BeforeStatus,
+		Prepared:     prepared.Prepared,
+		Denied:       prepared.Denied,
+		DeniedReason: append([]string(nil), prepared.DeniedReason...),
 	}
 	if !req.Apply {
-		resp.Denied = !prepared.Decision.Allowed
-		resp.DeniedReason = append(resp.DeniedReason, prepared.Decision.Reasons...)
 		return resp, nil
 	}
-	if !prepared.Decision.Allowed {
-		resp.Denied = true
-		resp.DeniedReason = append(resp.DeniedReason, prepared.Decision.Reasons...)
+	if prepared.Denied {
 		return resp, nil
 	}
 
-	applied, err := engine.ApplyCall(prepared, req.Activity)
+	applied, after, path, err := s.ApplyPreparedCall(engine, prepared, req.Activity)
 	if err != nil {
 		return AdmitResponse{}, err
 	}
-	path, err := s.sessions.SaveResident(engine)
-	if err != nil {
-		return AdmitResponse{}, err
-	}
-	after := BuildResidentStatus(engine, true, path)
 	resp.Applied = true
 	resp.AfterStatus = &after
 	resp.ApplyResult = &applied
 	resp.SnapshotPath = path
 	return resp, nil
+}
+
+func (s *BrokerService) PrepareAdmission(residentID string, kind runtimeguard.CallKind, usage tokenledger.Usage, penalties tokenledger.Penalties) (PreparedAdmission, *runtimecore.Engine, error) {
+	if residentID == "" {
+		return PreparedAdmission{}, nil, fmt.Errorf("resident id is required")
+	}
+	engine, status, err := s.sessions.LoadResident(residentID)
+	if err != nil {
+		return PreparedAdmission{}, nil, err
+	}
+	prepared, err := engine.PrepareCall(kind, usage, penalties)
+	if err != nil {
+		return PreparedAdmission{}, nil, err
+	}
+	resp := PreparedAdmission{
+		ResidentID:   residentID,
+		BeforeStatus: status,
+		Prepared:     prepared,
+		Denied:       !prepared.Decision.Allowed,
+	}
+	if !prepared.Decision.Allowed {
+		resp.DeniedReason = append(resp.DeniedReason, prepared.Decision.Reasons...)
+	}
+	return resp, engine, nil
+}
+
+func (s *BrokerService) ApplyPreparedCall(engine *runtimecore.Engine, prepared PreparedAdmission, activity tokenledger.ActivityType) (runtimecore.AppliedCall, ResidentStatus, string, error) {
+	if engine == nil {
+		return runtimecore.AppliedCall{}, ResidentStatus{}, "", fmt.Errorf("engine is required")
+	}
+	if prepared.Denied {
+		return runtimecore.AppliedCall{}, ResidentStatus{}, "", fmt.Errorf("prepared call is denied")
+	}
+	applied, err := engine.ApplyCall(prepared.Prepared, activity)
+	if err != nil {
+		return runtimecore.AppliedCall{}, ResidentStatus{}, "", err
+	}
+	path, err := s.sessions.SaveResident(engine)
+	if err != nil {
+		return runtimecore.AppliedCall{}, ResidentStatus{}, "", err
+	}
+	after := BuildResidentStatus(engine, true, path)
+	return applied, after, path, nil
 }
