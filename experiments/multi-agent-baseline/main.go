@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +16,7 @@ import (
 
 	"ai-arena/internal/broker"
 	"ai-arena/internal/brokerstate"
+	"ai-arena/internal/openai"
 	"ai-arena/internal/runtimeguard"
 	"ai-arena/internal/tokenledger"
 )
@@ -30,60 +30,6 @@ type residentProfile struct {
 	Style    string
 	CoreBias string
 	Instance string
-}
-
-type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type requestPayload struct {
-	Model          string    `json:"model"`
-	Instructions   string    `json:"instructions"`
-	PromptCacheKey string    `json:"prompt_cache_key"`
-	Input          []message `json:"input"`
-	Stream         bool      `json:"stream"`
-	Store          bool      `json:"store"`
-}
-
-type usageEnvelope struct {
-	InputTokens        int `json:"input_tokens"`
-	OutputTokens       int `json:"output_tokens"`
-	InputTokensDetails struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"input_tokens_details"`
-	PromptTokensDetails struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-}
-
-type responseEnvelope struct {
-	ID             string        `json:"id"`
-	PromptCacheKey string        `json:"prompt_cache_key"`
-	OutputText     string        `json:"output_text"`
-	Usage          usageEnvelope `json:"usage"`
-	Output         []struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"output"`
-}
-
-type streamingEvent struct {
-	Type     string           `json:"type"`
-	Delta    string           `json:"delta"`
-	Response responseEnvelope `json:"response"`
-}
-
-type streamResult struct {
-	ResponseID             string
-	ObservedPromptCacheKey string
-	OutputText             string
-	InputTokens            int
-	CachedTokens           int
-	OutputTokens           int
-	RequestID              string
 }
 
 type agentDecision struct {
@@ -128,7 +74,7 @@ type loopState struct {
 	UsedActions     map[string]int `json:"used_actions"`
 	NoopStreak      int            `json:"noop_streak"`
 	NotePath        string         `json:"note_path"`
-	LastRealUsage   *streamResult  `json:"-"`
+	LastRealUsage   *openai.StreamResult `json:"-"`
 	LastBrokerUsage *brokerUsageLog `json:"-"`
 }
 
@@ -140,6 +86,7 @@ type finalReport struct {
 	StartedAt       string     `json:"started_at"`
 	EndedAt         string     `json:"ended_at"`
 	Acceptance      string     `json:"acceptance"`
+	AcceptanceBroker *brokerUsageLog `json:"acceptance_broker,omitempty"`
 	RoundLogs       []roundLog `json:"round_logs"`
 	StoppedReason   string     `json:"stopped_reason,omitempty"`
 }
@@ -187,7 +134,7 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 			return finalReport{}, fmt.Errorf("reset resident baseline: %w", err)
 		}
 	}
-	history := []message{
+	history := []openai.Message{
 		{
 			Role: "user",
 			Content: "You are newly awakened in a fresh VM. This machine is your current body and home. " +
@@ -221,11 +168,11 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 			break
 		}
 
-		result, err := postStream(client, baseURL, apiKey, requestPayload{
+		result, err := openai.PostStream(client, baseURL, apiKey, openai.RequestPayload{
 			Model:          profile.Model,
 			Instructions:   makeInstructions(profile, remaining, state),
 			PromptCacheKey: promptCacheKey,
-			Input:          append([]message(nil), history...),
+			Input:          append([]openai.Message(nil), history...),
 			Stream:         true,
 			Store:          false,
 		}, verbose)
@@ -233,7 +180,7 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 			return finalReport{}, fmt.Errorf("round %d request failed: %w", round, err)
 		}
 
-		brokerLog, err := settleUsageWithBroker(brokerApp, profile, result, started.Add(time.Duration(round)*time.Minute))
+		brokerLog, err := settleUsageWithBroker(brokerApp, profile, result, started.Add(time.Duration(round)*time.Minute), runtimeguard.CallKindWork, tokenledger.ActivityNormalWork)
 		if err != nil {
 			return finalReport{}, fmt.Errorf("round %d broker settlement failed: %w", round, err)
 		}
@@ -256,8 +203,8 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 			state.NoopStreak = 0
 		}
 		history = append(history,
-			message{Role: "assistant", Content: result.OutputText},
-			message{Role: "user", Content: "Observation result:\n" + observation},
+			openai.Message{Role: "assistant", Content: result.OutputText},
+			openai.Message{Role: "user", Content: "Observation result:\n" + observation},
 		)
 
 		rounds = append(rounds, roundLog{
@@ -274,12 +221,14 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 	}
 
 	acceptance := fallbackAcceptance(rounds, stoppedReason)
+	var acceptanceBroker *brokerUsageLog
 	if len(rounds) > 0 {
-		value, err := runAcceptance(client, baseURL, apiKey, profile, history, verbose)
+		value, brokerLog, err := runAcceptance(client, baseURL, apiKey, profile, history, verbose, brokerApp)
 		if err != nil {
 			return finalReport{}, err
 		}
 		acceptance = value
+		acceptanceBroker = brokerLog
 	}
 
 	report := finalReport{
@@ -290,6 +239,7 @@ func runLoop(client *http.Client, baseURL, apiKey string, profile residentProfil
 		StartedAt:       started.Format(time.RFC3339),
 		EndedAt:         time.Now().UTC().Format(time.RFC3339),
 		Acceptance:      acceptance,
+		AcceptanceBroker: acceptanceBroker,
 		RoundLogs:       rounds,
 		StoppedReason:   stoppedReason,
 	}
@@ -396,9 +346,9 @@ func inflateInt(v int, factor float64) int {
 	return out
 }
 
-func settleUsageWithBroker(app *broker.App, profile residentProfile, result streamResult, startedAt time.Time) (*brokerUsageLog, error) {
+func settleUsageWithBroker(app *broker.App, profile residentProfile, result openai.StreamResult, startedAt time.Time, kind runtimeguard.CallKind, activity tokenledger.ActivityType) (*brokerUsageLog, error) {
 	spec := broker.SpecFromUsage(
-		runtimeguard.CallKindWork,
+		kind,
 		tokenledger.Usage{
 			InputTokens:  result.InputTokens,
 			CachedTokens: result.CachedTokens,
@@ -410,7 +360,7 @@ func settleUsageWithBroker(app *broker.App, profile residentProfile, result stre
 			FinishedAt:   startedAt.Add(4 * time.Second),
 		},
 		tokenledger.Penalties{},
-		tokenledger.ActivityNormalWork,
+		activity,
 	)
 	resp, err := app.RunAdmitSpec(profile.Name, spec, true)
 	if err != nil {
@@ -440,19 +390,23 @@ func settleUsageWithBroker(app *broker.App, profile residentProfile, result stre
 	return log, nil
 }
 
-func runAcceptance(client *http.Client, baseURL, apiKey string, profile residentProfile, history []message, verbose bool) (string, error) {
-	result, err := postStream(client, baseURL, apiKey, requestPayload{
+func runAcceptance(client *http.Client, baseURL, apiKey string, profile residentProfile, history []openai.Message, verbose bool, brokerApp *broker.App) (string, *brokerUsageLog, error) {
+	result, err := openai.PostStream(client, baseURL, apiKey, openai.RequestPayload{
 		Model:          profile.Model,
 		Instructions:   acceptanceInstructions(),
 		PromptCacheKey: fmt.Sprintf("arena-newborn-acceptance-%s-v1", profile.Name),
-		Input:          append([]message(nil), history...),
+		Input:          append([]openai.Message(nil), history...),
 		Stream:         true,
 		Store:          false,
 	}, verbose)
 	if err != nil {
-		return "", fmt.Errorf("acceptance request failed: %w", err)
+		return "", nil, fmt.Errorf("acceptance request failed: %w", err)
 	}
-	return normalizeAcceptance(result.OutputText), nil
+	brokerLog, err := settleUsageWithBroker(brokerApp, profile, result, time.Now().UTC(), runtimeguard.CallKindWork, tokenledger.ActivityNormalWork)
+	if err != nil {
+		return "", nil, fmt.Errorf("acceptance broker settlement failed: %w", err)
+	}
+	return normalizeAcceptance(result.OutputText), brokerLog, nil
 }
 
 func makeInstructions(profile residentProfile, remainingSec int, state loopState) string {
@@ -669,122 +623,6 @@ func buildProfile(name string) (residentProfile, error) {
 	}
 }
 
-func postStream(client *http.Client, baseURL, apiKey string, payload requestPayload, verbose bool) (streamResult, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return streamResult{}, fmt.Errorf("marshal request: %w", err)
-	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/responses", bytes.NewReader(body))
-	if err != nil {
-		return streamResult{}, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return streamResult{}, fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		return streamResult{}, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
-	result, err := parseSSE(resp.Body, verbose)
-	if err != nil {
-		return streamResult{}, err
-	}
-	result.RequestID = resp.Header.Get("x-request-id")
-	return result, nil
-}
-
-func parseSSE(r io.Reader, verbose bool) (streamResult, error) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	var (
-		lines  []string
-		result streamResult
-	)
-	flushEvent := func() error {
-		if len(lines) == 0 {
-			return nil
-		}
-		var dataBuilder strings.Builder
-		for _, line := range lines {
-			if strings.HasPrefix(line, "data:") {
-				dataBuilder.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-			}
-		}
-		lines = lines[:0]
-		data := dataBuilder.String()
-		if data == "" || data == "[DONE]" {
-			return nil
-		}
-		var evt streamingEvent
-		if err := json.Unmarshal([]byte(data), &evt); err != nil {
-			return fmt.Errorf("decode event: %w", err)
-		}
-		switch evt.Type {
-		case "response.output_text.delta":
-			result.OutputText += evt.Delta
-			if verbose && evt.Delta != "" {
-				fmt.Print(evt.Delta)
-			}
-		case "response.completed", "response.done":
-			applyResponseEnvelope(&result, evt.Response)
-		}
-		return nil
-	}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			if err := flushEvent(); err != nil {
-				return streamResult{}, err
-			}
-			continue
-		}
-		lines = append(lines, line)
-	}
-	if err := scanner.Err(); err != nil {
-		return streamResult{}, fmt.Errorf("scan stream: %w", err)
-	}
-	if err := flushEvent(); err != nil {
-		return streamResult{}, err
-	}
-	if verbose {
-		fmt.Println()
-	}
-	if result.ResponseID == "" {
-		return streamResult{}, errors.New("stream ended without response.completed/response.done event")
-	}
-	return result, nil
-}
-
-func applyResponseEnvelope(dst *streamResult, resp responseEnvelope) {
-	dst.ResponseID = resp.ID
-	dst.ObservedPromptCacheKey = resp.PromptCacheKey
-	dst.InputTokens = resp.Usage.InputTokens
-	dst.OutputTokens = resp.Usage.OutputTokens
-	dst.CachedTokens = resp.Usage.InputTokensDetails.CachedTokens
-	if dst.CachedTokens == 0 {
-		dst.CachedTokens = resp.Usage.PromptTokensDetails.CachedTokens
-	}
-	if resp.OutputText != "" {
-		dst.OutputText = resp.OutputText
-		return
-	}
-	if dst.OutputText != "" {
-		return
-	}
-	var b strings.Builder
-	for _, item := range resp.Output {
-		for _, part := range item.Content {
-			if part.Type == "output_text" {
-				b.WriteString(part.Text)
-			}
-		}
-	}
-	dst.OutputText = b.String()
-}
 
 func runIncus(args ...string) string {
 	cmd := exec.Command("incus", args...)
