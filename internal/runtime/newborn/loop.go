@@ -83,6 +83,13 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		roundNow := time.Now().UTC()
 		remaining := int(time.Until(deadline).Seconds())
 		if remaining <= 25 {
+			if stoppedReason == "" {
+				if len(roundLogs) == 0 {
+					stoppedReason = "duration_window_too_short"
+				} else {
+					stoppedReason = "duration_elapsed"
+				}
+			}
 			break
 		}
 		round++
@@ -695,7 +702,14 @@ func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message
 
 func fallbackAcceptance(rounds []RoundLog, stoppedReason string) string {
 	if len(rounds) == 0 {
-		return "No live VM exploration occurred in this run because the resident was blocked by broker preflight before any model call was made. The next move is to inspect the resident runtime state, funding, reserve policy, and 6h quota budget before retrying."
+		switch {
+		case strings.HasPrefix(stoppedReason, "broker_preflight_denied:"):
+			return "No live VM exploration occurred in this run because the resident was blocked by broker preflight before any model call was made. The next move is to inspect the resident runtime state, funding, reserve policy, and 6h quota budget before retrying."
+		case stoppedReason == "duration_window_too_short":
+			return "This run ended before a live exploration round could begin. The time window was too short to spend a real model call safely, so no VM action was taken."
+		default:
+			return "No live VM exploration occurred in this run. The resident did not reach a valid action round before the run stopped."
+		}
 	}
 	return ""
 }
