@@ -9,13 +9,11 @@ import (
 )
 
 func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, promptCacheKey string) openai.RequestPayload {
-	parallelToolCalls := false
 	return openai.RequestPayload{
 		Model:           profile.Model,
 		Instructions:    makeInstructions(),
 		PromptCacheKey:  promptCacheKey,
 		Input:           append([]openai.Message(nil), input...),
-		MaxOutputTokens: 220,
 		Tools: []openai.ResponseTool{
 			{
 				Type:        "function",
@@ -24,61 +22,26 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 				Strict:      true,
 				Parameters: map[string]any{
 					"type": "object",
-					"properties": map[string]any{
-						"situation": map[string]any{
-							"type": "string",
-						},
+						"properties": map[string]any{
+							"situation": map[string]any{
+								"type": "string",
+							},
 						"next_action": map[string]any{
 							"type": "string",
-							"enum": []string{"guest_exec", "self_status", "self_quota", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop"},
+							"enum": []string{"guest_exec", "self_status", "self_quota", "noop"},
 						},
 						"reason": map[string]any{
 							"type": "string",
 						},
-						"command": map[string]any{
-							"type": "string",
+							"command": map[string]any{
+								"type": "string",
+							},
 						},
-						"message": map[string]any{
-							"type": "string",
-						},
-						"ticket_title": map[string]any{
-							"type": "string",
-						},
-						"ticket_body": map[string]any{
-							"type": "string",
-						},
-						"ticket_priority": map[string]any{
-							"type": "string",
-							"enum": []string{"", "low", "medium", "high", "urgent"},
-						},
-						"memory_id": map[string]any{
-							"type": "string",
-						},
-						"memory_action": map[string]any{
-							"type": "string",
-							"enum": []string{"", "keep", "rewrite", "compress", "demote", "delete"},
-						},
-						"memory_summary": map[string]any{
-							"type": "string",
-						},
-						"memory_text": map[string]any{
-							"type": "string",
-						},
-						"memory_layer": map[string]any{
-							"type": "string",
-							"enum": []string{"", "instant", "short", "long", "permanent"},
-						},
-						"memory_reason": map[string]any{
-							"type": "string",
-						},
+						"required":             []string{"situation", "next_action", "reason", "command"},
+						"additionalProperties": false,
 					},
-					"required":             []string{"situation", "next_action", "reason"},
-					"additionalProperties": false,
 				},
-			},
 		},
-		ToolChoice:        openai.FunctionToolChoice{Type: "function", Name: "decide_next_action"},
-		ParallelToolCalls: &parallelToolCalls,
 		Stream:            true,
 		Store:             false,
 	}

@@ -268,7 +268,7 @@ func TestBuildDecisionToolPayloadUsesStableInstructions(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected required fields slice")
 	}
-	if len(required) != 3 || required[0] != "situation" || required[1] != "next_action" || required[2] != "reason" {
+	if len(required) != 4 || required[0] != "situation" || required[1] != "next_action" || required[2] != "reason" || required[3] != "command" {
 		t.Fatalf("unexpected required fields: %#v", required)
 	}
 }
