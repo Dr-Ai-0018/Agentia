@@ -29,7 +29,7 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 						},
 						"next_action": map[string]any{
 							"type": "string",
-							"enum": []string{"guest_exec", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop"},
+							"enum": []string{"guest_exec", "self_status", "self_quota", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop"},
 						},
 						"reason": map[string]any{
 							"type": "string",
@@ -109,7 +109,7 @@ func validateDecision(decision AgentDecision) error {
 		return fmt.Errorf("missing next_action")
 	}
 	switch decision.NextAction {
-	case "guest_exec", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop":
+	case "guest_exec", "self_status", "self_quota", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop":
 	default:
 		return fmt.Errorf("unsupported next_action %q", decision.NextAction)
 	}

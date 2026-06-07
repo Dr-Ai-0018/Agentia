@@ -1,6 +1,7 @@
 package newborn
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-arena/internal/broker"
 	"ai-arena/internal/memory"
 )
 
@@ -18,12 +20,14 @@ type ActionExecutor interface {
 type IncusActionExecutor struct {
 	world    *WorldBridge
 	memories *memory.FileStore
+	broker   *broker.App
 }
 
 func NewIncusActionExecutor() *IncusActionExecutor {
 	return &IncusActionExecutor{
 		world:    NewWorldBridge(".agents"),
 		memories: memory.NewFileStore(".agents/memory"),
+		broker:   broker.New(".agents"),
 	}
 }
 
@@ -42,6 +46,10 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 			return "guest_exec denied: command is required"
 		}
 		return guestCommand(profile.Instance, decision.Command)
+	case "self_status":
+		return e.executeSelfStatus(profile)
+	case "self_quota":
+		return e.executeSelfQuota(profile)
 	case "talk_to_chenglin":
 		if strings.TrimSpace(decision.Message) == "" {
 			return "talk_to_chenglin denied: message is required"
@@ -62,6 +70,36 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 	default:
 		return "no operation executed"
 	}
+}
+
+func (e *IncusActionExecutor) executeSelfStatus(profile ResidentProfile) string {
+	if e.broker == nil {
+		return "self_status failed: broker app is not configured"
+	}
+	out, err := e.broker.RunStatus(profile.Name)
+	if err != nil {
+		return "self_status failed: " + err.Error()
+	}
+	return renderJSONObservation("self status snapshot", out)
+}
+
+func (e *IncusActionExecutor) executeSelfQuota(profile ResidentProfile) string {
+	if e.broker == nil {
+		return "self_quota failed: broker app is not configured"
+	}
+	out, err := e.broker.RunQuota(profile.Name)
+	if err != nil {
+		return "self_quota failed: " + err.Error()
+	}
+	return renderJSONObservation("self quota snapshot", out)
+}
+
+func renderJSONObservation(label string, v any) string {
+	raw, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("%s failed: marshal json: %v", label, err)
+	}
+	return label + ":\n" + string(raw)
 }
 
 func (e *IncusActionExecutor) executeMemoryReview(profile ResidentProfile, decision AgentDecision) string {
@@ -107,6 +145,10 @@ func suppressDuplicateAction(profile ResidentProfile, decision AgentDecision) (b
 func classifyCommandIntent(decision AgentDecision) string {
 	command := normalizeDuplicateText(decision.Command)
 	switch {
+	case decision.NextAction == "self_status":
+		return "self_status"
+	case decision.NextAction == "self_quota":
+		return "self_quota"
 	case decision.NextAction == "talk_to_chenglin":
 		return "chat"
 	case decision.NextAction == "submit_ticket":
@@ -147,6 +189,8 @@ func decisionSignature(decision AgentDecision) string {
 	switch decision.NextAction {
 	case "write_note", "guest_exec":
 		return decision.NextAction + ":" + normalize(decision.Command)
+	case "self_status", "self_quota":
+		return decision.NextAction
 	case "talk_to_chenglin":
 		return decision.NextAction + ":" + normalize(decision.Message)
 	case "submit_ticket":

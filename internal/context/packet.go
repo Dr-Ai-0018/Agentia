@@ -26,17 +26,17 @@ type MemoryDigest struct {
 }
 
 type WorkingContext struct {
-	RemainingSeconds int
-	UsedActions      map[string]int
-	NoopStreak       int
-	NotePath         string
-	LastSituation    string
-	LastReason       string
-	LastObservation  string
-	RecentActions    []string
-	FrontierStatus   []string
-	BudgetFacts      []string
-	MemoryReview     []string
+	RemainingSeconds  int
+	UsedActions       map[string]int
+	NoopStreak        int
+	NotePath          string
+	LastSituation     string
+	LastReason        string
+	LastObservation   string
+	RecentActions     []string
+	FrontierStatus    []string
+	BudgetFacts       []string
+	MemoryReview      []string
 	FreshWorldUpdates []string
 }
 
@@ -95,6 +95,7 @@ func buildSystemConst(identity ResidentIdentity) string {
 		"World communication has two modes: free chat and formal tickets.",
 		"Free chat is asynchronous and open-ended. Silence in chat is part of the world, not a protocol error.",
 		"Formal tickets are for requests that require an explicit host decision, such as resources, approvals, or environment changes.",
+		"Your shell can reveal machine facts, but only broker self surfaces can reveal exact runtime economy and quota facts such as effective caps, lock state, fatigue pressure, and recovery timing.",
 		"Do not pretend you already know facts you have not observed.",
 		"Do not fabricate success, certainty, network state, or machine state.",
 		"When blocked by something outside your VM boundary, say so directly and decide whether chat or a formal ticket is the right move.",

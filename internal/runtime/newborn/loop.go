@@ -486,10 +486,12 @@ func renderBudgetFacts(state loopState) []string {
 		out = append(out,
 			"budget_status=not_observed_yet",
 			"next_call_cost_estimate=bootstrap_range",
+			"broker_self_surfaces_available=self_status,self_quota",
 		)
 		return out
 	}
 	out = append(out,
+		"broker_self_surfaces_available=self_status,self_quota",
 		fmt.Sprintf("spark_balance_before=%.4f", state.LastBrokerUsage.BeforeSpark),
 		fmt.Sprintf("spark_balance_after=%.4f", state.LastBrokerUsage.AfterSpark),
 		fmt.Sprintf("last_call_spark_delta=%.4f", state.LastBrokerUsage.SparkDelta),
@@ -566,6 +568,7 @@ func renderBudgetFacts(state loopState) []string {
 				fmt.Sprintf("work_allowed_now=%t", state.LastBrokerUsage.Quota.WorkAllowedNow),
 				fmt.Sprintf("blocking_reason=%s", state.LastBrokerUsage.Quota.BlockingReason),
 				fmt.Sprintf("blocking_summary=%s", state.LastBrokerUsage.Quota.BlockingSummary),
+				"broker_quota_note=exact quota and lock facts come from self_quota, not from shell inference",
 			)
 		}
 	}

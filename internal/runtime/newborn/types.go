@@ -77,7 +77,7 @@ func mapMemoryReviewAction(action string) memory.Action {
 	case "delete":
 		return memory.ActionDelete
 	default:
-		return memory.Action("")
+	return memory.Action("")
 	}
 }
 

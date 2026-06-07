@@ -86,6 +86,26 @@ func TestParseDecisionResultFromFunctionCall(t *testing.T) {
 	}
 }
 
+func TestParseDecisionResultSupportsSelfQuota(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				Name:      "decide_next_action",
+				Arguments: `{"situation":"I want exact quota facts before deciding whether to work or rest.","next_action":"self_quota","reason":"broker state is more accurate than guessing from shell output","command":"","message":"","ticket_title":"","ticket_body":"","ticket_priority":"","memory_id":"","memory_action":"","memory_summary":"","memory_text":"","memory_layer":"","memory_reason":""}`,
+			},
+		},
+	}
+
+	decision, err := parseDecisionResult(result)
+	if err != nil {
+		t.Fatalf("parse decision result: %v", err)
+	}
+	if decision.NextAction != "self_quota" {
+		t.Fatalf("unexpected next action: %s", decision.NextAction)
+	}
+}
+
 func TestCompactObservationForHistory(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i < 120; i++ {
@@ -788,6 +808,34 @@ func TestIncusActionExecutorMemoryReview(t *testing.T) {
 	}
 	if updated.Summary != "I rewrote this into a cleaner carry-forward note." {
 		t.Fatalf("unexpected rewritten summary: %q", updated.Summary)
+	}
+}
+
+func TestIncusActionExecutorSelfQuota(t *testing.T) {
+	dir := t.TempDir()
+	app := broker.New(filepath.Join(dir, ".agents"))
+	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	if _, err := app.RunReset("jade", now); err != nil {
+		t.Fatalf("reset jade: %v", err)
+	}
+
+	exec := &IncusActionExecutor{
+		world:    NewWorldBridge(filepath.Join(dir, ".agents")),
+		memories: memory.NewFileStore(filepath.Join(dir, ".agents", "memory")),
+		broker:   app,
+	}
+	observation := exec.Execute(ResidentProfile{Name: "jade"}, AgentDecision{
+		NextAction: "self_quota",
+		Reason:     "exact broker quota facts are more reliable than shell inference",
+	})
+	if !strings.Contains(observation, "self quota snapshot:") {
+		t.Fatalf("expected self quota snapshot, got %q", observation)
+	}
+	if !strings.Contains(observation, "\"resident_id\": \"jade\"") {
+		t.Fatalf("expected jade resident id in observation, got %q", observation)
+	}
+	if !strings.Contains(observation, "\"recovery_mode\":") {
+		t.Fatalf("expected recovery mode in observation, got %q", observation)
 	}
 }
 
