@@ -43,6 +43,7 @@ type Message struct {
 	Body              string `json:"body"`
 	CreatedAt         string `json:"created_at"`
 	ReplyToID         string `json:"reply_to_id,omitempty"`
+	DefaultFeedbackForID string `json:"default_feedback_for_id,omitempty"`
 	ReadAt            string `json:"read_at,omitempty"`
 }
 
@@ -159,6 +160,24 @@ func (s *Store) AppendChenglinReplyToResident(resident, body, replyToID string, 
 	return msg, nil
 }
 
+func (s *Store) AppendDefaultFeedbackToResident(resident, body, replyToID string, now time.Time) (Message, error) {
+	msg := Message{
+		ID:                  fmt.Sprintf("world-%s", now.UTC().Format("20060102T150405.000000000Z")),
+		Direction:           DirectionChenglinToResident,
+		Resident:            resident,
+		From:                "world",
+		To:                  resident,
+		Body:                strings.TrimSpace(body),
+		CreatedAt:           now.UTC().Format(time.RFC3339),
+		ReplyToID:           strings.TrimSpace(replyToID),
+		DefaultFeedbackForID: strings.TrimSpace(replyToID),
+	}
+	if err := s.append(msg, now); err != nil {
+		return Message{}, err
+	}
+	return msg, nil
+}
+
 func (s *Store) ReplyToResidentMessage(messageID, body string, now time.Time) (Message, error) {
 	target, err := s.findMessage(messageID)
 	if err != nil {
@@ -178,7 +197,22 @@ func (s *Store) ReplyToResidentMessage(messageID, body string, now time.Time) (M
 }
 
 func (s *Store) IgnoreResidentMessage(messageID string, now time.Time) (Message, error) {
-	return Message{}, errors.New("chat messages are free-form and do not support explicit ignore; simply do not reply")
+	target, err := s.findMessage(messageID)
+	if err != nil {
+		return Message{}, err
+	}
+	if target.Direction != DirectionResidentToChenglin {
+		return Message{}, fmt.Errorf("message %s is not a resident_to_chenglin message", messageID)
+	}
+	status, err := s.MessageStatus(messageID)
+	if err != nil {
+		return Message{}, err
+	}
+	if status != StatusPending {
+		return Message{}, fmt.Errorf("message %s is already processed with status %s", messageID, status)
+	}
+	body := "No direct reply is being sent right now. Your message remains part of the shared world state, but this thread is not awaiting a host answer anymore."
+	return s.AppendDefaultFeedbackToResident(target.Resident, body, target.ID, now)
 }
 
 func (s *Store) ReadRecentForResident(resident string, limit int) ([]ThreadMessage, error) {
@@ -573,11 +607,18 @@ func deriveThread(all []Message, resident string) []ThreadMessage {
 			indexByID[msg.ID] = len(thread)
 		case DirectionChenglinToResident:
 			item.Status = StatusDelivered
+			if strings.TrimSpace(msg.DefaultFeedbackForID) != "" {
+				item.DefaultFeedback = true
+			}
 			if msg.ReplyToID != "" {
 				if idx, ok := indexByID[msg.ReplyToID]; ok {
 					thread[idx].Status = StatusReplied
 					thread[idx].ProcessedAt = msg.CreatedAt
-					thread[idx].ProcessedBy = "chenglin"
+					if item.DefaultFeedback {
+						thread[idx].ProcessedBy = "world-default"
+					} else {
+						thread[idx].ProcessedBy = "chenglin"
+					}
 					thread[idx].NeedsHostDecision = false
 				}
 			}

@@ -129,6 +129,52 @@ func TestCannotProcessHandledMessageTwice(t *testing.T) {
 	}
 }
 
+func TestIgnoreResidentMessageCreatesDefaultFeedback(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	msg, err := store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append amber: %v", err)
+	}
+	feedback, err := store.IgnoreResidentMessage(msg.ID, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("ignore resident message: %v", err)
+	}
+	if feedback.From != "world" {
+		t.Fatalf("expected world default feedback, got from=%s", feedback.From)
+	}
+	if feedback.DefaultFeedbackForID != msg.ID {
+		t.Fatalf("expected default feedback to reference %s, got %s", msg.ID, feedback.DefaultFeedbackForID)
+	}
+
+	thread, err := store.ReadThreadForResident("amber")
+	if err != nil {
+		t.Fatalf("read amber thread: %v", err)
+	}
+	if len(thread) != 2 {
+		t.Fatalf("expected 2 thread messages, got %d", len(thread))
+	}
+	if thread[0].Status != StatusReplied || thread[0].ProcessedBy != "world-default" {
+		t.Fatalf("expected original message to be closed by world-default, got %#v", thread[0])
+	}
+	if !thread[1].DefaultFeedback {
+		t.Fatalf("expected second message to be marked as default feedback")
+	}
+	if thread[1].Status != StatusDelivered {
+		t.Fatalf("expected default feedback to be delivered, got %s", thread[1].Status)
+	}
+
+	followups, err := store.ReadHostFollowups(10)
+	if err != nil {
+		t.Fatalf("read host followups: %v", err)
+	}
+	if len(followups) != 0 {
+		t.Fatalf("expected no host followups after ignore, got %#v", followups)
+	}
+}
+
 func TestTicketLifecycle(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)
