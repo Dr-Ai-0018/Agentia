@@ -233,3 +233,64 @@ func TestReadAllThreadSummaries(t *testing.T) {
 		t.Fatalf("expected jade to need host attention")
 	}
 }
+
+func TestReadHostInboxSummary(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	if _, err := store.AppendResidentToChenglin("jade", "pending jade", now); err != nil {
+		t.Fatalf("append jade: %v", err)
+	}
+	if _, err := store.CreateResidentTicket("amber", "Need disk", "Please increase disk to 20G", TicketPriorityHigh, now.Add(time.Second)); err != nil {
+		t.Fatalf("create amber ticket: %v", err)
+	}
+
+	summary, err := store.ReadHostInboxSummary(10, 10)
+	if err != nil {
+		t.Fatalf("host inbox summary: %v", err)
+	}
+	if summary.ResidentsNeedingChatReply != 1 {
+		t.Fatalf("expected 1 resident needing chat reply, got %d", summary.ResidentsNeedingChatReply)
+	}
+	if summary.ResidentsWithOpenTickets != 1 {
+		t.Fatalf("expected 1 resident with open tickets, got %d", summary.ResidentsWithOpenTickets)
+	}
+	if len(summary.PendingChatMessages) != 1 || summary.PendingChatMessages[0].Resident != "jade" {
+		t.Fatalf("expected pending jade chat, got %#v", summary.PendingChatMessages)
+	}
+	if len(summary.OpenTickets) != 1 || summary.OpenTickets[0].Resident != "amber" {
+		t.Fatalf("expected amber open ticket, got %#v", summary.OpenTickets)
+	}
+	if len(summary.ThreadSummaries) != 1 || summary.ThreadSummaries[0].Resident != "jade" {
+		t.Fatalf("expected jade thread summary, got %#v", summary.ThreadSummaries)
+	}
+}
+
+func TestReadHostFollowups(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	if _, err := store.AppendResidentToChenglin("jade", "pending jade", now); err != nil {
+		t.Fatalf("append jade: %v", err)
+	}
+	ticket, err := store.CreateResidentTicket("amber", "Need disk", "Please increase disk to 20G", TicketPriorityHigh, now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("create amber ticket: %v", err)
+	}
+
+	items, err := store.ReadHostFollowups(10)
+	if err != nil {
+		t.Fatalf("host followups: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 followups, got %d", len(items))
+	}
+	if items[0].Kind != "ticket_reply" || items[0].TargetID != ticket.ID {
+		t.Fatalf("expected ticket followup first, got %#v", items[0])
+	}
+	if items[1].Kind != "chat_reply" || items[1].Resident != "jade" {
+		t.Fatalf("expected jade chat followup second, got %#v", items[1])
+	}
+}

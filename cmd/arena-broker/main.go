@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|get-thread|messages|thread-summary|reply|tickets|ticket|get-ticket|ticket-reply")
+	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -96,6 +96,18 @@ func main() {
 		printJSON(out)
 	case "thread-summary":
 		out, err := world.ReadAllThreadSummaries()
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-inbox":
+		out, err := world.ReadHostInboxSummary(*limit, *limit)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-followups":
+		out, err := world.ReadHostFollowups(*limit)
 		if err != nil {
 			exitf("%v", err)
 		}

@@ -67,6 +67,26 @@ type ResidentThreadSummary struct {
 	NeedsHostAttention bool   `json:"needs_host_attention"`
 }
 
+type HostInboxSummary struct {
+	ResidentsNeedingChatReply   int                     `json:"residents_needing_chat_reply"`
+	ResidentsWithOpenTickets    int                     `json:"residents_with_open_tickets"`
+	PendingChatMessages         []ThreadMessage         `json:"pending_chat_messages"`
+	OpenTickets                 []ResidentTicketSummary `json:"open_tickets"`
+	ThreadSummaries             []ResidentThreadSummary `json:"thread_summaries"`
+}
+
+type HostFollowup struct {
+	Kind       string `json:"kind"`
+	Resident   string `json:"resident"`
+	TargetID   string `json:"target_id"`
+	Priority   string `json:"priority,omitempty"`
+	CreatedAt  string `json:"created_at,omitempty"`
+	UpdatedAt  string `json:"updated_at,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Preview    string `json:"preview,omitempty"`
+	Status     string `json:"status,omitempty"`
+}
+
 type Ticket struct {
 	ID         string        `json:"id"`
 	Resident   string        `json:"resident"`
@@ -320,6 +340,94 @@ func (s *Store) ReadAllThreadSummaries() ([]ResidentThreadSummary, error) {
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].LastMessageAt > out[j].LastMessageAt
 	})
+	return out, nil
+}
+
+func (s *Store) ReadHostInboxSummary(chatLimit, ticketLimit int) (HostInboxSummary, error) {
+	threads, err := s.ReadAllThreadSummaries()
+	if err != nil {
+		return HostInboxSummary{}, err
+	}
+	pending, err := s.ReadPendingResidentMessages(chatLimit)
+	if err != nil {
+		return HostInboxSummary{}, err
+	}
+	openTickets, err := s.ReadTickets("", TicketStatusOpen, "", ticketLimit)
+	if err != nil {
+		return HostInboxSummary{}, err
+	}
+
+	chatResidents := map[string]struct{}{}
+	for _, item := range pending {
+		if item.Resident != "" {
+			chatResidents[item.Resident] = struct{}{}
+		}
+	}
+	ticketResidents := map[string]struct{}{}
+	for _, ticket := range openTickets {
+		if ticket.Resident != "" {
+			ticketResidents[ticket.Resident] = struct{}{}
+		}
+	}
+
+	return HostInboxSummary{
+		ResidentsNeedingChatReply: len(chatResidents),
+		ResidentsWithOpenTickets:  len(ticketResidents),
+		PendingChatMessages:       pending,
+		OpenTickets:               openTickets,
+		ThreadSummaries:           threads,
+	}, nil
+}
+
+func (s *Store) ReadHostFollowups(limit int) ([]HostFollowup, error) {
+	pending, err := s.ReadPendingResidentMessages(limit)
+	if err != nil {
+		return nil, err
+	}
+	openTickets, err := s.ReadTickets("", TicketStatusOpen, "", limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]HostFollowup, 0, len(pending)+len(openTickets))
+	for _, item := range pending {
+		out = append(out, HostFollowup{
+			Kind:      "chat_reply",
+			Resident:  item.Resident,
+			TargetID:  item.ID,
+			CreatedAt: item.CreatedAt,
+			Preview:   previewText(item.Body, 160),
+			Status:    item.Status,
+		})
+	}
+	for _, ticket := range openTickets {
+		out = append(out, HostFollowup{
+			Kind:      "ticket_reply",
+			Resident:  ticket.Resident,
+			TargetID:  ticket.ID,
+			Priority:  ticket.Priority,
+			CreatedAt: ticket.CreatedAt,
+			UpdatedAt: ticket.UpdatedAt,
+			Title:     ticket.Title,
+			Preview:   ticket.LastPreview,
+			Status:    ticket.Status,
+		})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		left := out[i].UpdatedAt
+		if left == "" {
+			left = out[i].CreatedAt
+		}
+		right := out[j].UpdatedAt
+		if right == "" {
+			right = out[j].CreatedAt
+		}
+		return left > right
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 
