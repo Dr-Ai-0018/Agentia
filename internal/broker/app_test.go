@@ -160,3 +160,26 @@ func TestAppRunPrepareSpec(t *testing.T) {
 		t.Fatalf("unexpected prepared response id: %s", prepared.Prepared.Usage.ResponseID)
 	}
 }
+
+func TestAppRunQuota(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	if _, err := app.RunReset("jade", now); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	out, err := app.RunQuota("jade")
+	if err != nil {
+		t.Fatalf("run quota: %v", err)
+	}
+	if out.Quota.Window6HCap <= 0 {
+		t.Fatalf("expected 6h cap")
+	}
+	if out.Quota.NextRecoveryAt == "" {
+		t.Fatalf("expected next recovery at")
+	}
+	if out.Quota.RecoveryTickMinutes != 15 {
+		t.Fatalf("expected 15 minute recovery tick")
+	}
+}

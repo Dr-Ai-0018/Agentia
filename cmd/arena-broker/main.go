@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|binding|self-status|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|recover|reset|admit|binding|self-status|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -53,6 +53,12 @@ func main() {
 		printJSON(out)
 	case "status":
 		out, err := app.RunStatus(*residentID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "quota":
+		out, err := app.RunQuota(*residentID)
 		if err != nil {
 			exitf("%v", err)
 		}

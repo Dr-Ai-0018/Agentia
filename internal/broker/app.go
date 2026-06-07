@@ -34,6 +34,11 @@ type ResetOutput struct {
 	SnapshotPath string                     `json:"snapshot_path"`
 }
 
+type QuotaOutput struct {
+	Status brokerstate.ResidentStatus `json:"status"`
+	Quota  brokerstate.QuotaSnapshot  `json:"quota"`
+}
+
 type CallSpec struct {
 	Kind      runtimeguard.CallKind
 	Usage     tokenledger.Usage
@@ -124,6 +129,17 @@ func (a *App) Binding(residentID string) (ResidentBinding, bool) {
 
 func (a *App) RunStatus(residentID string) (brokerstate.ResidentStatus, error) {
 	return a.service(false).SelfStatus(residentID)
+}
+
+func (a *App) RunQuota(residentID string) (QuotaOutput, error) {
+	status, err := a.service(false).SelfStatus(residentID)
+	if err != nil {
+		return QuotaOutput{}, err
+	}
+	return QuotaOutput{
+		Status: status,
+		Quota:  brokerstate.BuildQuotaSnapshot(status),
+	}, nil
 }
 
 func (a *App) RunPrepareSpec(residentID string, spec CallSpec) (brokerstate.PreparedAdmission, error) {
