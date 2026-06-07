@@ -18,6 +18,7 @@ func main() {
 	mode := flag.String("mode", "demo", "Mode: demo|status|quota|recover|reset|admit|binding|self-status|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
+	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
 	apply := flag.Bool("apply", false, "Whether admit mode should actually apply the call")
 	model := flag.String("model", "", "Optional model override for admit mode")
@@ -64,7 +65,16 @@ func main() {
 		}
 		printJSON(out)
 	case "recover":
-		out, err := app.RunRecover(*residentID, *hours, time.Now().UTC())
+		now := time.Now().UTC()
+		var (
+			out any
+			err error
+		)
+		if *recoveryMode != "" {
+			out, err = app.RunRecoverWithMode(*residentID, *hours, now, *recoveryMode)
+		} else {
+			out, err = app.RunRecover(*residentID, *hours, now)
+		}
 		if err != nil {
 			exitf("%v", err)
 		}
