@@ -34,6 +34,8 @@ type ResidentPhysiology struct {
 	QuotaTightestRatio float64      `json:"quota_tightest_ratio"`
 	RecoverySuggested  bool         `json:"recovery_suggested"`
 	RecoveryUrgency    string       `json:"recovery_urgency"`
+	NextRecoveryAt     string       `json:"next_recovery_at,omitempty"`
+	RecoveryTickMinutes int         `json:"recovery_tick_minutes"`
 	SnapshotTime       string       `json:"snapshot_time"`
 	SummaryLines       []string     `json:"summary_lines"`
 }
@@ -137,6 +139,8 @@ func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 		QuotaTightestRatio: tightestRatio,
 		RecoverySuggested:  recoverySuggested,
 		RecoveryUrgency:    recoveryUrgency,
+		NextRecoveryAt:     status.NextRecoveryAt,
+		RecoveryTickMinutes: status.RecoveryTickMinutes,
 		SnapshotTime:       now.UTC().Format(time.RFC3339),
 	}
 	out.SummaryLines = physiologySummaryLines(out)
@@ -160,6 +164,9 @@ func physiologySummaryLines(p ResidentPhysiology) []string {
 	}
 	if p.RecoverySuggested {
 		lines = append(lines, "recovery_suggested="+boolWord(p.RecoverySuggested)+" urgency="+p.RecoveryUrgency)
+	}
+	if p.NextRecoveryAt != "" {
+		lines = append(lines, "next_recovery_at="+p.NextRecoveryAt)
 	}
 	return lines
 }

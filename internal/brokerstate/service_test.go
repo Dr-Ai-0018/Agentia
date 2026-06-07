@@ -51,6 +51,12 @@ func TestBrokerServiceSelfStatus(t *testing.T) {
 	if status.EffectiveWindow6HCap <= 0 || status.EffectiveDayCap <= 0 || status.EffectiveWeekCap <= 0 {
 		t.Fatalf("expected effective caps to be populated")
 	}
+	if status.NextRecoveryAt == "" {
+		t.Fatalf("expected next recovery timestamp")
+	}
+	if status.RecoveryTickMinutes != 15 {
+		t.Fatalf("expected 15 minute recovery tick")
+	}
 }
 
 func TestBrokerServiceRecoveryTick(t *testing.T) {

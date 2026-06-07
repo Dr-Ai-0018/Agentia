@@ -42,6 +42,8 @@ type TickResult struct {
 	RecoveredSleepDebt  int                   `json:"recovered_sleep_debt"`
 	QuotaBefore         tokenledger.QuotaState `json:"quota_before"`
 	QuotaAfter          tokenledger.QuotaState `json:"quota_after"`
+	NextRecoveryAt      string                `json:"next_recovery_at,omitempty"`
+	RecoveryTickMinutes int                   `json:"recovery_tick_minutes"`
 }
 
 func Apply(policy Policy, state State, now time.Time) TickResult {
@@ -105,7 +107,14 @@ func Apply(policy Policy, state State, now time.Time) TickResult {
 		RecoveredSleepDebt: recoveredSleepDebt,
 		QuotaBefore:     before,
 		QuotaAfter:      after,
+		NextRecoveryAt:  NextRecoveryAt(now).Format(time.RFC3339),
+		RecoveryTickMinutes: 15,
 	}
+}
+
+func NextRecoveryAt(now time.Time) time.Time {
+	now = now.UTC()
+	return now.Truncate(15 * time.Minute).Add(15 * time.Minute)
 }
 
 func roundToPrecision(v float64, places int) float64 {

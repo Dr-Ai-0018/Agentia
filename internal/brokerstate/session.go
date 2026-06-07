@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"ai-arena/internal/recovery"
 	"ai-arena/internal/runtimecore"
 	"ai-arena/internal/runtimeguard"
 )
@@ -35,6 +36,8 @@ type ResidentStatus struct {
 	EffectiveWindow6HCap int     `json:"effective_window_6h_cap"`
 	EffectiveDayCap      int     `json:"effective_day_cap"`
 	EffectiveWeekCap     int     `json:"effective_week_cap"`
+	NextRecoveryAt     string    `json:"next_recovery_at,omitempty"`
+	RecoveryTickMinutes int      `json:"recovery_tick_minutes"`
 	LastRecoveryAt     time.Time `json:"last_recovery_at"`
 	Physiology         ResidentPhysiology `json:"physiology"`
 }
@@ -99,6 +102,8 @@ func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath
 		EffectiveWindow6HCap: effective.Window6HCap,
 		EffectiveDayCap:      effective.DayCap,
 		EffectiveWeekCap:     effective.WeekCap,
+		NextRecoveryAt:       recovery.NextRecoveryAt(now).Format(time.RFC3339),
+		RecoveryTickMinutes:  15,
 		LastRecoveryAt:     state.LastRecoveryAt,
 		Physiology:         DerivePhysiology(ResidentStatus{
 			ResidentID:     state.ResidentID,
@@ -116,6 +121,8 @@ func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath
 			EffectiveWindow6HCap: effective.Window6HCap,
 			EffectiveDayCap:      effective.DayCap,
 			EffectiveWeekCap:     effective.WeekCap,
+			NextRecoveryAt:       recovery.NextRecoveryAt(now).Format(time.RFC3339),
+			RecoveryTickMinutes:  15,
 			LastRecoveryAt: state.LastRecoveryAt,
 		}, now),
 	}

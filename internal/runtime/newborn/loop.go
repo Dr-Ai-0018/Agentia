@@ -526,6 +526,8 @@ func renderBudgetFacts(state loopState) []string {
 			fmt.Sprintf("effective_window_6h_cap=%d", effectiveWindow),
 			fmt.Sprintf("effective_day_cap=%d", effectiveDay),
 			fmt.Sprintf("effective_week_cap=%d", effectiveWeek),
+			fmt.Sprintf("next_recovery_at=%s", status.NextRecoveryAt),
+			fmt.Sprintf("recovery_tick_minutes=%d", status.RecoveryTickMinutes),
 			fmt.Sprintf("debt_amount=%.4f", status.DebtAmount),
 			fmt.Sprintf("resident_mode=%s", status.Physiology.Mode),
 			fmt.Sprintf("resident_pressure=%s", status.Physiology.Pressure),

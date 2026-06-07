@@ -84,4 +84,10 @@ func TestRecoveryAlsoReducesFatigueAndSleepDebtWhenConfigured(t *testing.T) {
 	if result.SleepDebtAfter != 2 {
 		t.Fatalf("sleep debt after = %d, want 2", result.SleepDebtAfter)
 	}
+	if result.NextRecoveryAt != "2026-06-05T02:15:00Z" {
+		t.Fatalf("next recovery at = %s", result.NextRecoveryAt)
+	}
+	if result.RecoveryTickMinutes != 15 {
+		t.Fatalf("recovery tick minutes = %d", result.RecoveryTickMinutes)
+	}
 }
