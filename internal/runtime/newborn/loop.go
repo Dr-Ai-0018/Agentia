@@ -500,7 +500,16 @@ func renderBudgetFacts(state loopState) []string {
 			fmt.Sprintf("day_cap=%d", status.DayCap),
 			fmt.Sprintf("week_cap=%d", status.WeekCap),
 			fmt.Sprintf("debt_amount=%.4f", status.DebtAmount),
+			fmt.Sprintf("resident_mode=%s", status.Physiology.Mode),
+			fmt.Sprintf("resident_pressure=%s", status.Physiology.Pressure),
+			fmt.Sprintf("quota_tightest_layer=%s", status.Physiology.QuotaTightestLayer),
+			fmt.Sprintf("quota_tightest_ratio=%.4f", status.Physiology.QuotaTightestRatio),
+			fmt.Sprintf("recovery_suggested=%t", status.Physiology.RecoverySuggested),
+			fmt.Sprintf("recovery_urgency=%s", status.Physiology.RecoveryUrgency),
 		)
+		for _, line := range status.Physiology.SummaryLines {
+			out = append(out, "physiology_summary="+line)
+		}
 	}
 	if next := projectedNextCallFacts(state); len(next) > 0 {
 		out = append(out, next...)

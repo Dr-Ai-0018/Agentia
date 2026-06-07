@@ -42,6 +42,12 @@ func TestBrokerServiceSelfStatus(t *testing.T) {
 	if status.SparkBalance != 0.62 {
 		t.Fatalf("unexpected spark balance")
 	}
+	if status.Physiology.Mode == "" {
+		t.Fatalf("expected derived physiology mode")
+	}
+	if status.Physiology.QuotaTightestLayer == "" {
+		t.Fatalf("expected quota tightest layer")
+	}
 }
 
 func TestBrokerServiceRecoveryTick(t *testing.T) {

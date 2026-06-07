@@ -30,6 +30,7 @@ type ResidentStatus struct {
 	WeekCap            int       `json:"week_cap"`
 	WeekUsed           int       `json:"week_used"`
 	LastRecoveryAt     time.Time `json:"last_recovery_at"`
+	Physiology         ResidentPhysiology `json:"physiology"`
 }
 
 func NewSessionManager(store *Store, registry *Registry, cfg runtimecore.Config) *SessionManager {
@@ -47,7 +48,7 @@ func (m *SessionManager) LoadResident(residentID string) (*runtimecore.Engine, R
 	if err != nil {
 		return nil, ResidentStatus{}, err
 	}
-	status := BuildResidentStatus(engine, loaded, path)
+	status := BuildResidentStatusAt(engine, loaded, path, now)
 	return engine, status, nil
 }
 
@@ -60,6 +61,10 @@ func (m *SessionManager) SaveResident(engine *runtimecore.Engine) (string, error
 }
 
 func BuildResidentStatus(engine *runtimecore.Engine, loaded bool, snapshotPath string) ResidentStatus {
+	return BuildResidentStatusAt(engine, loaded, snapshotPath, time.Now().UTC())
+}
+
+func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath string, now time.Time) ResidentStatus {
 	state := engine.State()
 	account := engine.SparkLedger().Account()
 	return ResidentStatus{
@@ -78,5 +83,18 @@ func BuildResidentStatus(engine *runtimecore.Engine, loaded bool, snapshotPath s
 		WeekCap:            state.Quota.WeekCap,
 		WeekUsed:           state.Quota.WeekUsed,
 		LastRecoveryAt:     state.LastRecoveryAt,
+		Physiology:         DerivePhysiology(ResidentStatus{
+			ResidentID:     state.ResidentID,
+			SparkBalance:   account.Balance,
+			DebtActive:     state.DebtActive,
+			DebtAmount:     state.DebtAmount,
+			Window6HCap:    state.Quota.Window6HCap,
+			Window6HUsed:   state.Quota.Window6HUsed,
+			DayCap:         state.Quota.DayCap,
+			DayUsed:        state.Quota.DayUsed,
+			WeekCap:        state.Quota.WeekCap,
+			WeekUsed:       state.Quota.WeekUsed,
+			LastRecoveryAt: state.LastRecoveryAt,
+		}, now),
 	}
 }
