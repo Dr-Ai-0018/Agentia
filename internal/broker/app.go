@@ -42,20 +42,27 @@ type CallSpec struct {
 }
 
 type App struct {
-	root string
+	root     string
+	cfg      Config
+	registry *ResidentRegistry
 }
 
 func New(root string) *App {
-	return &App{root: root}
+	cfg := DefaultConfig(root)
+	return &App{
+		root:     root,
+		cfg:      cfg,
+		registry: NewResidentRegistry(cfg.Residents),
+	}
 }
 
 func (a *App) RunDemo(residentID string, start time.Time) (DemoOutput, error) {
-	cfg := brokerstate.DefaultRuntimeConfig()
+	cfg := a.cfg.Runtime
 	stateStore := brokerstate.New(join(a.root, "brokerstate-demo"))
 	if err := stateStore.DeleteResidentSnapshot(residentID); err != nil {
 		return DemoOutput{}, err
 	}
-	registry := brokerstate.NewRegistry(brokerstate.DefaultResidentProfiles())
+	registry := brokerstate.NewRegistry(a.cfg.ResidentProfiles())
 	manager := brokerstate.NewSessionManager(stateStore, registry, cfg)
 	engine, status, err := manager.LoadResident(residentID)
 	if err != nil {
@@ -109,6 +116,10 @@ func (a *App) RunDemo(residentID string, start time.Time) (DemoOutput, error) {
 		PreparedAfter3H:     preparedAfter3h,
 		FinalState:          engine.State(),
 	}, nil
+}
+
+func (a *App) Binding(residentID string) (ResidentBinding, bool) {
+	return a.registry.Binding(residentID)
 }
 
 func (a *App) RunStatus(residentID string) (brokerstate.ResidentStatus, error) {

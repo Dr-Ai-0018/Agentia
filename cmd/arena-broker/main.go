@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
+	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|binding|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -80,6 +80,12 @@ func main() {
 		})
 		if err != nil {
 			exitf("%v", err)
+		}
+		printJSON(out)
+	case "binding":
+		out, ok := app.Binding(*residentID)
+		if !ok {
+			exitf("unknown resident binding: %s", *residentID)
 		}
 		printJSON(out)
 	case "messages":
