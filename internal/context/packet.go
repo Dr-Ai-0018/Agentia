@@ -30,8 +30,6 @@ type WorkingContext struct {
 	UsedActions       map[string]int
 	NoopStreak        int
 	NotePath          string
-	LastSituation     string
-	LastReason        string
 	LastObservation   string
 	RecentActions     []string
 	FrontierStatus    []string
@@ -159,12 +157,6 @@ func buildRecentWorkingContext(resident string, working WorkingContext) string {
 	if trimmed := strings.TrimSpace(working.NotePath); trimmed != "" {
 		lines = append(lines, fmt.Sprintf("note_path: %s", trimmed))
 	}
-	if trimmed := strings.TrimSpace(working.LastSituation); trimmed != "" {
-		lines = append(lines, fmt.Sprintf("last_situation: %s", oneLine(trimmed)))
-	}
-	if trimmed := strings.TrimSpace(working.LastReason); trimmed != "" {
-		lines = append(lines, fmt.Sprintf("last_reason: %s", oneLine(trimmed)))
-	}
 	if trimmed := strings.TrimSpace(working.LastObservation); trimmed != "" {
 		lines = append(lines, fmt.Sprintf("last_observation: %s", summarizeObservationLine(trimmed)))
 	}
@@ -181,8 +173,8 @@ func buildRecentWorkingContext(resident string, working WorkingContext) string {
 	if len(working.FrontierStatus) > 0 {
 		lines = append(lines, "exploration_frontier:")
 		limit := working.FrontierStatus
-		if len(limit) > 4 {
-			limit = limit[:4]
+		if len(limit) > 3 {
+			limit = limit[:3]
 		}
 		for _, item := range limit {
 			lines = append(lines, "- "+oneLine(item))
@@ -191,8 +183,8 @@ func buildRecentWorkingContext(resident string, working WorkingContext) string {
 	if len(working.BudgetFacts) > 0 {
 		lines = append(lines, "budget_facts:")
 		limit := working.BudgetFacts
-		if len(limit) > 12 {
-			limit = limit[:12]
+		if len(limit) > 7 {
+			limit = limit[:7]
 		}
 		for _, item := range limit {
 			lines = append(lines, "- "+oneLine(item))

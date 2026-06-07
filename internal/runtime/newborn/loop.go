@@ -233,10 +233,6 @@ func (r *Runner) buildContextPacket(profile ResidentProfile, remaining int, stat
 		MemoryReview:      memoryReview,
 		FreshWorldUpdates: worldView.FreshDeliveredItems,
 	}
-	if state.LastDecision != nil {
-		working.LastSituation = state.LastDecision.Situation
-		working.LastReason = state.LastDecision.Reason
-	}
 	return context.Build(context.BuildSpec{
 		Identity: context.ResidentIdentity{
 			Name:     profile.Name,
@@ -437,17 +433,14 @@ func renderRecentActions(actions []RecentAction) []string {
 func renderExplorationFrontier(state loopState) []string {
 	surfaces := detectExplorationSurfaces(state.RecentActions)
 	order := preferredSurfaceOrder(budgetTier(state))
-	out := make([]string, 0, len(order)+1)
-	for _, surface := range order {
-		status := "unseen"
-		if surfaces[surface] {
-			status = "seen"
-		}
-		out = append(out, fmt.Sprintf("%s=%s cost=%s", surface, status, surfaceCost(surface)))
-	}
+	out := make([]string, 0, 4)
 	if next, ok := nextUnexploredSurface(surfaces, budgetTier(state)); ok {
 		out = append(out, fmt.Sprintf("next_preferred_surface=%s", next))
 		out = append(out, fmt.Sprintf("next_probe_shape=%s", preferredProbeShape(next)))
+	}
+	seen := seenSurfaceSummary(surfaces, order)
+	if seen != "" {
+		out = append(out, "seen_surfaces="+seen)
 	}
 	if baselineCaptureComplete(surfaces) {
 		out = append(out, "baseline_capture_complete=true")
@@ -494,6 +487,19 @@ func nextUnexploredSurface(surfaces map[ExplorationSurface]bool, tier string) (E
 	return "", false
 }
 
+func seenSurfaceSummary(surfaces map[ExplorationSurface]bool, order []ExplorationSurface) string {
+	seen := make([]string, 0, len(order))
+	for _, surface := range order {
+		if surfaces[surface] {
+			seen = append(seen, string(surface))
+		}
+	}
+	if len(seen) == 0 {
+		return ""
+	}
+	return strings.Join(seen, ",")
+}
+
 func baselineCaptureComplete(surfaces map[ExplorationSurface]bool) bool {
 	return surfaces[SurfaceIdentity] && surfaces[SurfaceFilesystem] && surfaces[SurfaceResources] && surfaces[SurfaceNetwork]
 }
@@ -510,16 +516,9 @@ func renderBudgetFacts(state loopState) []string {
 		return out
 	}
 	out = append(out,
-		"broker_self_surfaces_available=self_status,self_quota",
-		fmt.Sprintf("spark_balance_before=%.4f", state.LastBrokerUsage.BeforeSpark),
 		fmt.Sprintf("spark_balance_after=%.4f", state.LastBrokerUsage.AfterSpark),
 		fmt.Sprintf("last_call_spark_delta=%.4f", state.LastBrokerUsage.SparkDelta),
 		fmt.Sprintf("last_call_strain_cost=%d", state.LastBrokerUsage.PreparedStrainCost),
-		fmt.Sprintf("window_6h_usage=%d", state.LastBrokerUsage.Window6HUsed),
-		fmt.Sprintf("day_usage=%d", state.LastBrokerUsage.DayUsed),
-		fmt.Sprintf("week_usage=%d", state.LastBrokerUsage.WeekUsed),
-		fmt.Sprintf("debt_active_before=%t", state.LastBrokerUsage.BeforeDebtActive),
-		fmt.Sprintf("debt_active_after=%t", state.LastBrokerUsage.AfterDebtActive),
 	)
 	if state.LastBrokerUsage.AfterStatus != nil {
 		status := state.LastBrokerUsage.AfterStatus
@@ -548,51 +547,25 @@ func renderBudgetFacts(state loopState) []string {
 			weekRemaining = effectiveWeek - status.WeekUsed
 		}
 		out = append(out,
-			fmt.Sprintf("window_6h_remaining=%d", windowRemaining),
-			fmt.Sprintf("day_remaining=%d", dayRemaining),
-			fmt.Sprintf("week_remaining=%d", weekRemaining),
-			fmt.Sprintf("window_6h_cap=%d", status.Window6HCap),
-			fmt.Sprintf("day_cap=%d", status.DayCap),
-			fmt.Sprintf("week_cap=%d", status.WeekCap),
 			fmt.Sprintf("effective_window_6h_cap=%d", effectiveWindow),
-			fmt.Sprintf("effective_day_cap=%d", effectiveDay),
-			fmt.Sprintf("effective_week_cap=%d", effectiveWeek),
 			fmt.Sprintf("effective_window_6h_remaining=%d", maxInt(0, effectiveWindow-status.Window6HUsed)),
 			fmt.Sprintf("effective_day_remaining=%d", maxInt(0, effectiveDay-status.DayUsed)),
-			fmt.Sprintf("effective_week_remaining=%d", maxInt(0, effectiveWeek-status.WeekUsed)),
 			fmt.Sprintf("next_recovery_at=%s", status.NextRecoveryAt),
-			fmt.Sprintf("recovery_tick_minutes=%d", status.RecoveryTickMinutes),
 			fmt.Sprintf("recovery_mode=%s", status.RecoveryMode),
-			fmt.Sprintf("debt_amount=%.4f", status.DebtAmount),
 			fmt.Sprintf("resident_mode=%s", status.Physiology.Mode),
 			fmt.Sprintf("resident_pressure=%s", status.Physiology.Pressure),
-			fmt.Sprintf("quota_tightest_layer=%s", status.Physiology.QuotaTightestLayer),
-			fmt.Sprintf("quota_tightest_ratio=%.4f", status.Physiology.QuotaTightestRatio),
-			fmt.Sprintf("recovery_suggested=%t", status.Physiology.RecoverySuggested),
-			fmt.Sprintf("recovery_urgency=%s", status.Physiology.RecoveryUrgency),
-			fmt.Sprintf("state_snapshot=mode:%s pressure:%s recovery_mode:%s spark:%.4f fatigue:%d sleep_debt:%d",
-				status.Physiology.Mode,
-				status.Physiology.Pressure,
-				status.RecoveryMode,
-				status.SparkBalance,
-				status.Fatigue,
-				status.SleepDebt,
-			),
 		)
-		for _, line := range status.Physiology.SummaryLines {
-			out = append(out, "physiology_summary="+line)
-		}
 		if state.LastBrokerUsage.Quota != nil {
 			out = append(out,
 				fmt.Sprintf("work_allowed_now=%t", state.LastBrokerUsage.Quota.WorkAllowedNow),
 				fmt.Sprintf("blocking_reason=%s", state.LastBrokerUsage.Quota.BlockingReason),
-				fmt.Sprintf("blocking_summary=%s", state.LastBrokerUsage.Quota.BlockingSummary),
-				"broker_quota_note=exact quota and lock facts come from self_quota, not from shell inference",
 			)
 		}
-	}
-	if next := projectedNextCallFacts(state); len(next) > 0 {
-		out = append(out, next...)
+		_ = windowRemaining
+		_ = dayRemaining
+		_ = weekRemaining
+		_ = effectiveDay
+		_ = effectiveWeek
 	}
 	return out
 }
@@ -710,6 +683,7 @@ func preferredProbeShape(surface ExplorationSurface) string {
 }
 
 func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time) broker.CallSpec {
+	activity := preflightActivity(state)
 	if state.LastRealUsage == nil {
 		return broker.SpecFromUsage(
 			runtimeguard.CallKindWork,
@@ -724,7 +698,7 @@ func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time
 				FinishedAt:   startedAt.Add(4 * time.Second),
 			},
 			tokenledger.Penalties{},
-			tokenledger.ActivityNormalWork,
+			activity,
 		)
 	}
 
@@ -747,8 +721,24 @@ func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time
 			FinishedAt:   startedAt.Add(4 * time.Second),
 		},
 		tokenledger.Penalties{},
-		tokenledger.ActivityNormalWork,
+		activity,
 	)
+}
+
+func preflightActivity(state loopState) tokenledger.ActivityType {
+	if state.LastDecision == nil {
+		return tokenledger.ActivityNormalWork
+	}
+	switch state.LastDecision.NextAction {
+	case "self_status", "self_quota", "noop":
+		return tokenledger.ActivityStatusCheck
+	case "talk_to_chenglin", "submit_ticket", "write_note", "memory_review":
+		return tokenledger.ActivityLightWork
+	case "guest_exec":
+		return classifyGuestExecActivity(state.LastDecision.Command)
+	default:
+		return tokenledger.ActivityNormalWork
+	}
 }
 
 func modelBootstrapInput(model string) int {

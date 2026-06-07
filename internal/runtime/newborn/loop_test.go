@@ -17,6 +17,86 @@ import (
 	"ai-arena/internal/worldstate"
 )
 
+func TestRenderQuotaObservationIsCompact(t *testing.T) {
+	out := broker.QuotaOutput{
+		Status: brokerstate.ResidentStatus{
+			ResidentID:    "jade",
+			SparkBalance:  2.625,
+			DebtActive:    false,
+			DebtAmount:    0,
+			RecoveryMode:  "idle",
+			LastRecoveryAt: time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC),
+		},
+		Quota: brokerstate.QuotaSnapshot{
+			Window6HRemaining:          530,
+			EffectiveWindow6HRemaining: 497,
+			DayRemaining:               2020,
+			EffectiveDayRemaining:      1880,
+			WeekRemaining:              12340,
+			EffectiveWeekRemaining:     11780,
+			WorkAllowedNow:             true,
+			RecoveryMode:               "idle",
+			NextRecoveryAt:             "2026-06-07T09:15:00Z",
+		},
+	}
+
+	got := renderQuotaObservation(out)
+	if strings.Contains(got, "{") || strings.Contains(got, "quota\":") {
+		t.Fatalf("expected compact text observation, got %q", got)
+	}
+	for _, want := range []string{
+		"self quota snapshot:",
+		"resident_id=jade",
+		"spark_balance=2.6250",
+		"effective_window_6h_remaining=497",
+		"work_allowed_now=true",
+		"next_recovery_at=2026-06-07T09:15:00Z",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in %q", want, got)
+		}
+	}
+}
+
+func TestRenderResidentStatusObservationIsCompact(t *testing.T) {
+	status := brokerstate.ResidentStatus{
+		ResidentID:           "amber",
+		SparkBalance:         4.125,
+		Fatigue:              180,
+		SleepDebt:            1,
+		DebtActive:           false,
+		DebtAmount:           0,
+		RecoveryMode:         "rest",
+		Window6HCap:          720,
+		Window6HUsed:         190,
+		EffectiveWindow6HCap: 690,
+		DayCap:               2400,
+		DayUsed:              410,
+		EffectiveDayCap:      2280,
+		WeekCap:              16800,
+		WeekUsed:             1100,
+		EffectiveWeekCap:     16000,
+		NextRecoveryAt:       "2026-06-07T10:00:00Z",
+		LastRecoveryAt:       time.Date(2026, 6, 7, 9, 45, 0, 0, time.UTC),
+	}
+	got := renderResidentStatusObservation(status)
+	if strings.Contains(got, "{") || strings.Contains(got, "\"resident_id\"") {
+		t.Fatalf("expected compact text observation, got %q", got)
+	}
+	for _, want := range []string{
+		"self status snapshot:",
+		"resident_id=amber",
+		"spark_balance=4.1250",
+		"window_6h=190/720",
+		"effective_day_cap=2280",
+		"last_recovery_at=2026-06-07T09:45:00Z",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in %q", want, got)
+		}
+	}
+}
+
 func TestBuildProfile(t *testing.T) {
 	profile, err := BuildProfile("amber")
 	if err != nil {
@@ -53,6 +133,32 @@ func TestPreflightSpecFromLastUsage(t *testing.T) {
 	}
 	if spec.Usage.OutputTokens != 315 {
 		t.Fatalf("unexpected estimated output tokens: %d", spec.Usage.OutputTokens)
+	}
+}
+
+func TestPreflightSpecUsesLastActionActivityShape(t *testing.T) {
+	spec := preflightSpec(ResidentProfile{Name: "jade", Model: "gpt-5.4"}, loopState{
+		LastDecision: &AgentDecision{
+			NextAction: "guest_exec",
+			Command:    "whoami",
+		},
+		LastRealUsage: &openai.StreamResult{
+			InputTokens:  1000,
+			CachedTokens: 200,
+			OutputTokens: 100,
+		},
+	}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC))
+	if spec.Activity != tokenledger.ActivityLightWork {
+		t.Fatalf("expected light work preflight for narrow probe, got %s", spec.Activity)
+	}
+}
+
+func TestClassifyGuestExecActivityNarrowProbe(t *testing.T) {
+	if got := classifyGuestExecActivity("uname -a"); got != tokenledger.ActivityLightWork {
+		t.Fatalf("expected light work for narrow probe, got %s", got)
+	}
+	if got := classifyGuestExecActivity("hostnamectl; uname -a"); got != tokenledger.ActivityNormalWork {
+		t.Fatalf("expected normal work for bundled probe, got %s", got)
 	}
 }
 
@@ -578,15 +684,15 @@ func TestRenderBudgetFactsUsesFactsNotDirectives(t *testing.T) {
 		}
 	}
 	for _, required := range []string{
-		"spark_balance_before=4.5000",
 		"spark_balance_after=4.1250",
-		"window_6h_remaining=7200",
+		"effective_window_6h_cap=12000",
+		"effective_window_6h_remaining=7200",
+		"effective_day_remaining=52800",
 		"work_allowed_now=true",
 		"recovery_mode=idle",
-		"state_snapshot=mode:focused pressure:watchful recovery_mode:idle spark:4.1250 fatigue:800 sleep_debt:3",
+		"resident_mode=focused",
+		"resident_pressure=watchful",
 		"next_recovery_at=2026-06-07T09:00:00Z",
-		"next_call_estimated_input_tokens=1150",
-		"next_call_estimated_output_tokens=229",
 	} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("expected budget fact %q in %q", required, joined)
@@ -861,10 +967,10 @@ func TestIncusActionExecutorSelfQuota(t *testing.T) {
 	if !strings.Contains(result.Observation, "self quota snapshot:") {
 		t.Fatalf("expected self quota snapshot, got %q", result.Observation)
 	}
-	if !strings.Contains(result.Observation, "\"resident_id\": \"jade\"") {
+	if !strings.Contains(result.Observation, "resident_id=jade") {
 		t.Fatalf("expected jade resident id in observation, got %q", result.Observation)
 	}
-	if !strings.Contains(result.Observation, "\"recovery_mode\":") {
+	if !strings.Contains(result.Observation, "recovery_mode=") {
 		t.Fatalf("expected recovery mode in observation, got %q", result.Observation)
 	}
 }

@@ -1,7 +1,6 @@
 package newborn
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"ai-arena/internal/broker"
+	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/memory"
 	"ai-arena/internal/tokenledger"
 )
@@ -51,7 +51,7 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 		if strings.TrimSpace(decision.Command) == "" {
 			return ActionResult{Observation: "guest_exec denied: command is required", Activity: tokenledger.ActivityStatusCheck}
 		}
-		return ActionResult{Observation: guestCommand(profile.Instance, decision.Command), Activity: tokenledger.ActivityNormalWork}
+		return ActionResult{Observation: guestCommand(profile.Instance, decision.Command), Activity: classifyGuestExecActivity(decision.Command)}
 	case "self_status":
 		return ActionResult{Observation: e.executeSelfStatus(profile), Activity: tokenledger.ActivityStatusCheck}
 	case "self_quota":
@@ -86,7 +86,7 @@ func (e *IncusActionExecutor) executeSelfStatus(profile ResidentProfile) string 
 	if err != nil {
 		return "self_status failed: " + err.Error()
 	}
-	return renderJSONObservation("self status snapshot", out)
+	return renderResidentStatusObservation(out)
 }
 
 func (e *IncusActionExecutor) executeSelfQuota(profile ResidentProfile) string {
@@ -97,15 +97,68 @@ func (e *IncusActionExecutor) executeSelfQuota(profile ResidentProfile) string {
 	if err != nil {
 		return "self_quota failed: " + err.Error()
 	}
-	return renderJSONObservation("self quota snapshot", out)
+	return renderQuotaObservation(out)
 }
 
-func renderJSONObservation(label string, v any) string {
-	raw, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return fmt.Sprintf("%s failed: marshal json: %v", label, err)
+func renderResidentStatusObservation(status brokerstate.ResidentStatus) string {
+	lines := []string{
+		"self status snapshot:",
+		fmt.Sprintf("resident_id=%s", status.ResidentID),
+		fmt.Sprintf("spark_balance=%.4f", status.SparkBalance),
+		fmt.Sprintf("fatigue=%d", status.Fatigue),
+		fmt.Sprintf("sleep_debt=%d", status.SleepDebt),
+		fmt.Sprintf("debt_active=%t", status.DebtActive),
+		fmt.Sprintf("debt_amount=%.4f", status.DebtAmount),
+		fmt.Sprintf("recovery_mode=%s", compactValue(status.RecoveryMode)),
+		fmt.Sprintf("window_6h=%d/%d", status.Window6HUsed, status.Window6HCap),
+		fmt.Sprintf("effective_window_6h_cap=%d", status.EffectiveWindow6HCap),
+		fmt.Sprintf("day=%d/%d", status.DayUsed, status.DayCap),
+		fmt.Sprintf("effective_day_cap=%d", status.EffectiveDayCap),
+		fmt.Sprintf("week=%d/%d", status.WeekUsed, status.WeekCap),
+		fmt.Sprintf("effective_week_cap=%d", status.EffectiveWeekCap),
+		fmt.Sprintf("next_recovery_at=%s", compactValue(status.NextRecoveryAt)),
 	}
-	return label + ":\n" + string(raw)
+	if !status.LastRecoveryAt.IsZero() {
+		lines = append(lines, fmt.Sprintf("last_recovery_at=%s", status.LastRecoveryAt.UTC().Format(time.RFC3339)))
+	}
+	if len(status.Physiology.SummaryLines) > 0 {
+		limit := status.Physiology.SummaryLines
+		if len(limit) > 2 {
+			limit = limit[:2]
+		}
+		lines = append(lines, "physiology="+compactValue(strings.Join(limit, " | ")))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderQuotaObservation(out broker.QuotaOutput) string {
+	lines := []string{
+		"self quota snapshot:",
+		fmt.Sprintf("resident_id=%s", out.Status.ResidentID),
+		fmt.Sprintf("spark_balance=%.4f", out.Status.SparkBalance),
+		fmt.Sprintf("debt_active=%t", out.Status.DebtActive),
+		fmt.Sprintf("debt_amount=%.4f", out.Status.DebtAmount),
+		fmt.Sprintf("recovery_mode=%s", compactValue(out.Quota.RecoveryMode)),
+		fmt.Sprintf("window_6h_remaining=%d", out.Quota.Window6HRemaining),
+		fmt.Sprintf("effective_window_6h_remaining=%d", out.Quota.EffectiveWindow6HRemaining),
+		fmt.Sprintf("day_remaining=%d", out.Quota.DayRemaining),
+		fmt.Sprintf("effective_day_remaining=%d", out.Quota.EffectiveDayRemaining),
+		fmt.Sprintf("week_remaining=%d", out.Quota.WeekRemaining),
+		fmt.Sprintf("effective_week_remaining=%d", out.Quota.EffectiveWeekRemaining),
+		fmt.Sprintf("work_allowed_now=%t", out.Quota.WorkAllowedNow),
+		fmt.Sprintf("next_recovery_at=%s", compactValue(out.Quota.NextRecoveryAt)),
+	}
+	if reason := compactValue(out.Quota.BlockingReason); reason != "" {
+		lines = append(lines, "blocking_reason="+reason)
+	}
+	if summary := compactValue(out.Quota.BlockingSummary); summary != "" {
+		lines = append(lines, "blocking_summary="+summary)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func compactValue(s string) string {
+	return oneLine(strings.TrimSpace(s))
 }
 
 func (e *IncusActionExecutor) executeMemoryReview(profile ResidentProfile, decision AgentDecision) string {
@@ -172,6 +225,51 @@ func classifyCommandIntent(decision AgentDecision) string {
 	default:
 		return "general_exec"
 	}
+}
+
+func classifyGuestExecActivity(command string) tokenledger.ActivityType {
+	command = strings.TrimSpace(strings.ToLower(command))
+	if command == "" {
+		return tokenledger.ActivityStatusCheck
+	}
+	if isNarrowProbeCommand(command) {
+		return tokenledger.ActivityLightWork
+	}
+	return tokenledger.ActivityNormalWork
+}
+
+func isNarrowProbeCommand(command string) bool {
+	if strings.Contains(command, "&&") || strings.Contains(command, ";") || strings.Contains(command, "|") {
+		return false
+	}
+	command = strings.Join(strings.Fields(command), " ")
+	prefixes := []string{
+		"whoami",
+		"id",
+		"pwd",
+		"uname",
+		"hostname",
+		"hostnamectl",
+		"ls /",
+		"ls -la /",
+		"ls /root",
+		"ls -la /root",
+		"ls /home",
+		"ls -la /home",
+		"free -h",
+		"df -h",
+		"nproc",
+		"ip route",
+		"ip addr",
+		"cat /etc/os-release",
+		"resolvectl status",
+	}
+	for _, prefix := range prefixes {
+		if command == prefix || strings.HasPrefix(command, prefix+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 func guestCommand(instance, script string) string {
