@@ -8,13 +8,13 @@ import (
 	"ai-arena/internal/openai"
 )
 
-func buildDecisionToolPayload(profile ResidentProfile, remainingSec int, state loopState, history []openai.Message, promptCacheKey string) openai.RequestPayload {
+func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, promptCacheKey string) openai.RequestPayload {
 	parallelToolCalls := false
 	return openai.RequestPayload{
 		Model:          profile.Model,
-		Instructions:   makeInstructions(profile, remainingSec, state),
+		Instructions:   makeInstructions(),
 		PromptCacheKey: promptCacheKey,
-		Input:          append([]openai.Message(nil), history...),
+		Input:          append([]openai.Message(nil), input...),
 		Tools: []openai.ResponseTool{
 			{
 				Type:        "function",
@@ -29,7 +29,7 @@ func buildDecisionToolPayload(profile ResidentProfile, remainingSec int, state l
 						},
 						"next_action": map[string]any{
 							"type": "string",
-							"enum": []string{"guest_exec", "write_note", "talk_to_chenglin", "submit_ticket", "noop"},
+							"enum": []string{"guest_exec", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop"},
 						},
 						"reason": map[string]any{
 							"type": "string",
@@ -50,8 +50,28 @@ func buildDecisionToolPayload(profile ResidentProfile, remainingSec int, state l
 							"type": "string",
 							"enum": []string{"", "low", "medium", "high", "urgent"},
 						},
+						"memory_id": map[string]any{
+							"type": "string",
+						},
+						"memory_action": map[string]any{
+							"type": "string",
+							"enum": []string{"", "keep", "rewrite", "compress", "demote", "delete"},
+						},
+						"memory_summary": map[string]any{
+							"type": "string",
+						},
+						"memory_text": map[string]any{
+							"type": "string",
+						},
+						"memory_layer": map[string]any{
+							"type": "string",
+							"enum": []string{"", "instant", "short", "long", "permanent"},
+						},
+						"memory_reason": map[string]any{
+							"type": "string",
+						},
 					},
-					"required":             []string{"situation", "next_action", "reason", "command", "message", "ticket_title", "ticket_body", "ticket_priority"},
+					"required":             []string{"situation", "next_action", "reason", "command", "message", "ticket_title", "ticket_body", "ticket_priority", "memory_id", "memory_action", "memory_summary", "memory_text", "memory_layer", "memory_reason"},
 					"additionalProperties": false,
 				},
 			},
@@ -89,7 +109,7 @@ func validateDecision(decision AgentDecision) error {
 		return fmt.Errorf("missing next_action")
 	}
 	switch decision.NextAction {
-	case "guest_exec", "write_note", "talk_to_chenglin", "submit_ticket", "noop":
+	case "guest_exec", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop":
 	default:
 		return fmt.Errorf("unsupported next_action %q", decision.NextAction)
 	}

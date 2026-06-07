@@ -35,22 +35,21 @@ func (w *WorldBridge) CreateResidentTicket(profile ResidentProfile, title, body,
 func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit int) string {
 	messages, err := w.store.ReadRecentForResident(profile.Name, limit)
 	header := []string{
-		"World messaging rules for you:",
-		"- Chat is free-form and asynchronous.",
-		"- You may send multiple chat messages without waiting.",
-		"- Chenglin may reply later, reply multiple times, or not reply at all.",
-		"- Formal tickets are separate host-decision objects with priority and explicit resolution state.",
-		"- Use chat for ordinary conversation; use tickets for requests that require a clear host decision.",
+		"chat_mode: free-form and asynchronous",
+		"chat_rule: you may send multiple chat messages without waiting",
+		"chat_rule: Chenglin may reply later, reply multiple times, or not reply at all",
+		"ticket_mode: formal host-decision objects with priority and explicit resolution state",
+		"ticket_rule: use chat for ordinary conversation; use tickets for requests that require a clear host decision",
 	}
 	if err != nil || len(messages) == 0 {
-		header = append(header, "Recent world messages involving you: none recorded.")
+		header = append(header, "recent_chat: none recorded")
 		if ticketBlock := w.buildResidentTicketBlock(profile, 6); ticketBlock != "" {
 			header = append(header, ticketBlock)
 		}
 		return strings.Join(header, "\n")
 	}
 
-	lines := append(header, "Recent world messages involving you:")
+	lines := append(header, "recent_chat:")
 	for i := 0; i < len(messages); i++ {
 		msg := messages[i]
 		suffix := ""
@@ -71,10 +70,10 @@ func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit i
 func (w *WorldBridge) buildResidentTicketBlock(profile ResidentProfile, limit int) string {
 	tickets, err := w.store.ReadTickets(profile.Name, "", "", limit)
 	if err != nil || len(tickets) == 0 {
-		return "Recent formal tickets involving you: none recorded."
+		return "recent_tickets: none recorded"
 	}
 
-	lines := []string{"Recent formal tickets involving you:"}
+	lines := []string{"recent_tickets:"}
 	for _, ticket := range tickets {
 		lines = append(lines, fmt.Sprintf("- [%s] ticket=%s priority=%s status=%s needs_reply=%t title=%s preview=%s",
 			ticket.UpdatedAt,

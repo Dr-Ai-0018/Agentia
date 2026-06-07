@@ -61,6 +61,8 @@ type AbstractMemory struct {
 	Resident        string         `json:"resident"`
 	Summary         string         `json:"summary"`
 	ResidentText    string         `json:"resident_text,omitempty"`
+	Tags            []string       `json:"tags,omitempty"`
+	Governance      GovernanceMeta `json:"governance,omitempty"`
 	Semantic        SemanticMemory `json:"semantic,omitempty"`
 	DecisionAction  Action         `json:"decision_action"`
 	SourceRunID     string         `json:"source_run_id,omitempty"`
@@ -77,6 +79,17 @@ type SemanticMemory struct {
 	TimeScope       string `json:"time_scope,omitempty"`
 	RetentionIntent string `json:"retention_intent,omitempty"`
 	DropCondition   string `json:"drop_condition,omitempty"`
+}
+
+type GovernanceMeta struct {
+	Quality       string    `json:"quality,omitempty"`
+	ReviewState   string    `json:"review_state,omitempty"`
+	ReviewReason  string    `json:"review_reason,omitempty"`
+	FlaggedBy     string    `json:"flagged_by,omitempty"`
+	FlaggedAt     time.Time `json:"flagged_at,omitempty"`
+	ResidentMay   []string  `json:"resident_may,omitempty"`
+	HostMay       []string  `json:"host_may,omitempty"`
+	ProtectedFrom []string  `json:"protected_from,omitempty"`
 }
 
 type SnapshotEntry struct {
@@ -102,9 +115,19 @@ type Store interface {
 	ListAbstractMemories(resident string) ([]AbstractMemory, error)
 	UpsertAbstractMemory(record AbstractMemory) error
 	GetAbstractMemory(resident, id string) (AbstractMemory, bool, error)
+	ReviewAbstractMemory(resident, id string, now time.Time, review MemoryReviewRequest) (AbstractMemory, error)
 	ListHistoryGroups(resident string) ([]HistoryGroup, error)
 	UpsertHistoryGroup(group HistoryGroup) error
 	CompactResident(resident string) error
+}
+
+type MemoryReviewRequest struct {
+	Action       Action
+	NewSummary   string
+	NewText      string
+	TargetLayer  Layer
+	ReasonNote   string
+	ResidentNote string
 }
 
 type MemoryStore struct {
@@ -137,6 +160,23 @@ func (s *MemoryStore) GetAbstractMemory(resident, id string) (AbstractMemory, bo
 		}
 	}
 	return AbstractMemory{}, false, nil
+}
+
+func (s *MemoryStore) ReviewAbstractMemory(resident, id string, now time.Time, review MemoryReviewRequest) (AbstractMemory, error) {
+	list := s.abstractMemories[resident]
+	for i := range list {
+		if list[i].ID != id {
+			continue
+		}
+		updated, err := applyMemoryReview(now, list[i], review)
+		if err != nil {
+			return AbstractMemory{}, err
+		}
+		list[i] = updated
+		s.abstractMemories[resident] = list
+		return updated, nil
+	}
+	return AbstractMemory{}, errors.New("memory record not found")
 }
 
 func (s *MemoryStore) UpsertAbstractMemory(record AbstractMemory) error {
@@ -279,6 +319,31 @@ func (s *FileStore) GetAbstractMemory(resident, id string) (AbstractMemory, bool
 		}
 	}
 	return AbstractMemory{}, false, nil
+}
+
+func (s *FileStore) ReviewAbstractMemory(resident, id string, now time.Time, review MemoryReviewRequest) (AbstractMemory, error) {
+	if err := os.MkdirAll(s.root, 0o755); err != nil {
+		return AbstractMemory{}, err
+	}
+	bundle, err := s.loadBundle(resident)
+	if err != nil {
+		return AbstractMemory{}, err
+	}
+	for i := range bundle.AbstractMemories {
+		if bundle.AbstractMemories[i].ID != id {
+			continue
+		}
+		updated, err := applyMemoryReview(now, bundle.AbstractMemories[i], review)
+		if err != nil {
+			return AbstractMemory{}, err
+		}
+		bundle.AbstractMemories[i] = updated
+		if err := s.writeBundle(resident, bundle); err != nil {
+			return AbstractMemory{}, err
+		}
+		return updated, nil
+	}
+	return AbstractMemory{}, errors.New("memory record not found")
 }
 
 func (s *FileStore) UpsertAbstractMemory(record AbstractMemory) error {
@@ -449,6 +514,151 @@ func deriveHardExpiry(now time.Time, layer Layer, expiresAt time.Time) time.Time
 
 func (s *FileStore) Root() string {
 	return s.root
+}
+
+func applyMemoryReview(now time.Time, record AbstractMemory, review MemoryReviewRequest) (AbstractMemory, error) {
+	switch review.Action {
+	case ActionRetain:
+		record.Record = ApplyDecision(now, record.Record, Decision{
+			Action:      ActionRetain,
+			TargetLayer: defaultReviewTargetLayer(record.Layer, review.TargetLayer),
+			ReviewAfter: 24 * time.Hour,
+			ReasonCodes: []string{"resident_review_keep"},
+		})
+		record.Governance.ReviewState = "resolved"
+		record.Governance.ReviewReason = strings.TrimSpace(review.ReasonNote)
+	case ActionUpdate:
+		record.Record = ApplyDecision(now, record.Record, Decision{
+			Action:      ActionUpdate,
+			TargetLayer: defaultReviewTargetLayer(record.Layer, review.TargetLayer),
+			TTL:         ttlForLayer(defaultReviewTargetLayer(record.Layer, review.TargetLayer)),
+			ReviewAfter: 24 * time.Hour,
+			ReasonCodes: []string{"resident_review_rewrite"},
+		})
+		if strings.TrimSpace(review.NewSummary) != "" {
+			record.Summary = strings.TrimSpace(review.NewSummary)
+		}
+		if strings.TrimSpace(review.NewText) != "" {
+			record.ResidentText = strings.TrimSpace(review.NewText)
+		} else if strings.TrimSpace(review.NewSummary) != "" {
+			record.ResidentText = strings.TrimSpace(review.NewSummary)
+		}
+		record.Governance.ReviewState = "resolved"
+		record.Governance.ReviewReason = strings.TrimSpace(review.ReasonNote)
+	case ActionSummarize:
+		record.Record = ApplyDecision(now, record.Record, Decision{
+			Action:      ActionUpdate,
+			TargetLayer: defaultReviewTargetLayer(record.Layer, review.TargetLayer),
+			TTL:         ttlForLayer(defaultReviewTargetLayer(record.Layer, review.TargetLayer)),
+			ReviewAfter: 24 * time.Hour,
+			ReasonCodes: []string{"resident_review_compress"},
+		})
+		if strings.TrimSpace(review.NewSummary) != "" {
+			record.Summary = strings.TrimSpace(review.NewSummary)
+		}
+		if strings.TrimSpace(review.NewText) != "" {
+			record.ResidentText = strings.TrimSpace(review.NewText)
+		} else if strings.TrimSpace(review.NewSummary) != "" {
+			record.ResidentText = strings.TrimSpace(review.NewSummary)
+		}
+		record.Governance.ReviewState = "resolved"
+		record.Governance.ReviewReason = strings.TrimSpace(review.ReasonNote)
+	case ActionDecay:
+		target := defaultDemotionTarget(record.Layer, review.TargetLayer)
+		record.Record = ApplyDecision(now, record.Record, Decision{
+			Action:      ActionDecay,
+			TargetLayer: target,
+			TTL:         ttlForLayer(target),
+			ReasonCodes: []string{"resident_review_demote"},
+		})
+		record.Governance.ReviewState = "resolved"
+		record.Governance.ReviewReason = strings.TrimSpace(review.ReasonNote)
+	case ActionDelete:
+		record.Record = ApplyDecision(now, record.Record, Decision{
+			Action:      ActionDelete,
+			TargetLayer: record.Layer,
+			ReasonCodes: []string{"resident_review_delete"},
+		})
+		record.Governance.ReviewState = "resolved"
+		record.Governance.ReviewReason = strings.TrimSpace(review.ReasonNote)
+	default:
+		return AbstractMemory{}, errors.New("unsupported resident memory review action")
+	}
+	if note := strings.TrimSpace(review.ResidentNote); note != "" {
+		record.Tags = append(record.Tags, "resident_reviewed")
+	}
+	record.Governance.FlaggedBy = "resident"
+	record.Governance.FlaggedAt = now
+	record.Governance.Quality = fallbackReviewQuality(record.Governance.Quality, record)
+	record.Tags = uniqueTrimmed(record.Tags)
+	return record, nil
+}
+
+func fallbackReviewQuality(current string, record AbstractMemory) string {
+	current = strings.TrimSpace(current)
+	if current != "" && current != "low" {
+		return current
+	}
+	if strings.TrimSpace(record.Summary) == "" && strings.TrimSpace(record.ResidentText) == "" {
+		return "low"
+	}
+	if len(strings.TrimSpace(record.Summary)) < 24 && len(strings.TrimSpace(record.ResidentText)) < 24 {
+		return "thin"
+	}
+	return "resident_reviewed"
+}
+
+func defaultReviewTargetLayer(current, requested Layer) Layer {
+	if strings.TrimSpace(string(requested)) != "" {
+		return requested
+	}
+	return current
+}
+
+func defaultDemotionTarget(current, requested Layer) Layer {
+	if strings.TrimSpace(string(requested)) != "" {
+		return requested
+	}
+	switch current {
+	case LayerPermanent:
+		return LayerLong
+	case LayerLong:
+		return LayerShort
+	case LayerShort:
+		return LayerInstant
+	default:
+		return LayerInstant
+	}
+}
+
+func ttlForLayer(layer Layer) time.Duration {
+	switch layer {
+	case LayerInstant:
+		return DefaultPolicy().InstantTTL
+	case LayerShort:
+		return DefaultPolicy().ShortTTL
+	case LayerLong:
+		return DefaultPolicy().LongTTL
+	default:
+		return 0
+	}
+}
+
+func uniqueTrimmed(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func normalizeHistoryGroup(group HistoryGroup) HistoryGroup {

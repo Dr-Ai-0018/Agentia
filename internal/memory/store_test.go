@@ -365,3 +365,114 @@ func TestAbstractMemoryEffectiveSummaryFallbacks(t *testing.T) {
 		t.Fatalf("expected empty fallback with no resident_text, got %q", got)
 	}
 }
+
+func TestReviewAbstractMemoryRewrite(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 6, 7, 6, 0, 0, 0, time.UTC)
+	err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:        "amber-short-1",
+			Layer:     LayerShort,
+			Domain:    DomainLessons,
+			Status:    StatusActive,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident:     "amber",
+		Summary:      "raw-ish summary",
+		ResidentText: "raw-ish resident text",
+		Governance: GovernanceMeta{
+			Quality:     "low",
+			ReviewState: "needs_resident_review",
+		},
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	updated, err := store.ReviewAbstractMemory("amber", "amber-short-1", now.Add(time.Hour), MemoryReviewRequest{
+		Action:     ActionUpdate,
+		NewSummary: "I confirmed root access and a usable local notes surface.",
+		NewText:    "I rewrote this into something I can actually use later.",
+		ReasonNote: "The old version read too much like a raw log.",
+	})
+	if err != nil {
+		t.Fatalf("review memory: %v", err)
+	}
+	if updated.Summary != "I confirmed root access and a usable local notes surface." {
+		t.Fatalf("unexpected summary: %q", updated.Summary)
+	}
+	if updated.Governance.ReviewState != "resolved" {
+		t.Fatalf("expected resolved review state, got %#v", updated.Governance)
+	}
+	if updated.Status != StatusActive {
+		t.Fatalf("expected active status, got %s", updated.Status)
+	}
+}
+
+func TestReviewAbstractMemoryDelete(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 6, 7, 6, 0, 0, 0, time.UTC)
+	err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:        "amber-short-2",
+			Layer:     LayerShort,
+			Domain:    DomainLessons,
+			Status:    StatusActive,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident: "amber",
+		Summary:  "throwaway note",
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	updated, err := store.ReviewAbstractMemory("amber", "amber-short-2", now.Add(time.Hour), MemoryReviewRequest{
+		Action:     ActionDelete,
+		ReasonNote: "I do not want to keep this.",
+	})
+	if err != nil {
+		t.Fatalf("review memory: %v", err)
+	}
+	if updated.Status != StatusDeleted {
+		t.Fatalf("expected deleted status, got %s", updated.Status)
+	}
+	if updated.Governance.ReviewState != "resolved" {
+		t.Fatalf("expected resolved review state, got %#v", updated.Governance)
+	}
+}
+
+func TestReviewAbstractMemoryCompressAlsoRewritesResidentTextByDefault(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 6, 7, 6, 0, 0, 0, time.UTC)
+	err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:        "amber-short-3",
+			Layer:     LayerShort,
+			Domain:    DomainLessons,
+			Status:    StatusActive,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident:     "amber",
+		Summary:      "## raw log",
+		ResidentText: "## raw log with long noisy tail",
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	updated, err := store.ReviewAbstractMemory("amber", "amber-short-3", now.Add(time.Hour), MemoryReviewRequest{
+		Action:     ActionSummarize,
+		NewSummary: "I confirmed network reachability and kept a cleaner carry-forward note.",
+		ReasonNote: "The raw log version was too noisy.",
+	})
+	if err != nil {
+		t.Fatalf("review memory: %v", err)
+	}
+	if updated.ResidentText != "I confirmed network reachability and kept a cleaner carry-forward note." {
+		t.Fatalf("expected resident text to follow compressed summary, got %q", updated.ResidentText)
+	}
+}

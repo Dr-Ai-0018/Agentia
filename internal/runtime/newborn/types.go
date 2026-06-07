@@ -1,6 +1,40 @@
 package newborn
 
-import "ai-arena/internal/brokerstate"
+import (
+	"ai-arena/internal/brokerstate"
+	"ai-arena/internal/memory"
+)
+
+type RecentAction struct {
+	Round       int    `json:"round"`
+	Action      string `json:"action"`
+	Signature   string `json:"signature"`
+	Intent      string `json:"intent,omitempty"`
+	Situation   string `json:"situation,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Observation string `json:"observation,omitempty"`
+	Suppressed  bool   `json:"suppressed,omitempty"`
+}
+
+type ExplorationSurface string
+
+const (
+	SurfaceIdentity   ExplorationSurface = "identity"
+	SurfaceFilesystem ExplorationSurface = "filesystem"
+	SurfaceResources  ExplorationSurface = "resources"
+	SurfaceNetwork    ExplorationSurface = "network"
+	SurfaceServices   ExplorationSurface = "services"
+	SurfacePackages   ExplorationSurface = "packages"
+	SurfaceWorld      ExplorationSurface = "world"
+)
+
+type SurfaceCost string
+
+const (
+	SurfaceCostLow    SurfaceCost = "low"
+	SurfaceCostMedium SurfaceCost = "medium"
+	SurfaceCostHigh   SurfaceCost = "high"
+)
 
 type AgentDecision struct {
 	Situation      string `json:"situation"`
@@ -10,7 +44,41 @@ type AgentDecision struct {
 	TicketTitle    string `json:"ticket_title,omitempty"`
 	TicketBody     string `json:"ticket_body,omitempty"`
 	TicketPriority string `json:"ticket_priority,omitempty"`
+	MemoryID       string `json:"memory_id,omitempty"`
+	MemoryAction   string `json:"memory_action,omitempty"`
+	MemorySummary  string `json:"memory_summary,omitempty"`
+	MemoryText     string `json:"memory_text,omitempty"`
+	MemoryLayer    string `json:"memory_layer,omitempty"`
+	MemoryReason   string `json:"memory_reason,omitempty"`
 	Reason         string `json:"reason"`
+}
+
+func (d AgentDecision) MemoryReviewRequest() memory.MemoryReviewRequest {
+	return memory.MemoryReviewRequest{
+		Action:       mapMemoryReviewAction(d.MemoryAction),
+		NewSummary:   d.MemorySummary,
+		NewText:      d.MemoryText,
+		TargetLayer:  memory.Layer(d.MemoryLayer),
+		ReasonNote:   d.MemoryReason,
+		ResidentNote: d.Reason,
+	}
+}
+
+func mapMemoryReviewAction(action string) memory.Action {
+	switch action {
+	case "keep":
+		return memory.ActionRetain
+	case "rewrite":
+		return memory.ActionUpdate
+	case "compress":
+		return memory.ActionSummarize
+	case "demote":
+		return memory.ActionDecay
+	case "delete":
+		return memory.ActionDelete
+	default:
+		return memory.Action("")
+	}
 }
 
 type BrokerUsageLog struct {
