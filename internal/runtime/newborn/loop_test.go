@@ -447,6 +447,11 @@ func TestRenderBudgetFactsUsesFactsNotDirectives(t *testing.T) {
 			WeekUsed:           11000,
 			BeforeDebtActive:   false,
 			AfterDebtActive:    false,
+			Quota: &brokerstate.QuotaSnapshot{
+				WorkAllowedNow:       true,
+				NextRecoveryAt:       "2026-06-07T09:00:00Z",
+				RecoveryTickMinutes:  15,
+			},
 			AfterStatus: &brokerstate.ResidentStatus{
 				SparkBalance: 4.125,
 				Window6HCap:  12000,
@@ -455,6 +460,8 @@ func TestRenderBudgetFactsUsesFactsNotDirectives(t *testing.T) {
 				DayUsed:      7200,
 				WeekCap:      150000,
 				WeekUsed:     11000,
+				NextRecoveryAt: "2026-06-07T09:00:00Z",
+				RecoveryTickMinutes: 15,
 				DebtAmount:   0,
 			},
 		},
@@ -470,6 +477,8 @@ func TestRenderBudgetFactsUsesFactsNotDirectives(t *testing.T) {
 		"spark_balance_before=4.5000",
 		"spark_balance_after=4.1250",
 		"window_6h_remaining=7200",
+		"work_allowed_now=true",
+		"next_recovery_at=2026-06-07T09:00:00Z",
 		"next_call_estimated_input_tokens=1150",
 		"next_call_estimated_output_tokens=229",
 	} {

@@ -17,6 +17,7 @@ type BrokerService struct {
 type PreparedAdmission struct {
 	ResidentID   string                   `json:"resident_id"`
 	BeforeStatus ResidentStatus           `json:"before_status"`
+	Quota        QuotaSnapshot            `json:"quota"`
 	Prepared     runtimecore.PreparedCall `json:"prepared"`
 	Denied       bool                     `json:"denied"`
 	DeniedReason []string                 `json:"denied_reason,omitempty"`
@@ -33,6 +34,7 @@ type AdmitRequest struct {
 
 type AdmitResponse struct {
 	BeforeStatus ResidentStatus           `json:"before_status"`
+	Quota        QuotaSnapshot            `json:"quota"`
 	Prepared     runtimecore.PreparedCall `json:"prepared"`
 	Applied      bool                     `json:"applied"`
 	AfterStatus  *ResidentStatus          `json:"after_status,omitempty"`
@@ -105,6 +107,7 @@ func (s *BrokerService) AdmitCall(req AdmitRequest) (AdmitResponse, error) {
 
 	resp := AdmitResponse{
 		BeforeStatus: prepared.BeforeStatus,
+		Quota:        prepared.Quota,
 		Prepared:     prepared.Prepared,
 		Denied:       prepared.Denied,
 		DeniedReason: append([]string(nil), prepared.DeniedReason...),
@@ -142,6 +145,7 @@ func (s *BrokerService) PrepareAdmission(residentID string, kind runtimeguard.Ca
 	resp := PreparedAdmission{
 		ResidentID:   residentID,
 		BeforeStatus: status,
+		Quota:        BuildQuotaSnapshot(status),
 		Prepared:     prepared,
 		Denied:       !prepared.Decision.Allowed,
 	}

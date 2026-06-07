@@ -96,6 +96,7 @@ type BrokerUsageLog struct {
 	ApplyReason        string                      `json:"apply_reason,omitempty"`
 	PreparedSparkCost  float64                     `json:"prepared_spark_cost"`
 	PreparedStrainCost int                         `json:"prepared_strain_cost"`
+	Quota              *brokerstate.QuotaSnapshot  `json:"quota,omitempty"`
 	AfterStatus        *brokerstate.ResidentStatus `json:"after_status,omitempty"`
 }
 

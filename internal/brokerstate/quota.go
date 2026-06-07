@@ -16,12 +16,15 @@ type QuotaSnapshot struct {
 	WeekRemaining         int    `json:"week_remaining"`
 	EffectiveWeekCap      int    `json:"effective_week_cap"`
 	EffectiveWeekRemaining int   `json:"effective_week_remaining"`
+	WorkAllowedNow        bool   `json:"work_allowed_now"`
+	BlockingReason        string `json:"blocking_reason,omitempty"`
+	BlockingSummary       string `json:"blocking_summary,omitempty"`
 	NextRecoveryAt        string `json:"next_recovery_at,omitempty"`
 	RecoveryTickMinutes   int    `json:"recovery_tick_minutes"`
 }
 
 func BuildQuotaSnapshot(status ResidentStatus) QuotaSnapshot {
-	return QuotaSnapshot{
+	out := QuotaSnapshot{
 		Window6HCap:              status.Window6HCap,
 		Window6HUsed:             status.Window6HUsed,
 		Window6HRemaining:        maxInt(0, status.Window6HCap-status.Window6HUsed),
@@ -39,5 +42,20 @@ func BuildQuotaSnapshot(status ResidentStatus) QuotaSnapshot {
 		EffectiveWeekRemaining:   maxInt(0, status.EffectiveWeekCap-status.WeekUsed),
 		NextRecoveryAt:           status.NextRecoveryAt,
 		RecoveryTickMinutes:      status.RecoveryTickMinutes,
+	}
+	out.WorkAllowedNow, out.BlockingReason, out.BlockingSummary = quotaAvailability(status, out)
+	return out
+}
+
+func quotaAvailability(status ResidentStatus, snapshot QuotaSnapshot) (bool, string, string) {
+	switch {
+	case status.DebtActive:
+		return false, "spark_debt_active", "Work is locked because spark debt is active."
+	case snapshot.EffectiveWindow6HRemaining <= 0:
+		return false, "effective_window_exhausted", "Work is locked because the current effective 6h quota is exhausted."
+	case status.SparkBalance <= 0:
+		return false, "spark_exhausted", "Work is locked because spark balance is depleted."
+	default:
+		return true, "", ""
 	}
 }

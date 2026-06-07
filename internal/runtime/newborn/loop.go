@@ -99,6 +99,16 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			return FinalReport{}, fmt.Errorf("round %d preflight failed: %w", round, err)
 		}
 		if prepared != nil && prepared.Denied {
+			state.LastBrokerUsage = &BrokerUsageLog{
+				Denied:             true,
+				DeniedReason:       append([]string(nil), prepared.DeniedReason...),
+				BeforeSpark:        prepared.BeforeStatus.SparkBalance,
+				BeforeDebtActive:   prepared.BeforeStatus.DebtActive,
+				PreparedSparkCost:  prepared.Prepared.Cost.SparkCost,
+				PreparedStrainCost: prepared.Prepared.Strain.Rounded,
+				Quota:              &prepared.Quota,
+				AfterStatus:        &prepared.BeforeStatus,
+			}
 			stoppedReason = fmt.Sprintf("broker_preflight_denied: %s", strings.Join(prepared.DeniedReason, ","))
 			break
 		}
@@ -526,6 +536,9 @@ func renderBudgetFacts(state loopState) []string {
 			fmt.Sprintf("effective_window_6h_cap=%d", effectiveWindow),
 			fmt.Sprintf("effective_day_cap=%d", effectiveDay),
 			fmt.Sprintf("effective_week_cap=%d", effectiveWeek),
+			fmt.Sprintf("effective_window_6h_remaining=%d", maxInt(0, effectiveWindow-status.Window6HUsed)),
+			fmt.Sprintf("effective_day_remaining=%d", maxInt(0, effectiveDay-status.DayUsed)),
+			fmt.Sprintf("effective_week_remaining=%d", maxInt(0, effectiveWeek-status.WeekUsed)),
 			fmt.Sprintf("next_recovery_at=%s", status.NextRecoveryAt),
 			fmt.Sprintf("recovery_tick_minutes=%d", status.RecoveryTickMinutes),
 			fmt.Sprintf("debt_amount=%.4f", status.DebtAmount),
@@ -538,6 +551,13 @@ func renderBudgetFacts(state loopState) []string {
 		)
 		for _, line := range status.Physiology.SummaryLines {
 			out = append(out, "physiology_summary="+line)
+		}
+		if state.LastBrokerUsage.Quota != nil {
+			out = append(out,
+				fmt.Sprintf("work_allowed_now=%t", state.LastBrokerUsage.Quota.WorkAllowedNow),
+				fmt.Sprintf("blocking_reason=%s", state.LastBrokerUsage.Quota.BlockingReason),
+				fmt.Sprintf("blocking_summary=%s", state.LastBrokerUsage.Quota.BlockingSummary),
+			)
 		}
 	}
 	if next := projectedNextCallFacts(state); len(next) > 0 {

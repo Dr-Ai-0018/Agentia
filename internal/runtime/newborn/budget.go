@@ -61,6 +61,7 @@ func (b *BudgetController) Settle(profile ResidentProfile, result openai.StreamR
 		BeforeDebtActive:   resp.BeforeStatus.DebtActive,
 		PreparedSparkCost:  resp.Prepared.Cost.SparkCost,
 		PreparedStrainCost: resp.Prepared.Strain.Rounded,
+		Quota:              &resp.Quota,
 	}
 	if resp.ApplyResult != nil {
 		log.SparkDelta = resp.ApplyResult.SparkEntry.SparkDelta
