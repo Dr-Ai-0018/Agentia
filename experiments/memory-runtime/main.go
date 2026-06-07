@@ -4076,6 +4076,7 @@ func buildScenario(name string) ([]event, error) {
 }
 
 func postStream(client *http.Client, baseURL, apiKey string, payload requestPayload, verbose bool) (streamResult, error) {
+	payload.Stream = true
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return streamResult{}, fmt.Errorf("marshal request: %w", err)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-arena/internal/openai"
 	"ai-arena/internal/runtime/newborn"
 )
 
@@ -42,7 +43,11 @@ func main() {
 		exitf("create out dir: %v", err)
 	}
 
-	runner := newborn.NewRunner(&http.Client{Timeout: 5 * time.Minute}, *baseURL, apiKey)
+	client := &http.Client{Timeout: 5 * time.Minute}
+	if err := openai.ProbeResponses(client, *baseURL, apiKey); err != nil {
+		exitf("openai health probe failed: %v", err)
+	}
+	runner := newborn.NewRunner(client, *baseURL, apiKey)
 	report, err := runner.Run(profile, *duration, *outDir, *verbose, *reset)
 	if err != nil {
 		exitf("%v", err)
