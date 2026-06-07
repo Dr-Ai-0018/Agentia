@@ -42,6 +42,7 @@ func main() {
 
 	app := broker.New(".agents")
 	world := worldstate.New(".agents")
+	host := broker.NewHostActionService(".agents")
 
 	switch *mode {
 	case "demo":
@@ -214,7 +215,7 @@ func main() {
 		if err := worldstate.ValidateReplyBody(*body); err != nil {
 			exitf("%v", err)
 		}
-		out, err := world.ReplyToResidentMessage(*messageID, *body, time.Now().UTC())
+		out, err := host.Reply(*messageID, *body)
 		if err != nil {
 			exitf("%v", err)
 		}
@@ -223,7 +224,7 @@ func main() {
 		if *messageID == "" {
 			exitf("message-id is required for ignore mode")
 		}
-		out, err := world.IgnoreResidentMessage(*messageID, time.Now().UTC())
+		out, err := host.Ignore(*messageID)
 		if err != nil {
 			exitf("%v", err)
 		}
@@ -259,7 +260,7 @@ func main() {
 		if *messageID == "" {
 			exitf("message-id is required for ticket-reply mode")
 		}
-		out, err := world.ReplyTicket(*messageID, *body, *closeTicket, time.Now().UTC())
+		out, err := host.ReplyTicket(*messageID, *body, *closeTicket)
 		if err != nil {
 			exitf("%v", err)
 		}
