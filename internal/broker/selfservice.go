@@ -4,18 +4,24 @@ import (
 	"fmt"
 
 	"ai-arena/internal/auth"
+	"ai-arena/internal/audit"
 	"ai-arena/internal/brokerstate"
+	"ai-arena/internal/world"
 )
 
 type SelfService struct {
 	app     *App
 	machine MachineControl
+	audit   *audit.Logger
+	history *world.History
 }
 
 func NewSelfService(app *App) *SelfService {
 	return &SelfService{
 		app:     app,
 		machine: NewIncusMachineControl(),
+		audit:   audit.New(app.root),
+		history: world.New(app.root),
 	}
 }
 

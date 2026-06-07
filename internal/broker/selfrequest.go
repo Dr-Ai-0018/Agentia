@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"ai-arena/internal/auth"
+	"ai-arena/internal/audit"
+	"ai-arena/internal/world"
 	"ai-arena/internal/worldstate"
 )
 
@@ -104,6 +106,17 @@ func (s *SelfService) requestResource(claim auth.ResidentClaim, resource string,
 	if err != nil {
 		return ResourceRequestResult{}, err
 	}
+	_ = s.audit.Write(auditEvent("resident", claim.ResidentID, "resource_request", ticket.ID, fmt.Sprintf("%s requested %s (%s)", claim.ResidentID, resource, amount), map[string]any{
+		"resource": resource,
+		"amount":   amount,
+		"priority": ticket.Priority,
+	}))
+	_ = s.history.Write(historyEntry(claim.ResidentID, "resource_request", fmt.Sprintf("%s requested %s (%s)", claim.ResidentID, resource, amount), map[string]any{
+		"ticket_id": ticket.ID,
+		"resource":  resource,
+		"amount":    amount,
+		"priority":  ticket.Priority,
+	}))
 	return ResourceRequestResult{
 		TicketID:   ticket.ID,
 		ResidentID: claim.ResidentID,
@@ -138,6 +151,13 @@ func (s *SelfService) SubmitResult(claim auth.ResidentClaim, input SubmissionInp
 	if err != nil {
 		return SubmissionResult{}, err
 	}
+	_ = s.audit.Write(auditEvent("resident", claim.ResidentID, "submit_result", message.ID, fmt.Sprintf("%s submitted result: %s", claim.ResidentID, title), map[string]any{
+		"title": title,
+	}))
+	_ = s.history.Write(historyEntry(claim.ResidentID, "submit_result", fmt.Sprintf("%s submitted result: %s", claim.ResidentID, title), map[string]any{
+		"message_id": message.ID,
+		"title":      title,
+	}))
 	return SubmissionResult{
 		MessageID:  message.ID,
 		ResidentID: claim.ResidentID,
@@ -156,5 +176,25 @@ func normalizeUrgency(value string) string {
 		return worldstate.TicketPriorityUrgent
 	default:
 		return worldstate.TicketPriorityMedium
+	}
+}
+
+func auditEvent(actor, residentID, kind, targetID, summary string, metadata map[string]any) audit.Event {
+	return audit.Event{
+		Actor:      actor,
+		ResidentID: residentID,
+		Kind:       kind,
+		TargetID:   targetID,
+		Summary:    summary,
+		Metadata:   metadata,
+	}
+}
+
+func historyEntry(residentID, kind, summary string, details map[string]any) world.HistoryEntry {
+	return world.HistoryEntry{
+		ResidentID: residentID,
+		Kind:       kind,
+		Summary:    summary,
+		Details:    details,
 	}
 }

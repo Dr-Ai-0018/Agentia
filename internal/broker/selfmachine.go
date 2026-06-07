@@ -27,6 +27,10 @@ func (s *SelfService) RequestReboot(claim auth.ResidentClaim) (MachineActionResu
 	if err := s.machine.Reboot(binding.InstanceName); err != nil {
 		return MachineActionResult{}, err
 	}
+	_ = s.audit.Write(auditEvent("resident", claim.ResidentID, "self_reboot", binding.InstanceName, fmt.Sprintf("%s rebooted %s", claim.ResidentID, binding.InstanceName), nil))
+	_ = s.history.Write(historyEntry(claim.ResidentID, "self_reboot", fmt.Sprintf("%s rebooted own VM", claim.ResidentID), map[string]any{
+		"instance_name": binding.InstanceName,
+	}))
 	return MachineActionResult{
 		ResidentID:   claim.ResidentID,
 		InstanceName: binding.InstanceName,
@@ -50,6 +54,13 @@ func (s *SelfService) RequestSnapshot(claim auth.ResidentClaim, snapshotName str
 	if err := s.machine.Snapshot(binding.InstanceName, name); err != nil {
 		return MachineActionResult{}, err
 	}
+	_ = s.audit.Write(auditEvent("resident", claim.ResidentID, "self_snapshot", binding.InstanceName, fmt.Sprintf("%s created snapshot %s", claim.ResidentID, name), map[string]any{
+		"snapshot_name": name,
+	}))
+	_ = s.history.Write(historyEntry(claim.ResidentID, "self_snapshot", fmt.Sprintf("%s created a self snapshot", claim.ResidentID), map[string]any{
+		"instance_name": binding.InstanceName,
+		"snapshot_name": name,
+	}))
 	return MachineActionResult{
 		ResidentID:   claim.ResidentID,
 		InstanceName: binding.InstanceName,
@@ -74,6 +85,13 @@ func (s *SelfService) RequestRestore(claim auth.ResidentClaim, snapshotName stri
 	if err := s.machine.Restore(binding.InstanceName, name); err != nil {
 		return MachineActionResult{}, err
 	}
+	_ = s.audit.Write(auditEvent("resident", claim.ResidentID, "self_restore", binding.InstanceName, fmt.Sprintf("%s restored snapshot %s", claim.ResidentID, name), map[string]any{
+		"snapshot_name": name,
+	}))
+	_ = s.history.Write(historyEntry(claim.ResidentID, "self_restore", fmt.Sprintf("%s restored own VM snapshot", claim.ResidentID), map[string]any{
+		"instance_name": binding.InstanceName,
+		"snapshot_name": name,
+	}))
 	return MachineActionResult{
 		ResidentID:   claim.ResidentID,
 		InstanceName: binding.InstanceName,
