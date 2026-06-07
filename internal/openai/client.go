@@ -21,6 +21,7 @@ type RequestPayload struct {
 	Instructions      string         `json:"instructions"`
 	PromptCacheKey    string         `json:"prompt_cache_key"`
 	Input             []Message      `json:"input"`
+	MaxOutputTokens   int            `json:"max_output_tokens,omitempty"`
 	Tools             []ResponseTool `json:"tools,omitempty"`
 	ToolChoice        any            `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool          `json:"parallel_tool_calls,omitempty"`

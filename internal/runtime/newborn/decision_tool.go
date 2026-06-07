@@ -11,10 +11,11 @@ import (
 func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, promptCacheKey string) openai.RequestPayload {
 	parallelToolCalls := false
 	return openai.RequestPayload{
-		Model:          profile.Model,
-		Instructions:   makeInstructions(),
-		PromptCacheKey: promptCacheKey,
-		Input:          append([]openai.Message(nil), input...),
+		Model:           profile.Model,
+		Instructions:    makeInstructions(),
+		PromptCacheKey:  promptCacheKey,
+		Input:           append([]openai.Message(nil), input...),
+		MaxOutputTokens: 220,
 		Tools: []openai.ResponseTool{
 			{
 				Type:        "function",
@@ -96,6 +97,7 @@ func parseDecisionResult(result openai.StreamResult) (AgentDecision, error) {
 		if err := json.Unmarshal([]byte(item.Arguments), &decision); err != nil {
 			return AgentDecision{}, fmt.Errorf("decode decide_next_action: %w", err)
 		}
+		decision = compactDecision(decision)
 		if err := validateDecision(decision); err != nil {
 			return AgentDecision{}, err
 		}
@@ -114,4 +116,20 @@ func validateDecision(decision AgentDecision) error {
 		return fmt.Errorf("unsupported next_action %q", decision.NextAction)
 	}
 	return nil
+}
+
+func compactDecision(decision AgentDecision) AgentDecision {
+	decision.Situation = truncateForModel(decision.Situation, 220)
+	decision.Reason = truncateForModel(decision.Reason, 220)
+	decision.Command = truncateForModel(decision.Command, 500)
+	decision.Message = truncateForModel(decision.Message, 260)
+	decision.TicketTitle = truncateForModel(decision.TicketTitle, 100)
+	decision.TicketBody = truncateForModel(decision.TicketBody, 320)
+	decision.MemoryID = truncateForModel(decision.MemoryID, 100)
+	decision.MemoryAction = truncateForModel(decision.MemoryAction, 32)
+	decision.MemorySummary = truncateForModel(decision.MemorySummary, 220)
+	decision.MemoryText = truncateForModel(decision.MemoryText, 320)
+	decision.MemoryLayer = truncateForModel(decision.MemoryLayer, 32)
+	decision.MemoryReason = truncateForModel(decision.MemoryReason, 180)
+	return decision
 }

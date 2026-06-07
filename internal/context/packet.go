@@ -99,6 +99,7 @@ func buildSystemConst(identity ResidentIdentity) string {
 		"Do not pretend you already know facts you have not observed.",
 		"Do not fabricate success, certainty, network state, or machine state.",
 		"When blocked by something outside your VM boundary, say so directly and decide whether chat or a formal ticket is the right move.",
+		"When you speak to Chenglin or write a ticket, prefer compact factual wording unless extra nuance is truly necessary.",
 		"You must decide by calling the provided function tool exactly once.",
 		"If you choose guest_exec, command must contain the shell command to run inside your VM.",
 		"If you choose write_note, command must genuinely write or update a note file in your VM.",
@@ -165,35 +166,55 @@ func buildRecentWorkingContext(resident string, working WorkingContext) string {
 		lines = append(lines, fmt.Sprintf("last_reason: %s", oneLine(trimmed)))
 	}
 	if trimmed := strings.TrimSpace(working.LastObservation); trimmed != "" {
-		lines = append(lines, fmt.Sprintf("last_observation: %s", oneLine(trimmed)))
+		lines = append(lines, fmt.Sprintf("last_observation: %s", summarizeObservationLine(trimmed)))
 	}
 	if len(working.RecentActions) > 0 {
 		lines = append(lines, "recent_actions:")
-		for _, item := range working.RecentActions {
+		limit := working.RecentActions
+		if len(limit) > 2 {
+			limit = limit[len(limit)-2:]
+		}
+		for _, item := range limit {
 			lines = append(lines, "- "+oneLine(item))
 		}
 	}
 	if len(working.FrontierStatus) > 0 {
 		lines = append(lines, "exploration_frontier:")
-		for _, item := range working.FrontierStatus {
+		limit := working.FrontierStatus
+		if len(limit) > 4 {
+			limit = limit[:4]
+		}
+		for _, item := range limit {
 			lines = append(lines, "- "+oneLine(item))
 		}
 	}
 	if len(working.BudgetFacts) > 0 {
 		lines = append(lines, "budget_facts:")
-		for _, item := range working.BudgetFacts {
+		limit := working.BudgetFacts
+		if len(limit) > 12 {
+			limit = limit[:12]
+		}
+		for _, item := range limit {
 			lines = append(lines, "- "+oneLine(item))
 		}
 	}
 	if len(working.MemoryReview) > 0 {
 		lines = append(lines, "memory_review_queue:")
-		for _, item := range working.MemoryReview {
+		limit := working.MemoryReview
+		if len(limit) > 2 {
+			limit = limit[:2]
+		}
+		for _, item := range limit {
 			lines = append(lines, "- "+oneLine(item))
 		}
 	}
 	if len(working.FreshWorldUpdates) > 0 {
 		lines = append(lines, "fresh_world_updates:")
-		for _, item := range working.FreshWorldUpdates {
+		limit := working.FreshWorldUpdates
+		if len(limit) > 2 {
+			limit = limit[:2]
+		}
+		for _, item := range limit {
 			lines = append(lines, "- "+oneLine(item))
 		}
 	}
@@ -228,8 +249,16 @@ func oneLine(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 280 {
-		return s[:280] + "..."
+	if len(s) > 180 {
+		return s[:180] + "..."
+	}
+	return s
+}
+
+func summarizeObservationLine(s string) string {
+	s = oneLine(s)
+	if len(s) > 120 {
+		return s[:120] + "..."
 	}
 	return s
 }

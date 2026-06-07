@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	maxObservationHistoryChars = 2200
-	maxObservationHistoryLines = 80
+	maxObservationHistoryChars = 1200
+	maxObservationHistoryLines = 40
 )
 
 func compactObservationForHistory(observation string) string {
@@ -42,4 +42,15 @@ func compactObservationForHistory(observation string) string {
 	}
 
 	return compacted
+}
+
+func truncateForModel(s string, limit int) string {
+	s = strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+	if limit <= 0 || len(s) <= limit {
+		return s
+	}
+	if limit <= 3 {
+		return s[:limit]
+	}
+	return strings.TrimSpace(s[:limit-3]) + "..."
 }

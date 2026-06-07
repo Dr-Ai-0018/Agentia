@@ -3,6 +3,7 @@ package newborn
 import (
 	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/memory"
+	"strings"
 )
 
 type RecentAction struct {
@@ -53,6 +54,41 @@ type AgentDecision struct {
 	Reason         string `json:"reason"`
 }
 
+func (d AgentDecision) CompactForHistory() string {
+	parts := []string{}
+	if v := truncateForModel(strings.TrimSpace(d.Situation), 160); v != "" {
+		parts = append(parts, "situation="+v)
+	}
+	if v := truncateForModel(strings.TrimSpace(d.Reason), 160); v != "" {
+		parts = append(parts, "reason="+v)
+	}
+	switch d.NextAction {
+	case "guest_exec", "write_note":
+		if v := truncateForModel(strings.TrimSpace(d.Command), 200); v != "" {
+			parts = append(parts, "command="+v)
+		}
+	case "talk_to_chenglin":
+		if v := truncateForModel(strings.TrimSpace(d.Message), 180); v != "" {
+			parts = append(parts, "message="+v)
+		}
+	case "submit_ticket":
+		if v := truncateForModel(strings.TrimSpace(d.TicketTitle), 80); v != "" {
+			parts = append(parts, "ticket_title="+v)
+		}
+		if v := truncateForModel(strings.TrimSpace(d.TicketBody), 180); v != "" {
+			parts = append(parts, "ticket_body="+v)
+		}
+	case "memory_review":
+		if v := truncateForModel(strings.TrimSpace(d.MemoryID), 80); v != "" {
+			parts = append(parts, "memory_id="+v)
+		}
+		if v := truncateForModel(strings.TrimSpace(d.MemoryAction), 40); v != "" {
+			parts = append(parts, "memory_action="+v)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 func (d AgentDecision) MemoryReviewRequest() memory.MemoryReviewRequest {
 	return memory.MemoryReviewRequest{
 		Action:       mapMemoryReviewAction(d.MemoryAction),
@@ -77,7 +113,7 @@ func mapMemoryReviewAction(action string) memory.Action {
 	case "delete":
 		return memory.ActionDelete
 	default:
-	return memory.Action("")
+		return memory.Action("")
 	}
 }
 

@@ -29,10 +29,10 @@ func TestBuildProfile(t *testing.T) {
 
 func TestPreflightSpecBootstrap(t *testing.T) {
 	spec := preflightSpec(ResidentProfile{Name: "amber", Model: "gpt-5.5"}, loopState{}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC))
-	if spec.Usage.InputTokens != 1400 {
+	if spec.Usage.InputTokens != 1100 {
 		t.Fatalf("unexpected bootstrap input: %d", spec.Usage.InputTokens)
 	}
-	if spec.Usage.OutputTokens != 350 {
+	if spec.Usage.OutputTokens != 260 {
 		t.Fatalf("unexpected bootstrap output: %d", spec.Usage.OutputTokens)
 	}
 }
@@ -45,14 +45,14 @@ func TestPreflightSpecFromLastUsage(t *testing.T) {
 			OutputTokens: 300,
 		},
 	}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC))
-	if spec.Usage.InputTokens < 1000 {
-		t.Fatalf("expected inflated input tokens")
+	if spec.Usage.InputTokens != 1050 {
+		t.Fatalf("unexpected estimated input tokens: %d", spec.Usage.InputTokens)
 	}
-	if spec.Usage.CachedTokens != 200 {
+	if spec.Usage.CachedTokens != 204 {
 		t.Fatalf("unexpected cached tokens: %d", spec.Usage.CachedTokens)
 	}
-	if spec.Usage.OutputTokens < 300 {
-		t.Fatalf("expected inflated output tokens")
+	if spec.Usage.OutputTokens != 315 {
+		t.Fatalf("unexpected estimated output tokens: %d", spec.Usage.OutputTokens)
 	}
 }
 
@@ -298,6 +298,30 @@ func TestBuildResidentMemoryDigestReadsStoredMemories(t *testing.T) {
 	}
 }
 
+func TestShouldDelayMemoryReviewDuringNewbornOrientation(t *testing.T) {
+	if !shouldDelayMemoryReview(loopState{}) {
+		t.Fatalf("expected delay with no recent actions")
+	}
+
+	state := loopState{
+		RecentActions: []RecentAction{
+			{Action: "guest_exec", Signature: "guest_exec: whoami hostname uname -a", Observation: "hostname kernel os-release"},
+			{Action: "guest_exec", Signature: "guest_exec: ls -la / find /root", Observation: "arena-notes"},
+			{Action: "guest_exec", Signature: "guest_exec: df -h free -h nproc", Observation: "memory disk cpu"},
+			{Action: "guest_exec", Signature: "guest_exec: ip addr ip route resolv.conf curl", Observation: "network"},
+		},
+		UsedActions: map[string]int{"guest_exec": 4},
+	}
+	if !shouldDelayMemoryReview(state) {
+		t.Fatalf("expected delay before self sensing has happened")
+	}
+
+	state.UsedActions["self_quota"] = 1
+	if shouldDelayMemoryReview(state) {
+		t.Fatalf("expected review queue to unlock after self sensing")
+	}
+}
+
 func TestShortReflectionCooldownSkipsAdjacentRounds(t *testing.T) {
 	runner := NewRunner(nil, "", "")
 	state := loopState{
@@ -426,6 +450,9 @@ func TestDetectExplorationSurfacesAndNextFrontier(t *testing.T) {
 	if !ok || next != SurfaceNetwork {
 		t.Fatalf("expected next frontier network, got %q ok=%v", next, ok)
 	}
+	if preferredProbeShape(next) == "" {
+		t.Fatalf("expected probe shape guidance for next frontier")
+	}
 }
 
 func TestRenderExplorationFrontierIncludesCompletionFlag(t *testing.T) {
@@ -444,6 +471,9 @@ func TestRenderExplorationFrontierIncludesCompletionFlag(t *testing.T) {
 	}
 	if !strings.Contains(joined, "next_preferred_surface=services") {
 		t.Fatalf("expected services as next frontier in %q", joined)
+	}
+	if !strings.Contains(joined, "next_probe_shape=") {
+		t.Fatalf("expected probe shape guidance in %q", joined)
 	}
 }
 
@@ -791,7 +821,7 @@ func TestIncusActionExecutorMemoryReview(t *testing.T) {
 		t.Fatalf("upsert memory: %v", err)
 	}
 
-	observation := exec.Execute(ResidentProfile{Name: "amber"}, AgentDecision{
+	result := exec.Execute(ResidentProfile{Name: "amber"}, AgentDecision{
 		NextAction:    "memory_review",
 		MemoryID:      "amber-short-legacy",
 		MemoryAction:  "rewrite",
@@ -799,8 +829,8 @@ func TestIncusActionExecutorMemoryReview(t *testing.T) {
 		MemoryReason:  "The previous version was too raw.",
 		Reason:        "I want a useful short memory.",
 	})
-	if !strings.Contains(observation, "memory review applied:") {
-		t.Fatalf("expected memory review observation, got %q", observation)
+	if !strings.Contains(result.Observation, "memory review applied:") {
+		t.Fatalf("expected memory review observation, got %q", result.Observation)
 	}
 	updated, ok, err := exec.memories.GetAbstractMemory("amber", "amber-short-legacy")
 	if err != nil || !ok {
@@ -824,18 +854,18 @@ func TestIncusActionExecutorSelfQuota(t *testing.T) {
 		memories: memory.NewFileStore(filepath.Join(dir, ".agents", "memory")),
 		broker:   app,
 	}
-	observation := exec.Execute(ResidentProfile{Name: "jade"}, AgentDecision{
+	result := exec.Execute(ResidentProfile{Name: "jade"}, AgentDecision{
 		NextAction: "self_quota",
 		Reason:     "exact broker quota facts are more reliable than shell inference",
 	})
-	if !strings.Contains(observation, "self quota snapshot:") {
-		t.Fatalf("expected self quota snapshot, got %q", observation)
+	if !strings.Contains(result.Observation, "self quota snapshot:") {
+		t.Fatalf("expected self quota snapshot, got %q", result.Observation)
 	}
-	if !strings.Contains(observation, "\"resident_id\": \"jade\"") {
-		t.Fatalf("expected jade resident id in observation, got %q", observation)
+	if !strings.Contains(result.Observation, "\"resident_id\": \"jade\"") {
+		t.Fatalf("expected jade resident id in observation, got %q", result.Observation)
 	}
-	if !strings.Contains(observation, "\"recovery_mode\":") {
-		t.Fatalf("expected recovery mode in observation, got %q", observation)
+	if !strings.Contains(result.Observation, "\"recovery_mode\":") {
+		t.Fatalf("expected recovery mode in observation, got %q", result.Observation)
 	}
 }
 

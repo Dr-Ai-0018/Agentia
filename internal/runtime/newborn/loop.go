@@ -125,11 +125,6 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			return FinalReport{}, fmt.Errorf("round %d request failed: %w", round, err)
 		}
 
-		brokerLog, err := r.budget.Settle(profile, result, roundNow, runtimeguard.CallKindWork, tokenledger.ActivityNormalWork)
-		if err != nil {
-			return FinalReport{}, fmt.Errorf("round %d broker settlement failed: %w", round, err)
-		}
-
 		decision, err := parseDecisionResult(result)
 		if err != nil {
 			decision = AgentDecision{
@@ -139,7 +134,12 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				Reason:     "fallback to safe self inspection",
 			}
 		}
-		observation := r.actions.Execute(profile, decision)
+		actionResult := r.actions.Execute(profile, decision)
+		observation := actionResult.Observation
+		brokerLog, err := r.budget.Settle(profile, result, roundNow, runtimeguard.CallKindWork, actionResult.Activity)
+		if err != nil {
+			return FinalReport{}, fmt.Errorf("round %d broker settlement failed: %w", round, err)
+		}
 		state.RecentActions = appendRecentAction(state.RecentActions, RecentAction{
 			Round:       round,
 			Action:      decision.NextAction,
@@ -167,7 +167,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		state = updatedState
 
 		history = append(history,
-			openai.Message{Role: "assistant", Content: result.OutputText},
+			openai.Message{Role: "assistant", Content: "Decision summary:\n" + decision.CompactForHistory()},
 			openai.Message{Role: "user", Content: "Observation result:\n" + compactObservationForHistory(observation)},
 		)
 
@@ -220,6 +220,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 func (r *Runner) buildContextPacket(profile ResidentProfile, remaining int, state loopState) context.Packet {
 	worldView := r.world.BuildResidentWorldView(profile, 6)
 	memoryDigest := r.buildResidentMemoryDigest(profile)
+	memoryReview := r.renderMemoryReviewQueue(profile, state)
 	working := context.WorkingContext{
 		RemainingSeconds:  remaining,
 		UsedActions:       state.UsedActions,
@@ -229,7 +230,7 @@ func (r *Runner) buildContextPacket(profile ResidentProfile, remaining int, stat
 		RecentActions:     renderRecentActions(state.RecentActions),
 		FrontierStatus:    renderExplorationFrontier(state),
 		BudgetFacts:       renderBudgetFacts(state),
-		MemoryReview:      r.renderMemoryReviewQueue(profile),
+		MemoryReview:      memoryReview,
 		FreshWorldUpdates: worldView.FreshDeliveredItems,
 	}
 	if state.LastDecision != nil {
@@ -377,7 +378,10 @@ func fallbackGovernanceQuality(v string) string {
 	return v
 }
 
-func (r *Runner) renderMemoryReviewQueue(profile ResidentProfile) []string {
+func (r *Runner) renderMemoryReviewQueue(profile ResidentProfile, state loopState) []string {
+	if shouldDelayMemoryReview(state) {
+		return []string{"memory_review_queue: deferred during newborn orientation until the local baseline is steadier"}
+	}
 	records, err := r.memories.ListAbstractMemories(profile.Name)
 	if err != nil {
 		return nil
@@ -393,6 +397,20 @@ func (r *Runner) renderMemoryReviewQueue(profile ResidentProfile) []string {
 		}
 	}
 	return lines
+}
+
+func shouldDelayMemoryReview(state loopState) bool {
+	if len(state.RecentActions) < 2 {
+		return true
+	}
+	surfaces := detectExplorationSurfaces(state.RecentActions)
+	if !baselineCaptureComplete(surfaces) {
+		return true
+	}
+	if state.LastBrokerUsage != nil && state.LastBrokerUsage.Quota != nil && !state.LastBrokerUsage.Quota.WorkAllowedNow {
+		return false
+	}
+	return state.UsedActions["self_quota"] == 0 && state.UsedActions["self_status"] == 0
 }
 
 func renderRecentActions(actions []RecentAction) []string {
@@ -429,6 +447,7 @@ func renderExplorationFrontier(state loopState) []string {
 	}
 	if next, ok := nextUnexploredSurface(surfaces, budgetTier(state)); ok {
 		out = append(out, fmt.Sprintf("next_preferred_surface=%s", next))
+		out = append(out, fmt.Sprintf("next_probe_shape=%s", preferredProbeShape(next)))
 	}
 	if baselineCaptureComplete(surfaces) {
 		out = append(out, "baseline_capture_complete=true")
@@ -669,6 +688,27 @@ func surfaceCost(surface ExplorationSurface) SurfaceCost {
 	}
 }
 
+func preferredProbeShape(surface ExplorationSurface) string {
+	switch surface {
+	case SurfaceIdentity:
+		return "single identity probe such as whoami or hostname"
+	case SurfaceFilesystem:
+		return "single filesystem probe such as ls of one important path"
+	case SurfaceResources:
+		return "single resource probe such as free -h or df -h /"
+	case SurfaceNetwork:
+		return "single network probe such as ip route or one short curl/ping check"
+	case SurfaceServices:
+		return "single service probe such as ps aux | head or systemctl list-units --type=service --state=running"
+	case SurfacePackages:
+		return "single package probe such as apt sources or one dpkg query"
+	case SurfaceWorld:
+		return "single world action such as one compact chat message or one ticket"
+	default:
+		return "single narrow reversible probe"
+	}
+}
+
 func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time) broker.CallSpec {
 	if state.LastRealUsage == nil {
 		return broker.SpecFromUsage(
@@ -688,12 +728,12 @@ func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time
 		)
 	}
 
-	estimateInput := inflateInt(state.LastRealUsage.InputTokens, 1.15)
-	estimateCached := state.LastRealUsage.CachedTokens
+	estimateInput := inflateInt(state.LastRealUsage.InputTokens, 1.05)
+	estimateCached := inflateInt(state.LastRealUsage.CachedTokens, 1.02)
 	if estimateCached > estimateInput {
 		estimateCached = estimateInput
 	}
-	estimateOutput := inflateInt(state.LastRealUsage.OutputTokens, 1.15)
+	estimateOutput := inflateInt(state.LastRealUsage.OutputTokens, 1.05)
 	return broker.SpecFromUsage(
 		runtimeguard.CallKindWork,
 		tokenledger.Usage{
@@ -714,22 +754,22 @@ func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time
 func modelBootstrapInput(model string) int {
 	switch model {
 	case "gpt-5.5":
-		return 1400
-	case "gpt-5.4":
 		return 1100
-	default:
+	case "gpt-5.4":
 		return 900
+	default:
+		return 720
 	}
 }
 
 func modelBootstrapOutput(model string) int {
 	switch model {
 	case "gpt-5.5":
-		return 350
+		return 260
 	case "gpt-5.4":
-		return 280
-	default:
 		return 220
+	default:
+		return 180
 	}
 }
 

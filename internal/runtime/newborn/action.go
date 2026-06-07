@@ -11,10 +11,16 @@ import (
 
 	"ai-arena/internal/broker"
 	"ai-arena/internal/memory"
+	"ai-arena/internal/tokenledger"
 )
 
 type ActionExecutor interface {
-	Execute(profile ResidentProfile, decision AgentDecision) string
+	Execute(profile ResidentProfile, decision AgentDecision) ActionResult
+}
+
+type ActionResult struct {
+	Observation string
+	Activity    tokenledger.ActivityType
 }
 
 type IncusActionExecutor struct {
@@ -31,44 +37,44 @@ func NewIncusActionExecutor() *IncusActionExecutor {
 	}
 }
 
-func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDecision) string {
+func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDecision) ActionResult {
 	if suppressed, reason := suppressDuplicateAction(profile, decision); suppressed {
-		return reason
+		return ActionResult{Observation: reason, Activity: tokenledger.ActivityStatusCheck}
 	}
 	switch decision.NextAction {
 	case "write_note":
 		if strings.TrimSpace(decision.Command) == "" {
-			return "write_note denied: command is required and must contain the actual note-writing command"
+			return ActionResult{Observation: "write_note denied: command is required and must contain the actual note-writing command", Activity: tokenledger.ActivityStatusCheck}
 		}
-		return guestCommand(profile.Instance, decision.Command)
+		return ActionResult{Observation: guestCommand(profile.Instance, decision.Command), Activity: tokenledger.ActivityLightWork}
 	case "guest_exec":
 		if strings.TrimSpace(decision.Command) == "" {
-			return "guest_exec denied: command is required"
+			return ActionResult{Observation: "guest_exec denied: command is required", Activity: tokenledger.ActivityStatusCheck}
 		}
-		return guestCommand(profile.Instance, decision.Command)
+		return ActionResult{Observation: guestCommand(profile.Instance, decision.Command), Activity: tokenledger.ActivityNormalWork}
 	case "self_status":
-		return e.executeSelfStatus(profile)
+		return ActionResult{Observation: e.executeSelfStatus(profile), Activity: tokenledger.ActivityStatusCheck}
 	case "self_quota":
-		return e.executeSelfQuota(profile)
+		return ActionResult{Observation: e.executeSelfQuota(profile), Activity: tokenledger.ActivityStatusCheck}
 	case "talk_to_chenglin":
 		if strings.TrimSpace(decision.Message) == "" {
-			return "talk_to_chenglin denied: message is required"
+			return ActionResult{Observation: "talk_to_chenglin denied: message is required", Activity: tokenledger.ActivityLightWork}
 		}
 		observation, err := e.world.RecordResidentMessage(profile, decision.Message, time.Now().UTC())
 		if err != nil {
-			return "talk_to_chenglin failed: " + err.Error()
+			return ActionResult{Observation: "talk_to_chenglin failed: " + err.Error(), Activity: tokenledger.ActivityLightWork}
 		}
-		return observation
+		return ActionResult{Observation: observation, Activity: tokenledger.ActivityLightWork}
 	case "submit_ticket":
 		observation, err := e.world.CreateResidentTicket(profile, decision.TicketTitle, decision.TicketBody, decision.TicketPriority, time.Now().UTC())
 		if err != nil {
-			return "submit_ticket failed: " + err.Error()
+			return ActionResult{Observation: "submit_ticket failed: " + err.Error(), Activity: tokenledger.ActivityLightWork}
 		}
-		return observation
+		return ActionResult{Observation: observation, Activity: tokenledger.ActivityLightWork}
 	case "memory_review":
-		return e.executeMemoryReview(profile, decision)
+		return ActionResult{Observation: e.executeMemoryReview(profile, decision), Activity: tokenledger.ActivityLightWork}
 	default:
-		return "no operation executed"
+		return ActionResult{Observation: "no operation executed", Activity: tokenledger.ActivityStatusCheck}
 	}
 }
 
