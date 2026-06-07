@@ -7,10 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"ai-arena/internal/broker"
 	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/context"
 	"ai-arena/internal/memory"
 	"ai-arena/internal/openai"
+	"ai-arena/internal/runtimeguard"
+	"ai-arena/internal/tokenledger"
 	"ai-arena/internal/worldstate"
 )
 
@@ -216,6 +219,33 @@ func TestRecordRoundMemoryWritesHistoryGroupAndShortReflection(t *testing.T) {
 	}
 	if len(records[0].SourceGroupIDs) != 1 || records[0].SourceGroupIDs[0] != state.RunGroupID {
 		t.Fatalf("expected source group id %q, got %#v", state.RunGroupID, records[0].SourceGroupIDs)
+	}
+}
+
+func TestBudgetControllerPreflightAutoRecoversToNow(t *testing.T) {
+	dir := t.TempDir()
+	app := broker.New(dir)
+	controller := NewBudgetController(app)
+	start := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	if err := controller.ResetResident("jade", start); err != nil {
+		t.Fatalf("reset resident: %v", err)
+	}
+	if _, err := app.RunAdmitSpec("jade", broker.CallSpec{
+		Kind: runtimeguard.CallKindWork,
+		Usage: openaiUsage(300, 0, 120, "gpt-5.4-mini", "preflight_recover_seed", start.Add(time.Minute)),
+		Penalties: tokenledger.Penalties{},
+		Activity:  tokenledger.ActivityNormalWork,
+	}, true); err != nil {
+		t.Fatalf("seed admit: %v", err)
+	}
+
+	prepared, err := controller.Preflight(ResidentProfile{Name: "jade", Model: "gpt-5.4-mini"}, loopState{}, start.Add(30*time.Minute))
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if prepared.BeforeStatus.LastRecoveryAt.Before(start.Add(30 * time.Minute)) {
+		t.Fatalf("expected last recovery at to advance before preflight")
 	}
 }
 
@@ -624,6 +654,19 @@ func TestBuildResidentMemoryDigestIncludesGovernanceQueue(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(digest.Governance, "\n"), "resident_options=keep|rewrite|compress|demote|delete") {
 		t.Fatalf("expected resident governance options in %#v", digest.Governance)
+	}
+}
+
+func openaiUsage(input, cached, output int, model, responseID string, startedAt time.Time) tokenledger.Usage {
+	return tokenledger.Usage{
+		InputTokens:  input,
+		CachedTokens: cached,
+		OutputTokens: output,
+		TotalTokens:  input + output,
+		Model:        model,
+		ResponseID:   responseID,
+		StartedAt:    startedAt,
+		FinishedAt:   startedAt.Add(2 * time.Second),
 	}
 }
 

@@ -183,3 +183,23 @@ func TestAppRunQuota(t *testing.T) {
 		t.Fatalf("expected 15 minute recovery tick")
 	}
 }
+
+func TestAppRunRecoverToNow(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	if _, err := app.RunReset("jade", now); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	out, err := app.RunRecoverToNow("jade", now.Add(30*time.Minute))
+	if err != nil {
+		t.Fatalf("recover to now: %v", err)
+	}
+	if out.Status.LastRecoveryAt.Before(now.Add(30 * time.Minute)) {
+		t.Fatalf("expected last recovery at to advance to or beyond target time")
+	}
+	if out.Status.NextRecoveryAt == "" {
+		t.Fatalf("expected next recovery timestamp")
+	}
+}

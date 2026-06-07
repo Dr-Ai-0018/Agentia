@@ -24,6 +24,9 @@ func (b *BudgetController) ResetResident(residentID string, now time.Time) error
 }
 
 func (b *BudgetController) Preflight(profile ResidentProfile, state loopState, startedAt time.Time) (*brokerstate.PreparedAdmission, error) {
+	if _, err := b.brokerApp.RunRecoverToNow(profile.Name, startedAt); err != nil {
+		return nil, err
+	}
 	spec := preflightSpec(profile, state, startedAt)
 	prepared, err := b.brokerApp.RunPrepareSpec(profile.Name, spec)
 	if err != nil {

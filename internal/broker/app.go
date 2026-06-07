@@ -172,6 +172,27 @@ func (a *App) RunRecover(residentID string, hours float64, now time.Time) (Recov
 	}, nil
 }
 
+func (a *App) RunRecoverToNow(residentID string, now time.Time) (RecoveryOutput, error) {
+	service := a.service(false)
+	status, err := service.SelfStatus(residentID)
+	if err != nil {
+		return RecoveryOutput{}, err
+	}
+	target := now
+	if !status.LastRecoveryAt.IsZero() && target.Before(status.LastRecoveryAt) {
+		target = status.LastRecoveryAt
+	}
+	updatedStatus, tick, path, err := service.RecoveryTick(residentID, target)
+	if err != nil {
+		return RecoveryOutput{}, err
+	}
+	return RecoveryOutput{
+		Status:       updatedStatus,
+		Recovery:     tick,
+		SnapshotPath: path,
+	}, nil
+}
+
 func (a *App) RunReset(residentID string, now time.Time) (ResetOutput, error) {
 	status, path, err := a.service(false).ResetResident(residentID, now)
 	if err != nil {
