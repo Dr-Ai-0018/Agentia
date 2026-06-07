@@ -12,7 +12,7 @@ import (
 func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
 	engine := New(Config{
-		TokenPolicy:    tokenledger.DefaultConfig(),
+		TokenPolicy: tokenledger.DefaultConfig(),
 		RecoveryPolicy: recovery.Policy{
 			SparkRecoveryPerHour:     0.2,
 			StrainRecoveryPerHour:    100,
@@ -21,8 +21,8 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 			FatigueRecoveryPerHour:   180,
 			SleepDebtRecoveryPerHour: 2,
 		},
-		ReserveSpark:   0.08,
-		ReserveStrain:  300,
+		ReserveSpark:  0.08,
+		ReserveStrain: 300,
 	}, "jade", tokenledger.QuotaState{
 		Window6HCap:  4000,
 		Window6HUsed: 300,
@@ -128,5 +128,28 @@ func TestSnapshotAndRestore(t *testing.T) {
 	}
 	if restored.SparkLedger().Account().Balance != 1.2345 {
 		t.Fatalf("spark balance mismatch after restore")
+	}
+}
+
+func TestTickRecoveryPersistsMode(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{
+		TokenPolicy:    tokenledger.DefaultConfig(),
+		RecoveryPolicy: recovery.Policy{ActivityMultipliers: map[string]float64{"idle": 1.0, "rest": 1.5}},
+	}, "jade", tokenledger.QuotaState{Window6HCap: 4000}, start)
+
+	engine.SetRecoveryMode("rest")
+	tick := engine.TickRecovery(start.Add(time.Hour))
+	if tick.RecoveryMode != "rest" {
+		t.Fatalf("tick recovery mode = %s", tick.RecoveryMode)
+	}
+	if engine.State().RecoveryMode != "rest" {
+		t.Fatalf("engine recovery mode = %s", engine.State().RecoveryMode)
+	}
+
+	snapshot := engine.Snapshot(start.Add(time.Hour))
+	restored := Restore(engine.cfg, snapshot)
+	if restored.State().RecoveryMode != "rest" {
+		t.Fatalf("restored recovery mode = %s", restored.State().RecoveryMode)
 	}
 }

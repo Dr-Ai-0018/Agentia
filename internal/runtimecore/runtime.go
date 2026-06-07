@@ -25,6 +25,7 @@ type ResidentState struct {
 	DebtActive      bool
 	DebtAmount      float64
 	FinalNoticeUsed bool
+	RecoveryMode    string
 	LastRecoveryAt  time.Time
 }
 
@@ -55,6 +56,7 @@ func New(cfg Config, residentID string, quota tokenledger.QuotaState, startedAt 
 		state: ResidentState{
 			ResidentID:     residentID,
 			Quota:          quota,
+			RecoveryMode:   "idle",
 			LastRecoveryAt: startedAt,
 		},
 		spark: sparkledger.New(residentID),
@@ -66,7 +68,9 @@ func (e *Engine) SparkLedger() *sparkledger.Ledger {
 }
 
 func (e *Engine) State() ResidentState {
-	return e.state
+	state := e.state
+	state.RecoveryMode = normalizeRecoveryMode(state.RecoveryMode)
+	return state
 }
 
 func (e *Engine) PrepareCall(kind runtimeguard.CallKind, usage tokenledger.Usage, penalties tokenledger.Penalties) (PreparedCall, error) {
@@ -159,6 +163,7 @@ func (e *Engine) TickRecovery(now time.Time) recovery.TickResult {
 		SleepDebt:    e.state.SleepDebt,
 		DebtActive:   e.state.DebtActive,
 		DebtAmount:   e.state.DebtAmount,
+		RecoveryMode: e.state.RecoveryMode,
 		LastTickAt:   e.state.LastRecoveryAt,
 	}, now)
 
@@ -167,6 +172,7 @@ func (e *Engine) TickRecovery(now time.Time) recovery.TickResult {
 	e.state.SleepDebt = tick.SleepDebtAfter
 	e.state.DebtActive = tick.DebtActive
 	e.state.DebtAmount = tick.DebtAmount
+	e.state.RecoveryMode = tick.RecoveryMode
 	e.state.LastRecoveryAt = now
 
 	currentUnits := e.spark.Account().BalanceUnits
@@ -179,6 +185,19 @@ func (e *Engine) TickRecovery(now time.Time) recovery.TickResult {
 	}
 
 	return tick
+}
+
+func (e *Engine) SetRecoveryMode(mode string) {
+	e.state.RecoveryMode = normalizeRecoveryMode(mode)
+}
+
+func normalizeRecoveryMode(mode string) string {
+	switch mode {
+	case "rest", "idle", "normal", "deep":
+		return mode
+	default:
+		return "idle"
+	}
 }
 
 func sleepDebtGain(activity tokenledger.ActivityType, fatigueGain int) int {

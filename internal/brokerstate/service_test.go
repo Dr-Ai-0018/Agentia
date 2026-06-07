@@ -57,6 +57,9 @@ func TestBrokerServiceSelfStatus(t *testing.T) {
 	if status.RecoveryTickMinutes != 15 {
 		t.Fatalf("expected 15 minute recovery tick")
 	}
+	if status.RecoveryMode != "idle" {
+		t.Fatalf("expected default recovery mode idle, got %s", status.RecoveryMode)
+	}
 }
 
 func TestBrokerServiceRecoveryTick(t *testing.T) {
@@ -89,6 +92,9 @@ func TestBrokerServiceRecoveryTick(t *testing.T) {
 	}
 	if status.ResidentID != "jade" {
 		t.Fatalf("unexpected resident id")
+	}
+	if tick.RecoveryMode != "idle" {
+		t.Fatalf("expected idle recovery mode, got %s", tick.RecoveryMode)
 	}
 }
 

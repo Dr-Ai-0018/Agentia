@@ -64,6 +64,10 @@ func (s *BrokerService) SelfStatus(residentID string) (ResidentStatus, error) {
 }
 
 func (s *BrokerService) RecoveryTick(residentID string, now time.Time) (ResidentStatus, recovery.TickResult, string, error) {
+	return s.RecoveryTickWithMode(residentID, now, "idle")
+}
+
+func (s *BrokerService) RecoveryTickWithMode(residentID string, now time.Time, mode string) (ResidentStatus, recovery.TickResult, string, error) {
 	if residentID == "" {
 		return ResidentStatus{}, recovery.TickResult{}, "", fmt.Errorf("resident id is required")
 	}
@@ -71,6 +75,7 @@ func (s *BrokerService) RecoveryTick(residentID string, now time.Time) (Resident
 	if err != nil {
 		return ResidentStatus{}, recovery.TickResult{}, "", err
 	}
+	engine.SetRecoveryMode(mode)
 	tick := engine.TickRecovery(now)
 	path, err := s.sessions.SaveResident(engine)
 	if err != nil {

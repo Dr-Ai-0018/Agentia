@@ -91,3 +91,59 @@ func TestRecoveryAlsoReducesFatigueAndSleepDebtWhenConfigured(t *testing.T) {
 		t.Fatalf("recovery tick minutes = %d", result.RecoveryTickMinutes)
 	}
 }
+
+func TestRecoveryModeMultiplierAffectsRecovery(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	policy := Policy{
+		SparkRecoveryPerHour:     0.2,
+		StrainRecoveryPerHour:    100,
+		DayRecoveryPerHour:       50,
+		WeekRecoveryPerHour:      25,
+		FatigueRecoveryPerHour:   180,
+		SleepDebtRecoveryPerHour: 2,
+		ActivityMultipliers: map[string]float64{
+			"idle": 1.0,
+			"rest": 1.5,
+		},
+	}
+	baseState := State{
+		SparkBalance: 0.5,
+		Fatigue:      600,
+		SleepDebt:    6,
+		Quota: tokenledger.QuotaState{
+			Window6HCap:  4000,
+			Window6HUsed: 1520,
+			DayCap:       20000,
+			DayUsed:      2720,
+			WeekCap:      150000,
+			WeekUsed:     9220,
+		},
+		LastTickAt: start,
+	}
+
+	idle := Apply(policy, baseState, start.Add(2*time.Hour))
+	rest := Apply(policy, State{
+		SparkBalance: baseState.SparkBalance,
+		Fatigue:      baseState.Fatigue,
+		SleepDebt:    baseState.SleepDebt,
+		Quota:        baseState.Quota,
+		LastTickAt:   baseState.LastTickAt,
+		RecoveryMode: "rest",
+	}, start.Add(2*time.Hour))
+
+	if idle.RecoveryMode != "idle" {
+		t.Fatalf("idle recovery mode = %s", idle.RecoveryMode)
+	}
+	if rest.RecoveryMode != "rest" {
+		t.Fatalf("rest recovery mode = %s", rest.RecoveryMode)
+	}
+	if rest.RecoveryMultiplier <= idle.RecoveryMultiplier {
+		t.Fatalf("expected rest multiplier > idle multiplier")
+	}
+	if rest.RecoveredFatigue <= idle.RecoveredFatigue {
+		t.Fatalf("expected rest fatigue recovery to be stronger")
+	}
+	if rest.QuotaAfter.Window6HUsed >= idle.QuotaAfter.Window6HUsed {
+		t.Fatalf("expected rest to recover more 6h strain")
+	}
+}

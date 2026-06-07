@@ -203,3 +203,23 @@ func TestAppRunRecoverToNow(t *testing.T) {
 		t.Fatalf("expected next recovery timestamp")
 	}
 }
+
+func TestAppRunRecoverWithMode(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	if _, err := app.RunReset("jade", now); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	out, err := app.RunRecoverWithMode("jade", 1, now, "rest")
+	if err != nil {
+		t.Fatalf("recover with mode: %v", err)
+	}
+	if out.Recovery.RecoveryMode != "rest" {
+		t.Fatalf("expected recovery mode rest, got %s", out.Recovery.RecoveryMode)
+	}
+	if out.Status.RecoveryMode != "rest" {
+		t.Fatalf("expected status recovery mode rest, got %s", out.Status.RecoveryMode)
+	}
+}

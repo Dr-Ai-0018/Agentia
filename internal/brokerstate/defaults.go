@@ -16,6 +16,12 @@ func DefaultRuntimeConfig() runtimecore.Config {
 			WeekRecoveryPerHour:      25,
 			FatigueRecoveryPerHour:   180,
 			SleepDebtRecoveryPerHour: 2,
+			ActivityMultipliers: map[string]float64{
+				"idle":   1.0,
+				"normal": 0.9,
+				"rest":   1.35,
+				"deep":   1.8,
+			},
 		},
 		ReserveSpark:  0.08,
 		ReserveStrain: 300,

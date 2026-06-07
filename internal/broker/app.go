@@ -151,6 +151,10 @@ func (a *App) RunPrepareSpec(residentID string, spec CallSpec) (brokerstate.Prep
 }
 
 func (a *App) RunRecover(residentID string, hours float64, now time.Time) (RecoveryOutput, error) {
+	return a.RunRecoverWithMode(residentID, hours, now, "rest")
+}
+
+func (a *App) RunRecoverWithMode(residentID string, hours float64, now time.Time, mode string) (RecoveryOutput, error) {
 	service := a.service(false)
 	status, err := service.SelfStatus(residentID)
 	if err != nil {
@@ -161,7 +165,7 @@ func (a *App) RunRecover(residentID string, hours float64, now time.Time) (Recov
 		base = now
 	}
 	target := base.Add(time.Duration(hours * float64(time.Hour)))
-	updatedStatus, tick, path, err := service.RecoveryTick(residentID, target)
+	updatedStatus, tick, path, err := service.RecoveryTickWithMode(residentID, target, mode)
 	if err != nil {
 		return RecoveryOutput{}, err
 	}
@@ -173,6 +177,10 @@ func (a *App) RunRecover(residentID string, hours float64, now time.Time) (Recov
 }
 
 func (a *App) RunRecoverToNow(residentID string, now time.Time) (RecoveryOutput, error) {
+	return a.RunRecoverToNowWithMode(residentID, now, "idle")
+}
+
+func (a *App) RunRecoverToNowWithMode(residentID string, now time.Time, mode string) (RecoveryOutput, error) {
 	service := a.service(false)
 	status, err := service.SelfStatus(residentID)
 	if err != nil {
@@ -182,7 +190,7 @@ func (a *App) RunRecoverToNow(residentID string, now time.Time) (RecoveryOutput,
 	if !status.LastRecoveryAt.IsZero() && target.Before(status.LastRecoveryAt) {
 		target = status.LastRecoveryAt
 	}
-	updatedStatus, tick, path, err := service.RecoveryTick(residentID, target)
+	updatedStatus, tick, path, err := service.RecoveryTickWithMode(residentID, target, mode)
 	if err != nil {
 		return RecoveryOutput{}, err
 	}

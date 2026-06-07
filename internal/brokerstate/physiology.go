@@ -17,27 +17,28 @@ const (
 )
 
 type ResidentPhysiology struct {
-	Mode               ResidentMode `json:"mode"`
-	Pressure           string       `json:"pressure"`
-	SparkBalance       float64      `json:"spark_balance"`
-	Fatigue            int          `json:"fatigue"`
-	SleepDebt          int          `json:"sleep_debt"`
-	DebtActive         bool         `json:"debt_active"`
-	DebtAmount         float64      `json:"debt_amount"`
-	Window6HRemaining  int          `json:"window_6h_remaining"`
-	DayRemaining       int          `json:"day_remaining"`
-	WeekRemaining      int          `json:"week_remaining"`
-	EffectiveWindow6HCap int        `json:"effective_window_6h_cap"`
-	EffectiveDayCap      int        `json:"effective_day_cap"`
-	EffectiveWeekCap     int        `json:"effective_week_cap"`
-	QuotaTightestLayer string       `json:"quota_tightest_layer"`
-	QuotaTightestRatio float64      `json:"quota_tightest_ratio"`
-	RecoverySuggested  bool         `json:"recovery_suggested"`
-	RecoveryUrgency    string       `json:"recovery_urgency"`
-	NextRecoveryAt     string       `json:"next_recovery_at,omitempty"`
-	RecoveryTickMinutes int         `json:"recovery_tick_minutes"`
-	SnapshotTime       string       `json:"snapshot_time"`
-	SummaryLines       []string     `json:"summary_lines"`
+	Mode                 ResidentMode `json:"mode"`
+	Pressure             string       `json:"pressure"`
+	SparkBalance         float64      `json:"spark_balance"`
+	Fatigue              int          `json:"fatigue"`
+	SleepDebt            int          `json:"sleep_debt"`
+	DebtActive           bool         `json:"debt_active"`
+	DebtAmount           float64      `json:"debt_amount"`
+	RecoveryMode         string       `json:"recovery_mode,omitempty"`
+	Window6HRemaining    int          `json:"window_6h_remaining"`
+	DayRemaining         int          `json:"day_remaining"`
+	WeekRemaining        int          `json:"week_remaining"`
+	EffectiveWindow6HCap int          `json:"effective_window_6h_cap"`
+	EffectiveDayCap      int          `json:"effective_day_cap"`
+	EffectiveWeekCap     int          `json:"effective_week_cap"`
+	QuotaTightestLayer   string       `json:"quota_tightest_layer"`
+	QuotaTightestRatio   float64      `json:"quota_tightest_ratio"`
+	RecoverySuggested    bool         `json:"recovery_suggested"`
+	RecoveryUrgency      string       `json:"recovery_urgency"`
+	NextRecoveryAt       string       `json:"next_recovery_at,omitempty"`
+	RecoveryTickMinutes  int          `json:"recovery_tick_minutes"`
+	SnapshotTime         string       `json:"snapshot_time"`
+	SummaryLines         []string     `json:"summary_lines"`
 }
 
 func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
@@ -122,26 +123,27 @@ func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 	}
 
 	out := ResidentPhysiology{
-		Mode:               mode,
-		Pressure:           pressure,
-		SparkBalance:       status.SparkBalance,
-		Fatigue:            status.Fatigue,
-		SleepDebt:          status.SleepDebt,
-		DebtActive:         status.DebtActive,
-		DebtAmount:         status.DebtAmount,
-		Window6HRemaining:  windowRemain,
-		DayRemaining:       dayRemain,
-		WeekRemaining:      weekRemain,
+		Mode:                 mode,
+		Pressure:             pressure,
+		SparkBalance:         status.SparkBalance,
+		Fatigue:              status.Fatigue,
+		SleepDebt:            status.SleepDebt,
+		DebtActive:           status.DebtActive,
+		DebtAmount:           status.DebtAmount,
+		RecoveryMode:         status.RecoveryMode,
+		Window6HRemaining:    windowRemain,
+		DayRemaining:         dayRemain,
+		WeekRemaining:        weekRemain,
 		EffectiveWindow6HCap: windowCap,
 		EffectiveDayCap:      dayCap,
 		EffectiveWeekCap:     weekCap,
-		QuotaTightestLayer: tightestLayer,
-		QuotaTightestRatio: tightestRatio,
-		RecoverySuggested:  recoverySuggested,
-		RecoveryUrgency:    recoveryUrgency,
-		NextRecoveryAt:     status.NextRecoveryAt,
-		RecoveryTickMinutes: status.RecoveryTickMinutes,
-		SnapshotTime:       now.UTC().Format(time.RFC3339),
+		QuotaTightestLayer:   tightestLayer,
+		QuotaTightestRatio:   tightestRatio,
+		RecoverySuggested:    recoverySuggested,
+		RecoveryUrgency:      recoveryUrgency,
+		NextRecoveryAt:       status.NextRecoveryAt,
+		RecoveryTickMinutes:  status.RecoveryTickMinutes,
+		SnapshotTime:         now.UTC().Format(time.RFC3339),
 	}
 	out.SummaryLines = physiologySummaryLines(out)
 	return out
@@ -167,6 +169,9 @@ func physiologySummaryLines(p ResidentPhysiology) []string {
 	}
 	if p.NextRecoveryAt != "" {
 		lines = append(lines, "next_recovery_at="+p.NextRecoveryAt)
+	}
+	if p.RecoveryMode != "" {
+		lines = append(lines, "recovery_mode="+p.RecoveryMode)
 	}
 	return lines
 }
