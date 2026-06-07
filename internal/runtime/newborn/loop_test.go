@@ -210,6 +210,48 @@ func TestParseDecisionResultSupportsSelfQuota(t *testing.T) {
 	if decision.NextAction != "self_quota" {
 		t.Fatalf("unexpected next action: %s", decision.NextAction)
 	}
+	if decision.Command != "" {
+		t.Fatalf("expected self_quota command to be cleared, got %q", decision.Command)
+	}
+}
+
+func TestParseDecisionResultClearsCommandForNoop(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				Name:      "decide_next_action",
+				Arguments: `{"situation":"Nothing urgent is pending.","next_action":"noop","reason":"Wait for new information before acting.","command":"echo should-not-run"}`,
+			},
+		},
+	}
+
+	decision, err := parseDecisionResult(result)
+	if err != nil {
+		t.Fatalf("parse decision result: %v", err)
+	}
+	if decision.NextAction != "noop" {
+		t.Fatalf("unexpected next action: %s", decision.NextAction)
+	}
+	if decision.Command != "" {
+		t.Fatalf("expected noop command to be cleared, got %q", decision.Command)
+	}
+}
+
+func TestParseDecisionResultRejectsGuestExecWithoutCommand(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				Name:      "decide_next_action",
+				Arguments: `{"situation":"Need to inspect the VM.","next_action":"guest_exec","reason":"Run one narrow probe.","command":""}`,
+			},
+		},
+	}
+
+	if _, err := parseDecisionResult(result); err == nil {
+		t.Fatalf("expected guest_exec without command to fail validation")
+	}
 }
 
 func TestCompactObservationForHistory(t *testing.T) {

@@ -101,6 +101,12 @@ func validateDecision(decision AgentDecision) error {
 	default:
 		return fmt.Errorf("unsupported next_action %q", decision.NextAction)
 	}
+	switch decision.NextAction {
+	case "guest_exec", "write_note":
+		if strings.TrimSpace(decision.Command) == "" {
+			return fmt.Errorf("%s requires a non-empty command", decision.NextAction)
+		}
+	}
 	return nil
 }
 

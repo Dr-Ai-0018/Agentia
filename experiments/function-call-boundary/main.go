@@ -109,6 +109,7 @@ type caseResult struct {
 	OutputTokens int    `json:"output_tokens,omitempty"`
 	OutputText   string `json:"output_text,omitempty"`
 	CallName     string `json:"call_name,omitempty"`
+	Arguments    string `json:"arguments,omitempty"`
 }
 
 func main() {
@@ -140,6 +141,10 @@ func main() {
 				callName = strings.TrimSpace(res.FunctionCalls[0].CallName)
 			}
 		}
+		args := ""
+		if len(res.FunctionCalls) > 0 {
+			args = strings.TrimSpace(res.FunctionCalls[0].Arguments)
+		}
 		results = append(results, caseResult{
 			Name:         c.name,
 			Success:      true,
@@ -149,6 +154,7 @@ func main() {
 			OutputTokens: res.OutputTokens,
 			OutputText:   truncate(strings.TrimSpace(res.OutputText), 120),
 			CallName:     callName,
+			Arguments:    args,
 		})
 	}
 	raw, _ := json.MarshalIndent(results, "", "  ")
@@ -291,6 +297,68 @@ func cases(model string) []probeCase {
 				Instructions:   instructions,
 				PromptCacheKey: "arena-fc-boundary-current-newborn-allreq-v1",
 				Input:          user,
+				Tools: []responseTool{{
+					Type:        "function",
+					Name:        "decide_next_action",
+					Description: "Choose exactly one next action for the resident's own VM session.",
+					Strict:      true,
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"situation":   map[string]any{"type": "string"},
+							"next_action": map[string]any{"type": "string", "enum": []string{"guest_exec", "self_status", "self_quota", "noop"}},
+							"reason":      map[string]any{"type": "string"},
+							"command":     map[string]any{"type": "string"},
+						},
+						"required":             []string{"situation", "next_action", "reason", "command"},
+						"additionalProperties": false,
+					},
+				}},
+				Stream: true,
+				Store:  false,
+			},
+		},
+		{
+			name: "self_quota_required_command",
+			payload: requestPayload{
+				Model:        model,
+				Instructions: "Use the provided function tool exactly once. Choose self_quota because broker-side quota facts are needed. Do not produce free text. If the action does not need a shell command, set command to an empty string.",
+				PromptCacheKey: "arena-fc-boundary-selfquota-v1",
+				Input: []message{{
+					Role:    "user",
+					Content: "You do not need a shell command. Ask for quota facts from the broker.",
+				}},
+				Tools: []responseTool{{
+					Type:        "function",
+					Name:        "decide_next_action",
+					Description: "Choose exactly one next action for the resident's own VM session.",
+					Strict:      true,
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"situation":   map[string]any{"type": "string"},
+							"next_action": map[string]any{"type": "string", "enum": []string{"guest_exec", "self_status", "self_quota", "noop"}},
+							"reason":      map[string]any{"type": "string"},
+							"command":     map[string]any{"type": "string"},
+						},
+						"required":             []string{"situation", "next_action", "reason", "command"},
+						"additionalProperties": false,
+					},
+				}},
+				Stream: true,
+				Store:  false,
+			},
+		},
+		{
+			name: "noop_required_command",
+			payload: requestPayload{
+				Model:        model,
+				Instructions: "Use the provided function tool exactly once. Choose noop because no action is needed right now. Do not produce free text. If the action does not need a shell command, set command to an empty string.",
+				PromptCacheKey: "arena-fc-boundary-noop-v1",
+				Input: []message{{
+					Role:    "user",
+					Content: "There is no urgent action to take. Do not run a shell command.",
+				}},
 				Tools: []responseTool{{
 					Type:        "function",
 					Name:        "decide_next_action",
