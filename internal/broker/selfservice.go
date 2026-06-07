@@ -8,11 +8,15 @@ import (
 )
 
 type SelfService struct {
-	app *App
+	app     *App
+	machine MachineControl
 }
 
 func NewSelfService(app *App) *SelfService {
-	return &SelfService{app: app}
+	return &SelfService{
+		app:     app,
+		machine: NewIncusMachineControl(),
+	}
 }
 
 func (s *SelfService) Status(claim auth.ResidentClaim) (brokerstate.ResidentStatus, error) {

@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|binding|self-status|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
+	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|binding|self-status|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -36,6 +36,7 @@ func main() {
 	amount := flag.String("amount", "", "Requested amount for self-request-* modes")
 	reason := flag.String("reason", "", "Request reason for self-request-* modes")
 	summary := flag.String("summary", "", "Summary for self-submit-result")
+	snapshotName := flag.String("snapshot-name", "", "Snapshot name for self-snapshot/self-restore")
 	closeTicket := flag.Bool("close-ticket", false, "Whether ticket-reply should close the ticket")
 	flag.Parse()
 
@@ -94,6 +95,24 @@ func main() {
 		printJSON(out)
 	case "self-status":
 		out, err := broker.NewSelfService(app).Status(auth.ResidentClaim{ResidentID: *residentID})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-reboot":
+		out, err := broker.NewSelfService(app).RequestReboot(auth.ResidentClaim{ResidentID: *residentID})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-snapshot":
+		out, err := broker.NewSelfService(app).RequestSnapshot(auth.ResidentClaim{ResidentID: *residentID}, *snapshotName)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-restore":
+		out, err := broker.NewSelfService(app).RequestRestore(auth.ResidentClaim{ResidentID: *residentID}, *snapshotName)
 		if err != nil {
 			exitf("%v", err)
 		}
