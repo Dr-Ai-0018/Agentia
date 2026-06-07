@@ -221,15 +221,15 @@ func (r *Runner) buildContextPacket(profile ResidentProfile, remaining int, stat
 	worldView := r.world.BuildResidentWorldView(profile, 6)
 	memoryDigest := r.buildResidentMemoryDigest(profile)
 	working := context.WorkingContext{
-		RemainingSeconds: remaining,
-		UsedActions:      state.UsedActions,
-		NoopStreak:       state.NoopStreak,
-		NotePath:         state.NotePath,
-		LastObservation:  state.LastObservation,
-		RecentActions:    renderRecentActions(state.RecentActions),
-		FrontierStatus:   renderExplorationFrontier(state),
-		BudgetFacts:      renderBudgetFacts(state),
-		MemoryReview:     r.renderMemoryReviewQueue(profile),
+		RemainingSeconds:  remaining,
+		UsedActions:       state.UsedActions,
+		NoopStreak:        state.NoopStreak,
+		NotePath:          state.NotePath,
+		LastObservation:   state.LastObservation,
+		RecentActions:     renderRecentActions(state.RecentActions),
+		FrontierStatus:    renderExplorationFrontier(state),
+		BudgetFacts:       renderBudgetFacts(state),
+		MemoryReview:      r.renderMemoryReviewQueue(profile),
 		FreshWorldUpdates: worldView.FreshDeliveredItems,
 	}
 	if state.LastDecision != nil {
@@ -541,6 +541,7 @@ func renderBudgetFacts(state loopState) []string {
 			fmt.Sprintf("effective_week_remaining=%d", maxInt(0, effectiveWeek-status.WeekUsed)),
 			fmt.Sprintf("next_recovery_at=%s", status.NextRecoveryAt),
 			fmt.Sprintf("recovery_tick_minutes=%d", status.RecoveryTickMinutes),
+			fmt.Sprintf("recovery_mode=%s", status.RecoveryMode),
 			fmt.Sprintf("debt_amount=%.4f", status.DebtAmount),
 			fmt.Sprintf("resident_mode=%s", status.Physiology.Mode),
 			fmt.Sprintf("resident_pressure=%s", status.Physiology.Pressure),
@@ -548,6 +549,14 @@ func renderBudgetFacts(state loopState) []string {
 			fmt.Sprintf("quota_tightest_ratio=%.4f", status.Physiology.QuotaTightestRatio),
 			fmt.Sprintf("recovery_suggested=%t", status.Physiology.RecoverySuggested),
 			fmt.Sprintf("recovery_urgency=%s", status.Physiology.RecoveryUrgency),
+			fmt.Sprintf("state_snapshot=mode:%s pressure:%s recovery_mode:%s spark:%.4f fatigue:%d sleep_debt:%d",
+				status.Physiology.Mode,
+				status.Physiology.Pressure,
+				status.RecoveryMode,
+				status.SparkBalance,
+				status.Fatigue,
+				status.SleepDebt,
+			),
 		)
 		for _, line := range status.Physiology.SummaryLines {
 			out = append(out, "physiology_summary="+line)
