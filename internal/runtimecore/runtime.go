@@ -20,6 +20,8 @@ type Config struct {
 type ResidentState struct {
 	ResidentID      string
 	Quota           tokenledger.QuotaState
+	Fatigue         int
+	SleepDebt       int
 	DebtActive      bool
 	DebtAmount      float64
 	FinalNoticeUsed bool
@@ -129,6 +131,8 @@ func (e *Engine) ApplyCall(prepared PreparedCall, activity tokenledger.ActivityT
 	}
 
 	e.state.Quota = quotaUpdate.After
+	e.state.Fatigue += fatigue.FatigueGain
+	e.state.SleepDebt += sleepDebtGain(activity, fatigue.FatigueGain)
 	if e.spark.Account().Balance < 0 {
 		e.state.DebtActive = true
 		e.state.DebtAmount = -e.spark.Account().Balance
@@ -149,12 +153,16 @@ func (e *Engine) TickRecovery(now time.Time) recovery.TickResult {
 	tick := recovery.Apply(e.cfg.RecoveryPolicy, recovery.State{
 		SparkBalance: e.spark.Account().Balance,
 		Quota:        e.state.Quota,
+		Fatigue:      e.state.Fatigue,
+		SleepDebt:    e.state.SleepDebt,
 		DebtActive:   e.state.DebtActive,
 		DebtAmount:   e.state.DebtAmount,
 		LastTickAt:   e.state.LastRecoveryAt,
 	}, now)
 
 	e.state.Quota = tick.QuotaAfter
+	e.state.Fatigue = tick.FatigueAfter
+	e.state.SleepDebt = tick.SleepDebtAfter
 	e.state.DebtActive = tick.DebtActive
 	e.state.DebtAmount = tick.DebtAmount
 	e.state.LastRecoveryAt = now
@@ -169,4 +177,27 @@ func (e *Engine) TickRecovery(now time.Time) recovery.TickResult {
 	}
 
 	return tick
+}
+
+func sleepDebtGain(activity tokenledger.ActivityType, fatigueGain int) int {
+	if fatigueGain <= 0 {
+		return 0
+	}
+	switch activity {
+	case tokenledger.ActivityStatusCheck:
+		return 0
+	case tokenledger.ActivityLightWork:
+		return maxInt(1, fatigueGain/600)
+	case tokenledger.ActivityDeepWork:
+		return maxInt(1, fatigueGain/300)
+	default:
+		return maxInt(1, fatigueGain/400)
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

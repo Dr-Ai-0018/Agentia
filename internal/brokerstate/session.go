@@ -20,6 +20,8 @@ type ResidentStatus struct {
 	SnapshotPath       string    `json:"snapshot_path,omitempty"`
 	SparkBalance       float64   `json:"spark_balance"`
 	SparkBalanceUnits  int64     `json:"spark_balance_units"`
+	Fatigue            int       `json:"fatigue"`
+	SleepDebt          int       `json:"sleep_debt"`
 	DebtActive         bool      `json:"debt_active"`
 	DebtAmount         float64   `json:"debt_amount"`
 	FinalNoticeUsed    bool      `json:"final_notice_used"`
@@ -73,6 +75,8 @@ func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath
 		SnapshotPath:       snapshotPath,
 		SparkBalance:       account.Balance,
 		SparkBalanceUnits:  account.BalanceUnits,
+		Fatigue:            state.Fatigue,
+		SleepDebt:          state.SleepDebt,
 		DebtActive:         state.DebtActive,
 		DebtAmount:         state.DebtAmount,
 		FinalNoticeUsed:    state.FinalNoticeUsed,
@@ -86,6 +90,8 @@ func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath
 		Physiology:         DerivePhysiology(ResidentStatus{
 			ResidentID:     state.ResidentID,
 			SparkBalance:   account.Balance,
+			Fatigue:        state.Fatigue,
+			SleepDebt:      state.SleepDebt,
 			DebtActive:     state.DebtActive,
 			DebtAmount:     state.DebtAmount,
 			Window6HCap:    state.Quota.Window6HCap,

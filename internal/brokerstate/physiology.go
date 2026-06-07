@@ -20,6 +20,8 @@ type ResidentPhysiology struct {
 	Mode               ResidentMode `json:"mode"`
 	Pressure           string       `json:"pressure"`
 	SparkBalance       float64      `json:"spark_balance"`
+	Fatigue            int          `json:"fatigue"`
+	SleepDebt          int          `json:"sleep_debt"`
 	DebtActive         bool         `json:"debt_active"`
 	DebtAmount         float64      `json:"debt_amount"`
 	Window6HRemaining  int          `json:"window_6h_remaining"`
@@ -63,20 +65,20 @@ func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 		pressure = "critical"
 		recoverySuggested = true
 		recoveryUrgency = "immediate"
-	case tightestRatio <= 0.08 || status.SparkBalance < 0.5:
+	case tightestRatio <= 0.08 || status.SparkBalance < 0.5 || status.Fatigue >= 2200 || status.SleepDebt >= 18:
 		mode = ModeTired
 		pressure = "critical"
 		recoverySuggested = true
 		recoveryUrgency = "high"
-	case tightestRatio <= 0.20 || status.SparkBalance < 1.5:
+	case tightestRatio <= 0.20 || status.SparkBalance < 1.5 || status.Fatigue >= 1200 || status.SleepDebt >= 10:
 		mode = ModeTired
 		pressure = "tight"
 		recoverySuggested = true
 		recoveryUrgency = "medium"
-	case tightestRatio <= 0.45 || status.SparkBalance < 4.0:
+	case tightestRatio <= 0.45 || status.SparkBalance < 4.0 || status.Fatigue >= 600 || status.SleepDebt >= 4:
 		mode = ModeFocused
 		pressure = "watchful"
-		recoverySuggested = false
+		recoverySuggested = status.Fatigue >= 900 || status.SleepDebt >= 6
 		recoveryUrgency = "low"
 	default:
 		mode = ModeAwake
@@ -105,6 +107,8 @@ func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 		Mode:               mode,
 		Pressure:           pressure,
 		SparkBalance:       status.SparkBalance,
+		Fatigue:            status.Fatigue,
+		SleepDebt:          status.SleepDebt,
 		DebtActive:         status.DebtActive,
 		DebtAmount:         status.DebtAmount,
 		Window6HRemaining:  windowRemain,
@@ -129,6 +133,7 @@ func physiologySummaryLines(p ResidentPhysiology) []string {
 		lines = append(lines,
 			quotaSummaryLine(p),
 			sparkSummaryLine(p),
+			fatigueSummaryLine(p),
 		)
 	}
 	if p.DebtActive {
@@ -147,6 +152,10 @@ func quotaSummaryLine(p ResidentPhysiology) string {
 
 func sparkSummaryLine(p ResidentPhysiology) string {
 	return "spark_balance=" + formatFloat4(p.SparkBalance)
+}
+
+func fatigueSummaryLine(p ResidentPhysiology) string {
+	return fmt.Sprintf("fatigue=%d sleep_debt=%d", p.Fatigue, p.SleepDebt)
 }
 
 func debtSummaryLine(p ResidentPhysiology) string {

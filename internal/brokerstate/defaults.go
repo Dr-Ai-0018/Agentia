@@ -10,10 +10,12 @@ func DefaultRuntimeConfig() runtimecore.Config {
 	return runtimecore.Config{
 		TokenPolicy: tokenledger.DefaultConfig(),
 		RecoveryPolicy: recovery.Policy{
-			SparkRecoveryPerHour:  0.2,
-			StrainRecoveryPerHour: 100,
-			DayRecoveryPerHour:    50,
-			WeekRecoveryPerHour:   25,
+			SparkRecoveryPerHour:     0.2,
+			StrainRecoveryPerHour:    100,
+			DayRecoveryPerHour:       50,
+			WeekRecoveryPerHour:      25,
+			FatigueRecoveryPerHour:   180,
+			SleepDebtRecoveryPerHour: 2,
 		},
 		ReserveSpark:  0.08,
 		ReserveStrain: 300,

@@ -12,11 +12,15 @@ type Policy struct {
 	StrainRecoveryPerHour int
 	DayRecoveryPerHour    int
 	WeekRecoveryPerHour   int
+	FatigueRecoveryPerHour int
+	SleepDebtRecoveryPerHour int
 }
 
 type State struct {
 	SparkBalance float64
 	Quota        tokenledger.QuotaState
+	Fatigue      int
+	SleepDebt    int
 	DebtActive   bool
 	DebtAmount   float64
 	LastTickAt   time.Time
@@ -30,6 +34,12 @@ type TickResult struct {
 	DebtActive          bool                  `json:"debt_active"`
 	DebtAmount          float64               `json:"debt_amount"`
 	RecoveredStrain     int                   `json:"recovered_strain"`
+	FatigueBefore       int                   `json:"fatigue_before"`
+	FatigueAfter        int                   `json:"fatigue_after"`
+	RecoveredFatigue    int                   `json:"recovered_fatigue"`
+	SleepDebtBefore     int                   `json:"sleep_debt_before"`
+	SleepDebtAfter      int                   `json:"sleep_debt_after"`
+	RecoveredSleepDebt  int                   `json:"recovered_sleep_debt"`
 	QuotaBefore         tokenledger.QuotaState `json:"quota_before"`
 	QuotaAfter          tokenledger.QuotaState `json:"quota_after"`
 }
@@ -46,12 +56,16 @@ func Apply(policy Policy, state State, now time.Time) TickResult {
 
 	sparkRecovered := roundToPrecision(hours*policy.SparkRecoveryPerHour, 4)
 	recoveredStrain := int(math.Floor(hours * float64(policy.StrainRecoveryPerHour)))
+	recoveredFatigue := int(math.Floor(hours * float64(policy.FatigueRecoveryPerHour)))
+	recoveredSleepDebt := int(math.Floor(hours * float64(policy.SleepDebtRecoveryPerHour)))
 
 	before := state.Quota
 	after := state.Quota
 	after.Window6HUsed = maxInt(0, after.Window6HUsed-recoveredStrain)
 	after.DayUsed = maxInt(0, after.DayUsed-int(math.Floor(hours*float64(policy.DayRecoveryPerHour))))
 	after.WeekUsed = maxInt(0, after.WeekUsed-int(math.Floor(hours*float64(policy.WeekRecoveryPerHour))))
+	fatigueAfter := maxInt(0, state.Fatigue-recoveredFatigue)
+	sleepDebtAfter := maxInt(0, state.SleepDebt-recoveredSleepDebt)
 
 	newBalance := state.SparkBalance
 	debtAmount := state.DebtAmount
@@ -83,6 +97,12 @@ func Apply(policy Policy, state State, now time.Time) TickResult {
 		DebtActive:      debtActive,
 		DebtAmount:      debtAmount,
 		RecoveredStrain: recoveredStrain,
+		FatigueBefore:   state.Fatigue,
+		FatigueAfter:    fatigueAfter,
+		RecoveredFatigue: recoveredFatigue,
+		SleepDebtBefore: state.SleepDebt,
+		SleepDebtAfter:  sleepDebtAfter,
+		RecoveredSleepDebt: recoveredSleepDebt,
 		QuotaBefore:     before,
 		QuotaAfter:      after,
 	}

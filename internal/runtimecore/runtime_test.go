@@ -14,10 +14,12 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 	engine := New(Config{
 		TokenPolicy:    tokenledger.DefaultConfig(),
 		RecoveryPolicy: recovery.Policy{
-			SparkRecoveryPerHour:  0.2,
-			StrainRecoveryPerHour: 100,
-			DayRecoveryPerHour:    50,
-			WeekRecoveryPerHour:   25,
+			SparkRecoveryPerHour:     0.2,
+			StrainRecoveryPerHour:    100,
+			DayRecoveryPerHour:       50,
+			WeekRecoveryPerHour:      25,
+			FatigueRecoveryPerHour:   180,
+			SleepDebtRecoveryPerHour: 2,
 		},
 		ReserveSpark:   0.08,
 		ReserveStrain:  300,
@@ -56,6 +58,12 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 	if !applied.State.DebtActive {
 		t.Fatalf("expected debt active after final notice")
 	}
+	if applied.State.Fatigue <= 0 {
+		t.Fatalf("expected fatigue to increase after work")
+	}
+	if applied.State.SleepDebt <= 0 {
+		t.Fatalf("expected sleep debt to increase after work")
+	}
 
 	engine.TickRecovery(start.Add(2 * time.Hour))
 	workPrepared, err := engine.PrepareCall(runtimeguard.CallKindWork, tokenledger.Usage{
@@ -93,10 +101,12 @@ func TestSnapshotAndRestore(t *testing.T) {
 	cfg := Config{
 		TokenPolicy: tokenledger.DefaultConfig(),
 		RecoveryPolicy: recovery.Policy{
-			SparkRecoveryPerHour:  0.2,
-			StrainRecoveryPerHour: 100,
-			DayRecoveryPerHour:    50,
-			WeekRecoveryPerHour:   25,
+			SparkRecoveryPerHour:     0.2,
+			StrainRecoveryPerHour:    100,
+			DayRecoveryPerHour:       50,
+			WeekRecoveryPerHour:      25,
+			FatigueRecoveryPerHour:   180,
+			SleepDebtRecoveryPerHour: 2,
 		},
 		ReserveSpark:  0.08,
 		ReserveStrain: 300,
