@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|binding|self-status|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
+	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|binding|self-status|self-request-memory|self-request-disk|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -33,6 +33,8 @@ func main() {
 	body := flag.String("body", "", "Reply body for reply mode")
 	priority := flag.String("priority", "", "Optional ticket priority filter or value: low|medium|high|urgent")
 	title := flag.String("title", "", "Optional title for ticket modes that create one")
+	amount := flag.String("amount", "", "Requested amount for self-request-* modes")
+	reason := flag.String("reason", "", "Request reason for self-request-* modes")
 	closeTicket := flag.Bool("close-ticket", false, "Whether ticket-reply should close the ticket")
 	flag.Parse()
 
@@ -91,6 +93,26 @@ func main() {
 		printJSON(out)
 	case "self-status":
 		out, err := broker.NewSelfService(app).Status(auth.ResidentClaim{ResidentID: *residentID})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-request-memory":
+		out, err := broker.NewSelfService(app).RequestMemory(auth.ResidentClaim{ResidentID: *residentID}, broker.ResourceRequestInput{
+			Amount:  *amount,
+			Reason:  *reason,
+			Urgency: *priority,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-request-disk":
+		out, err := broker.NewSelfService(app).RequestDisk(auth.ResidentClaim{ResidentID: *residentID}, broker.ResourceRequestInput{
+			Amount:  *amount,
+			Reason:  *reason,
+			Urgency: *priority,
+		})
 		if err != nil {
 			exitf("%v", err)
 		}
