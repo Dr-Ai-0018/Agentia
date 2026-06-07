@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|binding|self-status|self-request-memory|self-request-disk|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
+	mode := flag.String("mode", "demo", "Mode: demo|status|recover|reset|admit|binding|self-status|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
@@ -35,6 +35,7 @@ func main() {
 	title := flag.String("title", "", "Optional title for ticket modes that create one")
 	amount := flag.String("amount", "", "Requested amount for self-request-* modes")
 	reason := flag.String("reason", "", "Request reason for self-request-* modes")
+	summary := flag.String("summary", "", "Summary for self-submit-result")
 	closeTicket := flag.Bool("close-ticket", false, "Whether ticket-reply should close the ticket")
 	flag.Parse()
 
@@ -97,6 +98,16 @@ func main() {
 			exitf("%v", err)
 		}
 		printJSON(out)
+	case "self-request-cpu":
+		out, err := broker.NewSelfService(app).RequestCPU(auth.ResidentClaim{ResidentID: *residentID}, broker.ResourceRequestInput{
+			Amount:  *amount,
+			Reason:  *reason,
+			Urgency: *priority,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
 	case "self-request-memory":
 		out, err := broker.NewSelfService(app).RequestMemory(auth.ResidentClaim{ResidentID: *residentID}, broker.ResourceRequestInput{
 			Amount:  *amount,
@@ -112,6 +123,36 @@ func main() {
 			Amount:  *amount,
 			Reason:  *reason,
 			Urgency: *priority,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-request-gpu-time":
+		out, err := broker.NewSelfService(app).RequestGPUTime(auth.ResidentClaim{ResidentID: *residentID}, broker.ResourceRequestInput{
+			Amount:  *amount,
+			Reason:  *reason,
+			Urgency: *priority,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-request-vps-access":
+		out, err := broker.NewSelfService(app).RequestVPSAccess(auth.ResidentClaim{ResidentID: *residentID}, broker.ResourceRequestInput{
+			Amount:  *amount,
+			Reason:  *reason,
+			Urgency: *priority,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-submit-result":
+		out, err := broker.NewSelfService(app).SubmitResult(auth.ResidentClaim{ResidentID: *residentID}, broker.SubmissionInput{
+			Title:   *title,
+			Summary: *summary,
+			Details: *body,
 		})
 		if err != nil {
 			exitf("%v", err)
