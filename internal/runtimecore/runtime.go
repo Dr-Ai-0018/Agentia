@@ -78,6 +78,8 @@ func (e *Engine) PrepareCall(kind runtimeguard.CallKind, usage tokenledger.Usage
 	decision := runtimeguard.Evaluate(runtimeguard.State{
 		SparkBalance:    e.spark.Account().Balance,
 		Quota:           e.state.Quota,
+		Fatigue:         e.state.Fatigue,
+		SleepDebt:       e.state.SleepDebt,
 		ReserveSpark:    e.cfg.ReserveSpark,
 		ReserveStrain:   e.cfg.ReserveStrain,
 		DebtActive:      e.state.DebtActive,

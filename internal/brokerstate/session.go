@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"ai-arena/internal/runtimecore"
+	"ai-arena/internal/runtimeguard"
 )
 
 type SessionManager struct {
@@ -31,6 +32,9 @@ type ResidentStatus struct {
 	DayUsed            int       `json:"day_used"`
 	WeekCap            int       `json:"week_cap"`
 	WeekUsed           int       `json:"week_used"`
+	EffectiveWindow6HCap int     `json:"effective_window_6h_cap"`
+	EffectiveDayCap      int     `json:"effective_day_cap"`
+	EffectiveWeekCap     int     `json:"effective_week_cap"`
 	LastRecoveryAt     time.Time `json:"last_recovery_at"`
 	Physiology         ResidentPhysiology `json:"physiology"`
 }
@@ -69,6 +73,12 @@ func BuildResidentStatus(engine *runtimecore.Engine, loaded bool, snapshotPath s
 func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath string, now time.Time) ResidentStatus {
 	state := engine.State()
 	account := engine.SparkLedger().Account()
+	effective := runtimeguard.DeriveEffectiveQuota(runtimeguard.State{
+		Quota:      state.Quota,
+		Fatigue:    state.Fatigue,
+		SleepDebt:  state.SleepDebt,
+		DebtActive: state.DebtActive,
+	})
 	return ResidentStatus{
 		ResidentID:         state.ResidentID,
 		LoadedFromSnapshot: loaded,
@@ -86,6 +96,9 @@ func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath
 		DayUsed:            state.Quota.DayUsed,
 		WeekCap:            state.Quota.WeekCap,
 		WeekUsed:           state.Quota.WeekUsed,
+		EffectiveWindow6HCap: effective.Window6HCap,
+		EffectiveDayCap:      effective.DayCap,
+		EffectiveWeekCap:     effective.WeekCap,
 		LastRecoveryAt:     state.LastRecoveryAt,
 		Physiology:         DerivePhysiology(ResidentStatus{
 			ResidentID:     state.ResidentID,
@@ -100,6 +113,9 @@ func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath
 			DayUsed:        state.Quota.DayUsed,
 			WeekCap:        state.Quota.WeekCap,
 			WeekUsed:       state.Quota.WeekUsed,
+			EffectiveWindow6HCap: effective.Window6HCap,
+			EffectiveDayCap:      effective.DayCap,
+			EffectiveWeekCap:     effective.WeekCap,
 			LastRecoveryAt: state.LastRecoveryAt,
 		}, now),
 	}

@@ -12,6 +12,8 @@ const (
 type State struct {
 	SparkBalance       float64
 	Quota              tokenledger.QuotaState
+	Fatigue            int
+	SleepDebt          int
 	ReserveSpark       float64
 	ReserveStrain      int
 	DebtActive         bool
@@ -38,7 +40,8 @@ type Decision struct {
 }
 
 func Evaluate(state State, req Request) Decision {
-	remaining6H := state.Quota.Window6HCap - state.Quota.Window6HUsed
+	effective := DeriveEffectiveQuota(state)
+	remaining6H := RemainingWindow6H(effective)
 	if remaining6H < 0 {
 		remaining6H = 0
 	}

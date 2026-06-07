@@ -492,13 +492,40 @@ func renderBudgetFacts(state loopState) []string {
 	)
 	if state.LastBrokerUsage.AfterStatus != nil {
 		status := state.LastBrokerUsage.AfterStatus
+		effectiveWindow := status.Physiology.EffectiveWindow6HCap
+		if effectiveWindow <= 0 {
+			effectiveWindow = status.Window6HCap
+		}
+		effectiveDay := status.Physiology.EffectiveDayCap
+		if effectiveDay <= 0 {
+			effectiveDay = status.DayCap
+		}
+		effectiveWeek := status.Physiology.EffectiveWeekCap
+		if effectiveWeek <= 0 {
+			effectiveWeek = status.WeekCap
+		}
+		windowRemaining := status.Physiology.Window6HRemaining
+		if windowRemaining <= 0 && effectiveWindow >= status.Window6HUsed {
+			windowRemaining = effectiveWindow - status.Window6HUsed
+		}
+		dayRemaining := status.Physiology.DayRemaining
+		if dayRemaining <= 0 && effectiveDay >= status.DayUsed {
+			dayRemaining = effectiveDay - status.DayUsed
+		}
+		weekRemaining := status.Physiology.WeekRemaining
+		if weekRemaining <= 0 && effectiveWeek >= status.WeekUsed {
+			weekRemaining = effectiveWeek - status.WeekUsed
+		}
 		out = append(out,
-			fmt.Sprintf("window_6h_remaining=%d", maxInt(0, status.Window6HCap-status.Window6HUsed)),
-			fmt.Sprintf("day_remaining=%d", maxInt(0, status.DayCap-status.DayUsed)),
-			fmt.Sprintf("week_remaining=%d", maxInt(0, status.WeekCap-status.WeekUsed)),
+			fmt.Sprintf("window_6h_remaining=%d", windowRemaining),
+			fmt.Sprintf("day_remaining=%d", dayRemaining),
+			fmt.Sprintf("week_remaining=%d", weekRemaining),
 			fmt.Sprintf("window_6h_cap=%d", status.Window6HCap),
 			fmt.Sprintf("day_cap=%d", status.DayCap),
 			fmt.Sprintf("week_cap=%d", status.WeekCap),
+			fmt.Sprintf("effective_window_6h_cap=%d", effectiveWindow),
+			fmt.Sprintf("effective_day_cap=%d", effectiveDay),
+			fmt.Sprintf("effective_week_cap=%d", effectiveWeek),
 			fmt.Sprintf("debt_amount=%.4f", status.DebtAmount),
 			fmt.Sprintf("resident_mode=%s", status.Physiology.Mode),
 			fmt.Sprintf("resident_pressure=%s", status.Physiology.Pressure),

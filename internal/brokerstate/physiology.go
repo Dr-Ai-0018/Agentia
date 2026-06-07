@@ -27,6 +27,9 @@ type ResidentPhysiology struct {
 	Window6HRemaining  int          `json:"window_6h_remaining"`
 	DayRemaining       int          `json:"day_remaining"`
 	WeekRemaining      int          `json:"week_remaining"`
+	EffectiveWindow6HCap int        `json:"effective_window_6h_cap"`
+	EffectiveDayCap      int        `json:"effective_day_cap"`
+	EffectiveWeekCap     int        `json:"effective_week_cap"`
 	QuotaTightestLayer string       `json:"quota_tightest_layer"`
 	QuotaTightestRatio float64      `json:"quota_tightest_ratio"`
 	RecoverySuggested  bool         `json:"recovery_suggested"`
@@ -36,13 +39,26 @@ type ResidentPhysiology struct {
 }
 
 func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
-	windowRemain := maxInt(0, status.Window6HCap-status.Window6HUsed)
-	dayRemain := maxInt(0, status.DayCap-status.DayUsed)
-	weekRemain := maxInt(0, status.WeekCap-status.WeekUsed)
+	windowCap := status.EffectiveWindow6HCap
+	if windowCap <= 0 {
+		windowCap = status.Window6HCap
+	}
+	dayCap := status.EffectiveDayCap
+	if dayCap <= 0 {
+		dayCap = status.DayCap
+	}
+	weekCap := status.EffectiveWeekCap
+	if weekCap <= 0 {
+		weekCap = status.WeekCap
+	}
 
-	windowRatio := remainRatio(windowRemain, status.Window6HCap)
-	dayRatio := remainRatio(dayRemain, status.DayCap)
-	weekRatio := remainRatio(weekRemain, status.WeekCap)
+	windowRemain := maxInt(0, windowCap-status.Window6HUsed)
+	dayRemain := maxInt(0, dayCap-status.DayUsed)
+	weekRemain := maxInt(0, weekCap-status.WeekUsed)
+
+	windowRatio := remainRatio(windowRemain, windowCap)
+	dayRatio := remainRatio(dayRemain, dayCap)
+	weekRatio := remainRatio(weekRemain, weekCap)
 	tightestLayer := "6h"
 	tightestRatio := windowRatio
 	if dayRatio < tightestRatio {
@@ -114,6 +130,9 @@ func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 		Window6HRemaining:  windowRemain,
 		DayRemaining:       dayRemain,
 		WeekRemaining:      weekRemain,
+		EffectiveWindow6HCap: windowCap,
+		EffectiveDayCap:      dayCap,
+		EffectiveWeekCap:     weekCap,
 		QuotaTightestLayer: tightestLayer,
 		QuotaTightestRatio: tightestRatio,
 		RecoverySuggested:  recoverySuggested,

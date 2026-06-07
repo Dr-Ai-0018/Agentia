@@ -48,6 +48,9 @@ func TestBrokerServiceSelfStatus(t *testing.T) {
 	if status.Physiology.QuotaTightestLayer == "" {
 		t.Fatalf("expected quota tightest layer")
 	}
+	if status.EffectiveWindow6HCap <= 0 || status.EffectiveDayCap <= 0 || status.EffectiveWeekCap <= 0 {
+		t.Fatalf("expected effective caps to be populated")
+	}
 }
 
 func TestBrokerServiceRecoveryTick(t *testing.T) {

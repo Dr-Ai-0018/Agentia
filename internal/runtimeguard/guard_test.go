@@ -72,3 +72,31 @@ func TestDebtBlocksFurtherWork(t *testing.T) {
 		t.Fatalf("expected work call to be blocked during debt")
 	}
 }
+
+func TestFatigueAndSleepDebtShrinkEffectiveQuota(t *testing.T) {
+	state := State{
+		SparkBalance: 5.0,
+		Fatigue:      2200,
+		SleepDebt:    12,
+		Quota: tokenledger.QuotaState{
+			Window6HCap:  10000,
+			Window6HUsed: 6200,
+		},
+		ReserveSpark:  0.2,
+		ReserveStrain: 300,
+	}
+
+	effective := DeriveEffectiveQuota(state)
+	if effective.Window6HCap >= state.Quota.Window6HCap {
+		t.Fatalf("expected effective 6h cap to shrink")
+	}
+
+	got := Evaluate(state, Request{
+		Kind:       CallKindWork,
+		SparkCost:  0.2,
+		StrainCost: 900,
+	})
+	if got.Allowed {
+		t.Fatalf("expected work call to be blocked by reduced effective quota")
+	}
+}
