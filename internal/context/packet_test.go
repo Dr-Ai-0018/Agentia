@@ -125,3 +125,31 @@ func TestMemoryReviewQueueRendersInWorkingContext(t *testing.T) {
 		t.Fatalf("expected memory review queue in working context")
 	}
 }
+
+func TestFreshWorldUpdatesRenderInWorkingContext(t *testing.T) {
+	packet := Build(BuildSpec{
+		Identity: ResidentIdentity{
+			Name:     "amber",
+			Model:    "gpt-5.5",
+			Persona:  "coordinator",
+			Style:    "clear",
+			CoreBias: "reduce confusion",
+		},
+		WorldState: "same-world",
+		MemoryDigest: MemoryDigest{
+			Identity: "same-identity",
+		},
+		Working: WorkingContext{
+			RemainingSeconds: 90,
+			FreshWorldUpdates: []string{
+				"[2026-06-07T07:00:01Z] Chenglin said hello back.",
+			},
+		},
+	})
+	if !strings.Contains(packet.FullInput(), "fresh_world_updates:") {
+		t.Fatalf("expected fresh world updates in working context")
+	}
+	if !strings.Contains(packet.FullInput(), "Chenglin said hello back.") {
+		t.Fatalf("expected fresh world update body")
+	}
+}

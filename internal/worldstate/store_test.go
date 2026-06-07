@@ -47,6 +47,35 @@ func TestReplyAndIgnoreLifecycle(t *testing.T) {
 	}
 }
 
+func TestResidentCanMarkReplyRead(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	msg, err := store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append amber: %v", err)
+	}
+	reply, err := store.ReplyToResidentMessage(msg.ID, "reply one", now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("reply amber: %v", err)
+	}
+	if err := store.MarkResidentMessagesRead("amber", []string{reply.ID}, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+
+	thread, err := store.ReadThreadForResident("amber")
+	if err != nil {
+		t.Fatalf("amber thread: %v", err)
+	}
+	if thread[1].Status != StatusDelivered {
+		t.Fatalf("expected resident reply delivered, got %s", thread[1].Status)
+	}
+	if thread[1].ReadAt == "" {
+		t.Fatalf("expected resident reply internal read_at to be set")
+	}
+}
+
 func TestPendingInboxAndStatusFilter(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)
@@ -127,6 +156,50 @@ func TestTicketLifecycle(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].ID != ticket.ID {
 		t.Fatalf("expected answered amber ticket")
+	}
+}
+
+func TestConsumeFreshTicketUpdatesMarksLatestHostReplySeen(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	ticket, err := store.CreateResidentTicket("amber", "Need disk", "Please increase disk to 20G", TicketPriorityHigh, now)
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	if _, err := store.ReplyTicket(ticket.ID, "Noted. Evaluating.", false, now.Add(time.Second)); err != nil {
+		t.Fatalf("reply ticket: %v", err)
+	}
+
+	summaries, fresh, err := store.ConsumeFreshTicketUpdates("amber", 10)
+	if err != nil {
+		t.Fatalf("consume fresh updates: %v", err)
+	}
+	if len(summaries) != 1 || len(fresh) != 1 {
+		t.Fatalf("expected 1 summary and 1 fresh update, got %d / %d", len(summaries), len(fresh))
+	}
+	if fresh[0].ID != ticket.ID {
+		t.Fatalf("expected fresh update for ticket %s, got %s", ticket.ID, fresh[0].ID)
+	}
+
+	againSummaries, againFresh, err := store.ConsumeFreshTicketUpdates("amber", 10)
+	if err != nil {
+		t.Fatalf("consume fresh updates again: %v", err)
+	}
+	if len(againSummaries) != 1 {
+		t.Fatalf("expected 1 summary on second read, got %d", len(againSummaries))
+	}
+	if len(againFresh) != 0 {
+		t.Fatalf("expected no fresh updates after consumption, got %d", len(againFresh))
+	}
+
+	updated, err := store.ReadTicket(ticket.ID)
+	if err != nil {
+		t.Fatalf("read updated ticket: %v", err)
+	}
+	if updated.ResidentSeenAt == "" {
+		t.Fatalf("expected resident_seen_at to be set")
 	}
 }
 

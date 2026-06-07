@@ -11,6 +11,7 @@ import (
 	"ai-arena/internal/context"
 	"ai-arena/internal/memory"
 	"ai-arena/internal/openai"
+	"ai-arena/internal/worldstate"
 )
 
 func TestBuildProfile(t *testing.T) {
@@ -745,5 +746,106 @@ func TestReconcileReviewedMemoryArtifacts(t *testing.T) {
 	}
 	if updated.ResidentText != "Clean resident-approved summary." {
 		t.Fatalf("expected resident text reconciliation, got %q", updated.ResidentText)
+	}
+}
+
+func TestBuildResidentWorldContextConsumesRepliesWithoutReadMarkerExposure(t *testing.T) {
+	dir := t.TempDir()
+	world := NewWorldBridge(dir)
+	profile := ResidentProfile{Name: "amber"}
+	now := time.Date(2026, 6, 7, 7, 0, 0, 0, time.UTC)
+
+	msg, err := world.store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append resident message: %v", err)
+	}
+	reply, err := world.store.ReplyToResidentMessage(msg.ID, "reply", now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("reply resident message: %v", err)
+	}
+	rendered := world.BuildResidentWorldContext(profile, 10)
+	if strings.Contains(rendered, "status=read") || strings.Contains(rendered, "status=unread") {
+		t.Fatalf("chat thread must not expose read markers, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "status=delivered") {
+		t.Fatalf("expected rendered thread to show delivered status, got %q", rendered)
+	}
+	thread, err := world.store.ReadThreadForResident("amber")
+	if err != nil {
+		t.Fatalf("read thread: %v", err)
+	}
+	found := false
+	for _, item := range thread {
+		if item.ID == reply.ID {
+			found = true
+			if item.Status != worldstate.StatusDelivered {
+				t.Fatalf("expected persisted delivered status, got %s", item.Status)
+			}
+			if strings.TrimSpace(item.ReadAt) == "" {
+				t.Fatalf("expected internal read_at marker to be set")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected reply message in thread")
+	}
+}
+
+func TestBuildResidentWorldViewReturnsFreshDeliveredItemsOnce(t *testing.T) {
+	dir := t.TempDir()
+	world := NewWorldBridge(dir)
+	profile := ResidentProfile{Name: "amber"}
+	now := time.Date(2026, 6, 7, 7, 0, 0, 0, time.UTC)
+
+	msg, err := world.store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append resident message: %v", err)
+	}
+	if _, err := world.store.ReplyToResidentMessage(msg.ID, "reply", now.Add(time.Second)); err != nil {
+		t.Fatalf("reply resident message: %v", err)
+	}
+
+	first := world.BuildResidentWorldView(profile, 10)
+	if len(first.FreshDeliveredItems) != 1 {
+		t.Fatalf("expected 1 fresh delivered item, got %d", len(first.FreshDeliveredItems))
+	}
+	if !strings.Contains(first.FreshDeliveredItems[0], "reply") {
+		t.Fatalf("expected fresh delivered item to contain reply, got %q", first.FreshDeliveredItems[0])
+	}
+
+	second := world.BuildResidentWorldView(profile, 10)
+	if len(second.FreshDeliveredItems) != 0 {
+		t.Fatalf("expected fresh delivered items to be consumed once, got %#v", second.FreshDeliveredItems)
+	}
+}
+
+func TestBuildResidentWorldViewReturnsFreshTicketUpdatesOnce(t *testing.T) {
+	dir := t.TempDir()
+	world := NewWorldBridge(dir)
+	profile := ResidentProfile{Name: "amber"}
+	now := time.Date(2026, 6, 7, 7, 0, 0, 0, time.UTC)
+
+	ticket, err := world.store.CreateResidentTicket("amber", "Need guidance", "Should I treat prior notes as canonical?", worldstate.TicketPriorityMedium, now)
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	if _, err := world.store.ReplyTicket(ticket.ID, "Yes, treat them as continuity unless contradicted.", false, now.Add(time.Second)); err != nil {
+		t.Fatalf("reply ticket: %v", err)
+	}
+
+	first := world.BuildResidentWorldView(profile, 10)
+	if !strings.Contains(first.RenderedChat, "recent_tickets:") {
+		t.Fatalf("expected ticket block in rendered chat")
+	}
+	if len(first.FreshDeliveredItems) != 1 {
+		t.Fatalf("expected 1 fresh ticket update, got %d", len(first.FreshDeliveredItems))
+	}
+	if !strings.Contains(first.FreshDeliveredItems[0], "ticket_update") {
+		t.Fatalf("expected ticket_update marker, got %q", first.FreshDeliveredItems[0])
+	}
+
+	second := world.BuildResidentWorldView(profile, 10)
+	if len(second.FreshDeliveredItems) != 0 {
+		t.Fatalf("expected ticket fresh update to be consumed once, got %#v", second.FreshDeliveredItems)
 	}
 }

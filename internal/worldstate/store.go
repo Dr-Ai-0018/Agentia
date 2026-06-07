@@ -43,6 +43,7 @@ type Message struct {
 	Body              string `json:"body"`
 	CreatedAt         string `json:"created_at"`
 	ReplyToID         string `json:"reply_to_id,omitempty"`
+	ReadAt            string `json:"read_at,omitempty"`
 }
 
 type ThreadMessage struct {
@@ -75,6 +76,7 @@ type Ticket struct {
 	Status     string        `json:"status"`
 	CreatedAt  string        `json:"created_at"`
 	UpdatedAt  string        `json:"updated_at"`
+	ResidentSeenAt string    `json:"resident_seen_at,omitempty"`
 	OpenedBy   string        `json:"opened_by"`
 	Replies    []TicketReply `json:"replies"`
 }
@@ -168,6 +170,46 @@ func (s *Store) ReadRecentForResident(resident string, limit int) ([]ThreadMessa
 		return thread, nil
 	}
 	return thread[len(thread)-limit:], nil
+}
+
+func (s *Store) MarkResidentMessagesRead(resident string, ids []string, now time.Time) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	targets := map[string]struct{}{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			targets[id] = struct{}{}
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+
+	all, err := s.readAll()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range all {
+		msg := &all[i]
+		if msg.Resident != resident || msg.Direction != DirectionChenglinToResident {
+			continue
+		}
+		if _, ok := targets[msg.ID]; !ok {
+			continue
+		}
+		if strings.TrimSpace(msg.ReadAt) != "" {
+			continue
+		}
+		msg.ReadAt = now.UTC().Format(time.RFC3339)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return s.rewriteAll(all)
 }
 
 func (s *Store) ReadThreadForResident(resident string) ([]ThreadMessage, error) {
@@ -317,6 +359,43 @@ func (s *Store) append(msg Message, now time.Time) error {
 	}
 	if _, err := f.Write(append(raw, '\n')); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) rewriteAll(messages []Message) error {
+	dir := filepath.Join(s.root, "world", "messages")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	byFile := map[string][]Message{}
+	for _, msg := range messages {
+		t, err := time.Parse(time.RFC3339, msg.CreatedAt)
+		if err != nil {
+			return err
+		}
+		file := filepath.Join(dir, t.UTC().Format("2006-01-02")+".jsonl")
+		byFile[file] = append(byFile[file], msg)
+	}
+	for file, items := range byFile {
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].CreatedAt < items[j].CreatedAt
+		})
+		lines := make([]string, 0, len(items))
+		for _, msg := range items {
+			raw, err := json.Marshal(msg)
+			if err != nil {
+				return err
+			}
+			lines = append(lines, string(raw))
+		}
+		content := strings.Join(lines, "\n")
+		if content != "" {
+			content += "\n"
+		}
+		if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -508,6 +587,61 @@ func (s *Store) ReadTickets(resident, status, priority string, limit int) ([]Res
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (s *Store) ConsumeFreshTicketUpdates(resident string, limit int) ([]ResidentTicketSummary, []ResidentTicketSummary, error) {
+	tickets, err := s.loadAllTickets()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	resident = strings.TrimSpace(resident)
+	summaries := make([]ResidentTicketSummary, 0, len(tickets))
+	fresh := make([]ResidentTicketSummary, 0, len(tickets))
+	changed := false
+
+	for i := range tickets {
+		ticket := &tickets[i]
+		if resident != "" && ticket.Resident != resident {
+			continue
+		}
+		summary := summarizeTicket(*ticket)
+		summaries = append(summaries, summary)
+		if len(ticket.Replies) == 0 {
+			continue
+		}
+		last := ticket.Replies[len(ticket.Replies)-1]
+		if last.From != "chenglin" {
+			continue
+		}
+		if strings.TrimSpace(ticket.ResidentSeenAt) == last.CreatedAt {
+			continue
+		}
+		fresh = append(fresh, summary)
+		ticket.ResidentSeenAt = last.CreatedAt
+		changed = true
+	}
+
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].UpdatedAt > summaries[j].UpdatedAt
+	})
+	sort.Slice(fresh, func(i, j int) bool {
+		return fresh[i].UpdatedAt > fresh[j].UpdatedAt
+	})
+	if limit > 0 && len(summaries) > limit {
+		summaries = summaries[:limit]
+	}
+	if limit > 0 && len(fresh) > limit {
+		fresh = fresh[:limit]
+	}
+	if changed {
+		for _, ticket := range tickets {
+			if err := s.writeTicket(ticket); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return summaries, fresh, nil
 }
 
 func (s *Store) ReadTicket(ticketID string) (Ticket, error) {

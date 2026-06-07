@@ -37,6 +37,7 @@ type WorkingContext struct {
 	FrontierStatus   []string
 	BudgetFacts      []string
 	MemoryReview     []string
+	FreshWorldUpdates []string
 }
 
 type BuildSpec struct {
@@ -186,6 +187,12 @@ func buildRecentWorkingContext(resident string, working WorkingContext) string {
 	if len(working.MemoryReview) > 0 {
 		lines = append(lines, "memory_review_queue:")
 		for _, item := range working.MemoryReview {
+			lines = append(lines, "- "+oneLine(item))
+		}
+	}
+	if len(working.FreshWorldUpdates) > 0 {
+		lines = append(lines, "fresh_world_updates:")
+		for _, item := range working.FreshWorldUpdates {
 			lines = append(lines, "- "+oneLine(item))
 		}
 	}

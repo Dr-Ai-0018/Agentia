@@ -201,7 +201,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 }
 
 func (r *Runner) buildContextPacket(profile ResidentProfile, remaining int, state loopState) context.Packet {
-	worldState := r.world.BuildResidentWorldContext(profile, 6)
+	worldView := r.world.BuildResidentWorldView(profile, 6)
 	memoryDigest := r.buildResidentMemoryDigest(profile)
 	working := context.WorkingContext{
 		RemainingSeconds: remaining,
@@ -213,6 +213,7 @@ func (r *Runner) buildContextPacket(profile ResidentProfile, remaining int, stat
 		FrontierStatus:   renderExplorationFrontier(state),
 		BudgetFacts:      renderBudgetFacts(state),
 		MemoryReview:     r.renderMemoryReviewQueue(profile),
+		FreshWorldUpdates: worldView.FreshDeliveredItems,
 	}
 	if state.LastDecision != nil {
 		working.LastSituation = state.LastDecision.Situation
@@ -226,7 +227,7 @@ func (r *Runner) buildContextPacket(profile ResidentProfile, remaining int, stat
 			Style:    profile.Style,
 			CoreBias: profile.CoreBias,
 		},
-		WorldState:   worldState,
+		WorldState:   worldView.RenderedChat,
 		MemoryDigest: memoryDigest,
 		Working:      working,
 	})

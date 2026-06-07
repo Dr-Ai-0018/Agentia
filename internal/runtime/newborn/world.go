@@ -12,6 +12,11 @@ type WorldBridge struct {
 	store *worldstate.Store
 }
 
+type ResidentWorldView struct {
+	RenderedChat        string
+	FreshDeliveredItems []string
+}
+
 func NewWorldBridge(root string) *WorldBridge {
 	return &WorldBridge{store: worldstate.New(root)}
 }
@@ -33,6 +38,10 @@ func (w *WorldBridge) CreateResidentTicket(profile ResidentProfile, title, body,
 }
 
 func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit int) string {
+	return w.BuildResidentWorldView(profile, limit).RenderedChat
+}
+
+func (w *WorldBridge) BuildResidentWorldView(profile ResidentProfile, limit int) ResidentWorldView {
 	messages, err := w.store.ReadRecentForResident(profile.Name, limit)
 	header := []string{
 		"chat_mode: free-form and asynchronous",
@@ -41,12 +50,36 @@ func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit i
 		"ticket_mode: formal host-decision objects with priority and explicit resolution state",
 		"ticket_rule: use chat for ordinary conversation; use tickets for requests that require a clear host decision",
 	}
+	ticketBlock, freshTicketItems := w.buildResidentTicketBlock(profile, 6)
+
 	if err != nil || len(messages) == 0 {
 		header = append(header, "recent_chat: none recorded")
-		if ticketBlock := w.buildResidentTicketBlock(profile, 6); ticketBlock != "" {
+		if ticketBlock != "" {
 			header = append(header, ticketBlock)
 		}
-		return strings.Join(header, "\n")
+		return ResidentWorldView{
+			RenderedChat:        strings.Join(header, "\n"),
+			FreshDeliveredItems: freshTicketItems,
+		}
+	}
+
+	unreadIDs := []string{}
+	freshDelivered := []string{}
+	for _, msg := range messages {
+		if msg.Direction == worldstate.DirectionChenglinToResident && strings.TrimSpace(msg.ReadAt) == "" {
+			unreadIDs = append(unreadIDs, msg.ID)
+			freshDelivered = append(freshDelivered, fmt.Sprintf("[%s] %s", msg.CreatedAt, oneLine(msg.Body)))
+		}
+	}
+	if len(unreadIDs) > 0 {
+		_ = w.store.MarkResidentMessagesRead(profile.Name, unreadIDs, time.Now().UTC())
+		for i := range messages {
+			for _, id := range unreadIDs {
+				if messages[i].ID == id {
+					messages[i].ReadAt = time.Now().UTC().Format(time.RFC3339)
+				}
+			}
+		}
 	}
 
 	lines := append(header, "recent_chat:")
@@ -61,16 +94,19 @@ func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit i
 		}
 		lines = append(lines, fmt.Sprintf("- [%s] status=%s %s -> %s%s: %s", msg.CreatedAt, msg.Status, msg.From, msg.To, suffix, oneLine(msg.Body)))
 	}
-	if ticketBlock := w.buildResidentTicketBlock(profile, 6); ticketBlock != "" {
+	if ticketBlock != "" {
 		lines = append(lines, ticketBlock)
 	}
-	return strings.Join(lines, "\n")
+	return ResidentWorldView{
+		RenderedChat:        strings.Join(lines, "\n"),
+		FreshDeliveredItems: append(freshDelivered, freshTicketItems...),
+	}
 }
 
-func (w *WorldBridge) buildResidentTicketBlock(profile ResidentProfile, limit int) string {
-	tickets, err := w.store.ReadTickets(profile.Name, "", "", limit)
+func (w *WorldBridge) buildResidentTicketBlock(profile ResidentProfile, limit int) (string, []string) {
+	tickets, fresh, err := w.store.ConsumeFreshTicketUpdates(profile.Name, limit)
 	if err != nil || len(tickets) == 0 {
-		return "recent_tickets: none recorded"
+		return "recent_tickets: none recorded", nil
 	}
 
 	lines := []string{"recent_tickets:"}
@@ -85,7 +121,17 @@ func (w *WorldBridge) buildResidentTicketBlock(profile ResidentProfile, limit in
 			oneLine(ticket.LastPreview),
 		))
 	}
-	return strings.Join(lines, "\n")
+	freshLines := make([]string, 0, len(fresh))
+	for _, ticket := range fresh {
+		freshLines = append(freshLines, fmt.Sprintf("ticket_update ticket=%s status=%s priority=%s title=%s preview=%s",
+			ticket.ID,
+			ticket.Status,
+			ticket.Priority,
+			oneLine(ticket.Title),
+			oneLine(ticket.LastPreview),
+		))
+	}
+	return strings.Join(lines, "\n"), freshLines
 }
 
 func oneLine(s string) string {
