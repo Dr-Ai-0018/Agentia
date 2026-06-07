@@ -96,16 +96,7 @@ type streamingEvent struct {
 	Response  responseEnvelope `json:"response"`
 }
 
-func ProbeResponses(client *http.Client, baseURL, apiKey string) error {
-	payload := RequestPayload{
-		Model:           "gpt-5.4-mini",
-		Instructions:    "Health probe. Reply with a single short token.",
-		PromptCacheKey:  "arena-health-probe-v1",
-		Input:           []Message{{Role: "user", Content: "ping"}},
-		MaxOutputTokens: 8,
-		Stream:          true,
-		Store:           false,
-	}
+func ProbeResponses(client *http.Client, baseURL, apiKey string, payload RequestPayload) error {
 	result, err := PostStream(client, baseURL, apiKey, payload, false)
 	if err != nil {
 		return fmt.Errorf("streaming health probe failed: %w", err)

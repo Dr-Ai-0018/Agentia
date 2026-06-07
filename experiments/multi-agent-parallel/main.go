@@ -56,7 +56,11 @@ func main() {
 		exitf("create out dir: %v", err)
 	}
 	client := &http.Client{Timeout: 5 * time.Minute}
-	if err := openai.ProbeResponses(client, *baseURL, apiKey); err != nil {
+	probeProfile, err := newborn.BuildProfile("jade")
+	if err != nil {
+		exitf("build probe profile: %v", err)
+	}
+	if err := openai.ProbeResponses(client, *baseURL, apiKey, newborn.BuildDecisionProbePayload(probeProfile)); err != nil {
 		exitf("openai health probe failed: %v", err)
 	}
 

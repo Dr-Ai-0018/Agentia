@@ -84,6 +84,29 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 	}
 }
 
+func BuildDecisionProbePayload(profile ResidentProfile) openai.RequestPayload {
+	return buildDecisionToolPayload(profile, []openai.Message{
+		{
+			Role: "user",
+			Content: strings.Join([]string{
+				"[probe_context]",
+				"resident: " + profile.Name,
+				"remaining_countdown_seconds: 30",
+				"actions_used: none",
+				"noop_streak: 0",
+				"budget_facts:",
+				"- budget_tier=balanced",
+				"- budget_status=not_observed_yet",
+				"- broker_self_surfaces_available=self_status,self_quota",
+				"exploration_frontier:",
+				"- next_preferred_surface=identity",
+				"- next_probe_shape=single identity probe such as whoami or hostname",
+				"Make one valid compact decision. This is only a decision-surface probe.",
+			}, "\n"),
+		},
+	}, "arena-newborn-decision-probe-"+profile.Name+"-v1")
+}
+
 func parseDecisionResult(result openai.StreamResult) (AgentDecision, error) {
 	for _, item := range result.FunctionCalls {
 		name := strings.TrimSpace(item.Name)
