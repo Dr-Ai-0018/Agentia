@@ -263,6 +263,14 @@ func TestBuildDecisionToolPayloadUsesStableInstructions(t *testing.T) {
 	if payload.PromptCacheKey != "cache-key" {
 		t.Fatalf("unexpected prompt cache key")
 	}
+	params := payload.Tools[0].Parameters
+	required, ok := params["required"].([]string)
+	if !ok {
+		t.Fatalf("expected required fields slice")
+	}
+	if len(required) != 3 || required[0] != "situation" || required[1] != "next_action" || required[2] != "reason" {
+		t.Fatalf("unexpected required fields: %#v", required)
+	}
 }
 
 func TestContextPackageDirectly(t *testing.T) {
@@ -901,6 +909,29 @@ func TestMemoryReviewRequestMapping(t *testing.T) {
 	decision.MemoryAction = "demote"
 	if got := decision.MemoryReviewRequest().Action; got != memory.ActionDecay {
 		t.Fatalf("expected demote to map to decay, got %s", got)
+	}
+}
+
+func TestNormalizeDecisionForActionClearsIrrelevantFields(t *testing.T) {
+	decision := compactDecision(AgentDecision{
+		NextAction:     "guest_exec",
+		Command:        "whoami",
+		Message:        "hello",
+		TicketTitle:    "need thing",
+		TicketBody:     "body",
+		TicketPriority: "high",
+		MemoryID:       "m1",
+		MemoryAction:   "keep",
+		MemorySummary:  "sum",
+		MemoryText:     "text",
+		MemoryLayer:    "short",
+		MemoryReason:   "why",
+	})
+	if decision.Command == "" {
+		t.Fatalf("expected command to remain for guest_exec")
+	}
+	if decision.Message != "" || decision.TicketTitle != "" || decision.MemoryID != "" {
+		t.Fatalf("expected irrelevant fields cleared, got %#v", decision)
 	}
 }
 

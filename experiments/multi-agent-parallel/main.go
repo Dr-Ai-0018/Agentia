@@ -67,6 +67,9 @@ func main() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if i > 0 {
+				time.Sleep(time.Duration(i) * time.Second)
+			}
 			run := residentRun{Resident: name}
 			status, err := app.RunStatus(name)
 			if err == nil {

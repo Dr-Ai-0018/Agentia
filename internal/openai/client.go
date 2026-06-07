@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type Message struct {
@@ -100,31 +101,78 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 	if err != nil {
 		return StreamResult{}, fmt.Errorf("marshal request: %w", err)
 	}
+	endpoint := strings.TrimRight(baseURL, "/") + "/responses"
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return StreamResult{}, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Content-Type", "application/json")
 
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/responses", bytes.NewReader(body))
-	if err != nil {
-		return StreamResult{}, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("send request: %w", err)
+			if attempt < 4 {
+				time.Sleep(retryDelay(attempt))
+				continue
+			}
+			return StreamResult{}, lastErr
+		}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return StreamResult{}, fmt.Errorf("send request: %w", err)
-	}
-	defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			raw, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+			if shouldRetryHTTPStatus(resp.StatusCode) && attempt < 4 {
+				time.Sleep(retryDelay(attempt))
+				continue
+			}
+			return StreamResult{}, lastErr
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		return StreamResult{}, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		result, err := ParseSSE(resp.Body, verbose)
+		_ = resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			if attempt < 4 {
+				time.Sleep(retryDelay(attempt))
+				continue
+			}
+			return StreamResult{}, err
+		}
+		result.RequestID = resp.Header.Get("x-request-id")
+		return result, nil
 	}
+	if lastErr != nil {
+		return StreamResult{}, lastErr
+	}
+	return StreamResult{}, errors.New("request failed without a concrete error")
+}
 
-	result, err := ParseSSE(resp.Body, verbose)
-	if err != nil {
-		return StreamResult{}, err
+func shouldRetryHTTPStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
 	}
-	result.RequestID = resp.Header.Get("x-request-id")
-	return result, nil
+}
+
+func retryDelay(attempt int) time.Duration {
+	switch attempt {
+	case 0:
+		return 400 * time.Millisecond
+	case 1:
+		return 1200 * time.Millisecond
+	case 2:
+		return 2500 * time.Millisecond
+	case 3:
+		return 4 * time.Second
+	default:
+		return 6 * time.Second
+	}
 }
 
 func ParseSSE(r io.Reader, verbose bool) (StreamResult, error) {

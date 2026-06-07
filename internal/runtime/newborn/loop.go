@@ -787,13 +787,14 @@ func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message
 		Instructions:   acceptanceInstructions(),
 		PromptCacheKey: fmt.Sprintf("arena-newborn-acceptance-%s-v1", profile.Name),
 		Input:          append([]openai.Message(nil), history...),
+		MaxOutputTokens: 220,
 		Stream:         true,
 		Store:          false,
 	}, verbose)
 	if err != nil {
 		return "", nil, fmt.Errorf("acceptance request failed: %w", err)
 	}
-	brokerLog, err := r.budget.Settle(profile, result, time.Now().UTC(), runtimeguard.CallKindWork, tokenledger.ActivityNormalWork)
+	brokerLog, err := r.budget.Settle(profile, result, time.Now().UTC(), runtimeguard.CallKindFinalNotice, tokenledger.ActivityLightWork)
 	if err != nil {
 		return "", nil, fmt.Errorf("acceptance broker settlement failed: %w", err)
 	}

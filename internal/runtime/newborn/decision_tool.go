@@ -72,7 +72,7 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 							"type": "string",
 						},
 					},
-					"required":             []string{"situation", "next_action", "reason", "command", "message", "ticket_title", "ticket_body", "ticket_priority", "memory_id", "memory_action", "memory_summary", "memory_text", "memory_layer", "memory_reason"},
+					"required":             []string{"situation", "next_action", "reason"},
 					"additionalProperties": false,
 				},
 			},
@@ -131,5 +131,61 @@ func compactDecision(decision AgentDecision) AgentDecision {
 	decision.MemoryText = truncateForModel(decision.MemoryText, 320)
 	decision.MemoryLayer = truncateForModel(decision.MemoryLayer, 32)
 	decision.MemoryReason = truncateForModel(decision.MemoryReason, 180)
+	decision = normalizeDecisionForAction(decision)
+	return decision
+}
+
+func normalizeDecisionForAction(decision AgentDecision) AgentDecision {
+	switch decision.NextAction {
+	case "guest_exec", "write_note":
+		decision.Message = ""
+		decision.TicketTitle = ""
+		decision.TicketBody = ""
+		decision.TicketPriority = ""
+		decision.MemoryID = ""
+		decision.MemoryAction = ""
+		decision.MemorySummary = ""
+		decision.MemoryText = ""
+		decision.MemoryLayer = ""
+		decision.MemoryReason = ""
+	case "self_status", "self_quota", "noop":
+		decision.Command = ""
+		decision.Message = ""
+		decision.TicketTitle = ""
+		decision.TicketBody = ""
+		decision.TicketPriority = ""
+		decision.MemoryID = ""
+		decision.MemoryAction = ""
+		decision.MemorySummary = ""
+		decision.MemoryText = ""
+		decision.MemoryLayer = ""
+		decision.MemoryReason = ""
+	case "talk_to_chenglin":
+		decision.Command = ""
+		decision.TicketTitle = ""
+		decision.TicketBody = ""
+		decision.TicketPriority = ""
+		decision.MemoryID = ""
+		decision.MemoryAction = ""
+		decision.MemorySummary = ""
+		decision.MemoryText = ""
+		decision.MemoryLayer = ""
+		decision.MemoryReason = ""
+	case "submit_ticket":
+		decision.Command = ""
+		decision.Message = ""
+		decision.MemoryID = ""
+		decision.MemoryAction = ""
+		decision.MemorySummary = ""
+		decision.MemoryText = ""
+		decision.MemoryLayer = ""
+		decision.MemoryReason = ""
+	case "memory_review":
+		decision.Command = ""
+		decision.Message = ""
+		decision.TicketTitle = ""
+		decision.TicketBody = ""
+		decision.TicketPriority = ""
+	}
 	return decision
 }
