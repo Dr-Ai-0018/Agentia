@@ -3,8 +3,8 @@ package broker
 import (
 	"fmt"
 
-	"ai-arena/internal/auth"
 	"ai-arena/internal/audit"
+	"ai-arena/internal/auth"
 	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/world"
 )
@@ -35,6 +35,16 @@ func (s *SelfService) Status(claim auth.ResidentClaim) (brokerstate.ResidentStat
 		return brokerstate.ResidentStatus{}, err
 	}
 	return s.app.RunStatus(claim.ResidentID)
+}
+
+func (s *SelfService) Quota(claim auth.ResidentClaim) (QuotaOutput, error) {
+	if err := s.guard.Allow(ActionStatus); err != nil {
+		return QuotaOutput{}, err
+	}
+	if err := auth.ValidateSelfAccess(claim, claim.ResidentID); err != nil {
+		return QuotaOutput{}, err
+	}
+	return s.app.RunQuota(claim.ResidentID)
 }
 
 func (s *SelfService) Binding(claim auth.ResidentClaim) (ResidentBinding, error) {

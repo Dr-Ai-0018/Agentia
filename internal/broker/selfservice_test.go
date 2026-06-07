@@ -24,6 +24,29 @@ func TestSelfServiceStatus(t *testing.T) {
 	}
 }
 
+func TestSelfServiceQuota(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+	if _, err := app.RunReset("jade", now); err != nil {
+		t.Fatalf("reset jade: %v", err)
+	}
+
+	service := NewSelfService(app)
+	out, err := service.Quota(auth.ResidentClaim{ResidentID: "jade"})
+	if err != nil {
+		t.Fatalf("self quota: %v", err)
+	}
+	if out.Status.ResidentID != "jade" {
+		t.Fatalf("unexpected resident id: %s", out.Status.ResidentID)
+	}
+	if out.Quota.Window6HCap <= 0 {
+		t.Fatalf("expected non-zero 6h cap")
+	}
+	if out.Quota.RecoveryMode == "" {
+		t.Fatalf("expected recovery mode in quota snapshot")
+	}
+}
+
 func TestSelfServiceBindingDeniedOnMismatch(t *testing.T) {
 	app := New(t.TempDir())
 	service := NewSelfService(app)

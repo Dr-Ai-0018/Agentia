@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|recover|reset|admit|binding|self-status|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -112,6 +112,12 @@ func main() {
 		printJSON(out)
 	case "self-status":
 		out, err := broker.NewSelfService(app).Status(auth.ResidentClaim{ResidentID: *residentID})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "self-quota":
+		out, err := broker.NewSelfService(app).Quota(auth.ResidentClaim{ResidentID: *residentID})
 		if err != nil {
 			exitf("%v", err)
 		}
