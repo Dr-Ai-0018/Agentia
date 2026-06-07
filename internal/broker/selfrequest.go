@@ -57,22 +57,37 @@ var resourceRequestBodies = map[string]string{
 }
 
 func (s *SelfService) RequestCPU(claim auth.ResidentClaim, input ResourceRequestInput) (ResourceRequestResult, error) {
+	if err := s.guard.Allow(ActionRequestCPU); err != nil {
+		return ResourceRequestResult{}, err
+	}
 	return s.requestResource(claim, "cpu", input)
 }
 
 func (s *SelfService) RequestMemory(claim auth.ResidentClaim, input ResourceRequestInput) (ResourceRequestResult, error) {
+	if err := s.guard.Allow(ActionRequestMemory); err != nil {
+		return ResourceRequestResult{}, err
+	}
 	return s.requestResource(claim, "memory", input)
 }
 
 func (s *SelfService) RequestDisk(claim auth.ResidentClaim, input ResourceRequestInput) (ResourceRequestResult, error) {
+	if err := s.guard.Allow(ActionRequestDisk); err != nil {
+		return ResourceRequestResult{}, err
+	}
 	return s.requestResource(claim, "disk", input)
 }
 
 func (s *SelfService) RequestGPUTime(claim auth.ResidentClaim, input ResourceRequestInput) (ResourceRequestResult, error) {
+	if err := s.guard.Allow(ActionRequestGPUTime); err != nil {
+		return ResourceRequestResult{}, err
+	}
 	return s.requestResource(claim, "gpu-time", input)
 }
 
 func (s *SelfService) RequestVPSAccess(claim auth.ResidentClaim, input ResourceRequestInput) (ResourceRequestResult, error) {
+	if err := s.guard.Allow(ActionRequestVPS); err != nil {
+		return ResourceRequestResult{}, err
+	}
 	return s.requestResource(claim, "vps-access", input)
 }
 
@@ -129,6 +144,9 @@ func (s *SelfService) requestResource(claim auth.ResidentClaim, resource string,
 }
 
 func (s *SelfService) SubmitResult(claim auth.ResidentClaim, input SubmissionInput) (SubmissionResult, error) {
+	if err := s.guard.Allow(ActionSubmitResult); err != nil {
+		return SubmissionResult{}, err
+	}
 	if err := auth.ValidateSelfAccess(claim, claim.ResidentID); err != nil {
 		return SubmissionResult{}, err
 	}

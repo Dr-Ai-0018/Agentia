@@ -17,6 +17,9 @@ type MachineActionResult struct {
 }
 
 func (s *SelfService) RequestReboot(claim auth.ResidentClaim) (MachineActionResult, error) {
+	if err := s.guard.Allow(ActionReboot); err != nil {
+		return MachineActionResult{}, err
+	}
 	if err := auth.ValidateSelfAccess(claim, claim.ResidentID); err != nil {
 		return MachineActionResult{}, err
 	}
@@ -40,6 +43,9 @@ func (s *SelfService) RequestReboot(claim auth.ResidentClaim) (MachineActionResu
 }
 
 func (s *SelfService) RequestSnapshot(claim auth.ResidentClaim, snapshotName string) (MachineActionResult, error) {
+	if err := s.guard.Allow(ActionSnapshot); err != nil {
+		return MachineActionResult{}, err
+	}
 	if err := auth.ValidateSelfAccess(claim, claim.ResidentID); err != nil {
 		return MachineActionResult{}, err
 	}
@@ -71,6 +77,9 @@ func (s *SelfService) RequestSnapshot(claim auth.ResidentClaim, snapshotName str
 }
 
 func (s *SelfService) RequestRestore(claim auth.ResidentClaim, snapshotName string) (MachineActionResult, error) {
+	if err := s.guard.Allow(ActionRestore); err != nil {
+		return MachineActionResult{}, err
+	}
 	if err := auth.ValidateSelfAccess(claim, claim.ResidentID); err != nil {
 		return MachineActionResult{}, err
 	}
