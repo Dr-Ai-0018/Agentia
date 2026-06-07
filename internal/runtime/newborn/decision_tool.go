@@ -28,7 +28,7 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 							},
 						"next_action": map[string]any{
 							"type": "string",
-							"enum": []string{"guest_exec", "self_status", "self_quota", "noop"},
+							"enum": []string{"guest_exec", "self_status", "self_quota", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop"},
 						},
 						"reason": map[string]any{
 							"type": "string",
@@ -36,8 +36,56 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 							"command": map[string]any{
 								"type": "string",
 							},
+							"message": map[string]any{
+								"type": "string",
+							},
+							"ticket_title": map[string]any{
+								"type": "string",
+							},
+							"ticket_body": map[string]any{
+								"type": "string",
+							},
+							"ticket_priority": map[string]any{
+								"type": "string",
+								"enum": []string{"", "low", "medium", "high", "urgent"},
+							},
+							"memory_id": map[string]any{
+								"type": "string",
+							},
+							"memory_action": map[string]any{
+								"type": "string",
+								"enum": []string{"", "keep", "rewrite", "compress", "demote", "delete"},
+							},
+							"memory_summary": map[string]any{
+								"type": "string",
+							},
+							"memory_text": map[string]any{
+								"type": "string",
+							},
+							"memory_layer": map[string]any{
+								"type": "string",
+								"enum": []string{"", "instant", "short", "long", "permanent"},
+							},
+							"memory_reason": map[string]any{
+								"type": "string",
+							},
 						},
-						"required":             []string{"situation", "next_action", "reason", "command"},
+						"required": []string{
+							"situation",
+							"next_action",
+							"reason",
+							"command",
+							"message",
+							"ticket_title",
+							"ticket_body",
+							"ticket_priority",
+							"memory_id",
+							"memory_action",
+							"memory_summary",
+							"memory_text",
+							"memory_layer",
+							"memory_reason",
+						},
 						"additionalProperties": false,
 					},
 				},

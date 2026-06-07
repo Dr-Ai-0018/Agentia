@@ -169,6 +169,41 @@ func TestFallbackAcceptance(t *testing.T) {
 	}
 }
 
+func TestRenderAcceptanceRoundRecap(t *testing.T) {
+	rounds := []RoundLog{
+		{
+			Round: 1,
+			Decision: AgentDecision{
+				NextAction: "guest_exec",
+				Command:    "hostname",
+			},
+			Observation: "jade\n",
+		},
+		{
+			Round: 2,
+			Decision: AgentDecision{
+				NextAction: "talk_to_chenglin",
+				Message:    "I found the machine quiet but healthy.",
+			},
+			Observation: "message delivered to Chenglin",
+		},
+	}
+
+	got := renderAcceptanceRoundRecap(rounds)
+	if !strings.Contains(got, "round=1 action=guest_exec") {
+		t.Fatalf("expected guest_exec recap, got %q", got)
+	}
+	if !strings.Contains(got, "command=hostname") {
+		t.Fatalf("expected command recap, got %q", got)
+	}
+	if !strings.Contains(got, "round=2 action=talk_to_chenglin") {
+		t.Fatalf("expected chat recap, got %q", got)
+	}
+	if !strings.Contains(got, "message=I found the machine quiet but healthy.") {
+		t.Fatalf("expected message recap, got %q", got)
+	}
+}
+
 func TestParseDecisionResultFromFunctionCall(t *testing.T) {
 	result := openai.StreamResult{
 		FunctionCalls: []openai.ResponseItem{
@@ -310,8 +345,40 @@ func TestBuildDecisionToolPayloadUsesStableInstructions(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected required fields slice")
 	}
-	if len(required) != 4 || required[0] != "situation" || required[1] != "next_action" || required[2] != "reason" || required[3] != "command" {
+	if len(required) != 14 {
 		t.Fatalf("unexpected required fields: %#v", required)
+	}
+	expected := []string{
+		"situation",
+		"next_action",
+		"reason",
+		"command",
+		"message",
+		"ticket_title",
+		"ticket_body",
+		"ticket_priority",
+		"memory_id",
+		"memory_action",
+		"memory_summary",
+		"memory_text",
+		"memory_layer",
+		"memory_reason",
+	}
+	for i := range expected {
+		if required[i] != expected[i] {
+			t.Fatalf("unexpected required field order/content at %d: got %q want %q", i, required[i], expected[i])
+		}
+	}
+	nextAction, ok := params["properties"].(map[string]any)["next_action"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected next_action property")
+	}
+	enum, ok := nextAction["enum"].([]string)
+	if !ok {
+		t.Fatalf("expected next_action enum slice")
+	}
+	if len(enum) != 8 {
+		t.Fatalf("expected 8 next_action values, got %#v", enum)
 	}
 }
 
@@ -603,8 +670,8 @@ func TestDetectExplorationSurfacesAndNextFrontier(t *testing.T) {
 		t.Fatalf("expected network to remain unseen: %#v", surfaces)
 	}
 	next, ok := nextUnexploredSurface(surfaces, "balanced")
-	if !ok || next != SurfaceNetwork {
-		t.Fatalf("expected next frontier network, got %q ok=%v", next, ok)
+	if !ok || next != SurfaceWorld {
+		t.Fatalf("expected next frontier world, got %q ok=%v", next, ok)
 	}
 	if preferredProbeShape(next) == "" {
 		t.Fatalf("expected probe shape guidance for next frontier")
@@ -625,8 +692,8 @@ func TestRenderExplorationFrontierIncludesCompletionFlag(t *testing.T) {
 	if !strings.Contains(joined, "baseline_capture_complete=true") {
 		t.Fatalf("expected completion flag in %q", joined)
 	}
-	if !strings.Contains(joined, "next_preferred_surface=services") {
-		t.Fatalf("expected services as next frontier in %q", joined)
+	if !strings.Contains(joined, "next_preferred_surface=world") {
+		t.Fatalf("expected world as next frontier in %q", joined)
 	}
 	if !strings.Contains(joined, "next_probe_shape=") {
 		t.Fatalf("expected probe shape guidance in %q", joined)
@@ -645,8 +712,8 @@ func TestBudgetTierAffectsNextFrontier(t *testing.T) {
 		t.Fatalf("expected tight frontier to prefer world before heavier surfaces, got %q ok=%v", nextTight, ok)
 	}
 	nextComfortable, ok := nextUnexploredSurface(surfaces, "comfortable")
-	if !ok || nextComfortable != SurfaceServices {
-		t.Fatalf("expected comfortable frontier to prefer services, got %q ok=%v", nextComfortable, ok)
+	if !ok || nextComfortable != SurfaceWorld {
+		t.Fatalf("expected comfortable frontier to prefer world, got %q ok=%v", nextComfortable, ok)
 	}
 }
 

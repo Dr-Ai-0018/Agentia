@@ -106,3 +106,16 @@
 - `context-packet/`
 - `broker-self-actions/`
 - `vm-control/`
+
+当前进展补充：
+
+- `broker-self-actions/`
+  - 已完成真实 `self_status` 验收
+  - 已完成真实越权拒绝验收
+- `vm-control/`
+  - 已完成 `jade` 的宿主/guest 双视角真实采样
+  - 已确认当前健康样本不会误报资源申请
+- `memory-runtime/`
+  - 仍然是 memory 子系统的真实可用基线
+- `multi-agent-baseline/`
+  - 已能真实跑通 newborn 决策与 VM 内窄探针执行，但正式 resident runtime 仍需继续收口

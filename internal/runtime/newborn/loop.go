@@ -187,7 +187,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
 	var acceptanceBroker *BrokerUsageLog
 	if len(roundLogs) > 0 {
-		value, brokerLog, err := r.runAcceptance(profile, history, verbose)
+		value, brokerLog, err := r.runAcceptance(profile, history, roundLogs, verbose)
 		if err != nil {
 			return FinalReport{}, err
 		}
@@ -619,9 +619,9 @@ func preferredSurfaceOrder(tier string) []ExplorationSurface {
 		return []ExplorationSurface{
 			SurfaceIdentity,
 			SurfaceFilesystem,
+			SurfaceWorld,
 			SurfaceResources,
 			SurfaceNetwork,
-			SurfaceWorld,
 			SurfaceServices,
 			SurfacePackages,
 		}
@@ -629,21 +629,21 @@ func preferredSurfaceOrder(tier string) []ExplorationSurface {
 		return []ExplorationSurface{
 			SurfaceIdentity,
 			SurfaceFilesystem,
+			SurfaceWorld,
 			SurfaceResources,
 			SurfaceNetwork,
 			SurfaceServices,
-			SurfaceWorld,
 			SurfacePackages,
 		}
 	default:
 		return []ExplorationSurface{
 			SurfaceIdentity,
 			SurfaceFilesystem,
+			SurfaceWorld,
 			SurfaceResources,
 			SurfaceNetwork,
 			SurfaceServices,
 			SurfacePackages,
-			SurfaceWorld,
 		}
 	}
 }
@@ -781,15 +781,27 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message, verbose bool) (string, *BrokerUsageLog, error) {
+func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message, rounds []RoundLog, verbose bool) (string, *BrokerUsageLog, error) {
+	acceptanceInput := append([]openai.Message(nil), history...)
+	acceptanceInput = append(acceptanceInput, openai.Message{
+		Role: "user",
+		Content: strings.Join([]string{
+			"[acceptance_request]",
+			"Stop acting now. Do not make another decision. Do not output any command, JSON, schema, or decision summary.",
+			"Write only the final plain-text acceptance report.",
+			"Base it strictly on the transcript and observed facts from this run.",
+			"Recent round recap:",
+			renderAcceptanceRoundRecap(rounds),
+		}, "\n"),
+	})
 	result, err := openai.PostStream(r.client, r.baseURL, r.apiKey, openai.RequestPayload{
-		Model:          profile.Model,
-		Instructions:   acceptanceInstructions(),
-		PromptCacheKey: fmt.Sprintf("arena-newborn-acceptance-%s-v1", profile.Name),
-		Input:          append([]openai.Message(nil), history...),
+		Model:           profile.Model,
+		Instructions:    acceptanceInstructions(),
+		PromptCacheKey:  fmt.Sprintf("arena-newborn-acceptance-%s-v2", profile.Name),
+		Input:           acceptanceInput,
 		MaxOutputTokens: 220,
-		Stream:         true,
-		Store:          false,
+		Stream:          true,
+		Store:           false,
 	}, verbose)
 	if err != nil {
 		return "", nil, fmt.Errorf("acceptance request failed: %w", err)
@@ -799,6 +811,27 @@ func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message
 		return "", nil, fmt.Errorf("acceptance broker settlement failed: %w", err)
 	}
 	return normalizeAcceptance(result.OutputText), brokerLog, nil
+}
+
+func renderAcceptanceRoundRecap(rounds []RoundLog) string {
+	if len(rounds) == 0 {
+		return "- no rounds completed"
+	}
+	lines := make([]string, 0, len(rounds))
+	for _, round := range rounds {
+		line := fmt.Sprintf("- round=%d action=%s", round.Round, round.Decision.NextAction)
+		if v := strings.TrimSpace(round.Decision.Command); v != "" {
+			line += " command=" + oneLine(v)
+		}
+		if v := strings.TrimSpace(round.Decision.Message); v != "" {
+			line += " message=" + oneLine(v)
+		}
+		if v := strings.TrimSpace(round.Observation); v != "" {
+			line += " observed=" + oneLine(v)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func fallbackAcceptance(rounds []RoundLog, stoppedReason string) string {

@@ -30,6 +30,10 @@
 - 已可基于真实 Incus 重启绑定实例验证 `self_reboot`
 - 已可基于真实 Incus 创建快照验证 `self_snapshot_create`
 - 已可验证越权字段拒绝
+- 2026-06-07 已完成真实验收：
+  - `jade -> self_status` 成功
+  - `jade -> forbidden_cross_vm` 被宿主边界明确拒绝
+  - 绑定映射未出现跨实例泄漏
 
 ## 运行方式
 
@@ -91,3 +95,9 @@ go run ./experiments/broker-self-actions --agent jade --action forbidden_cross_v
 - resident 是否只能操作自己绑定的实例
 - 返回结构是否适合后续 broker API 固化
 - 越权字段是否在进入宿主控制前就被拒绝
+
+## 最新结论
+
+- 第一阶段 `self-only` 边界已经具备真实可运行性，不再只是模拟。
+- `self_status` 返回的数据已经足够给 resident 形成“这是我自己的身体和额度状态”的初始感知。
+- 越权字段 `instance_name` 会在进入 Incus 控制前直接被拒绝，这条边界目前是清晰的。
