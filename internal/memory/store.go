@@ -449,7 +449,7 @@ func (s *FileStore) writeBundle(resident string, bundle ResidentMemoryBundle) er
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.residentPath(resident), raw, 0o644)
+	return atomicWriteResidentBundle(s.residentPath(resident), raw, 0o644)
 }
 
 func (s *FileStore) residentPath(resident string) string {
@@ -839,4 +839,16 @@ func maxInt(left, right int) int {
 		return left
 	}
 	return right
+}
+
+func atomicWriteResidentBundle(path string, data []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }

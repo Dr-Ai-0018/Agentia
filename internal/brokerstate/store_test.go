@@ -47,6 +47,9 @@ func TestSaveAndLoadResidentSnapshot(t *testing.T) {
 	if loaded.SparkAccount.Balance != 1.2345 {
 		t.Fatalf("spark balance mismatch after load")
 	}
+	if loaded.Revision != 1 {
+		t.Fatalf("expected revision 1 after first save, got %d", loaded.Revision)
+	}
 }
 
 func TestDeleteResidentSnapshot(t *testing.T) {
@@ -55,7 +58,7 @@ func TestDeleteResidentSnapshot(t *testing.T) {
 	snapshot := runtimecore.Snapshot{
 		Version: "runtimecore/v1",
 		SavedAt: time.Now().UTC(),
-		State: runtimecore.ResidentState{ResidentID: "jade"},
+		State:   runtimecore.ResidentState{ResidentID: "jade"},
 	}
 	if _, err := store.SaveResidentSnapshot("jade", snapshot); err != nil {
 		t.Fatalf("save snapshot: %v", err)
@@ -66,5 +69,22 @@ func TestDeleteResidentSnapshot(t *testing.T) {
 	_, _, err := store.LoadResidentSnapshot("jade")
 	if err == nil {
 		t.Fatalf("expected load to fail after delete")
+	}
+}
+
+func TestSaveResidentSnapshotCASDetectsConflict(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	snapshot := runtimecore.Snapshot{
+		Version: "runtimecore/v1",
+		SavedAt: time.Now().UTC(),
+		State:   runtimecore.ResidentState{ResidentID: "jade"},
+	}
+
+	if _, err := store.SaveResidentSnapshotCAS("jade", snapshot, 0); err != nil {
+		t.Fatalf("initial cas save: %v", err)
+	}
+	if _, err := store.SaveResidentSnapshotCAS("jade", snapshot, 0); err == nil {
+		t.Fatalf("expected version conflict")
 	}
 }

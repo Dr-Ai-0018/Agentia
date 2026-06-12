@@ -261,6 +261,36 @@ func TestFileStoreNormalizesLegacyHistoryGroup(t *testing.T) {
 	}
 }
 
+func TestFileStoreDoesNotLeaveTempFiles(t *testing.T) {
+	root := t.TempDir()
+	store := NewFileStore(root)
+	now := time.Now()
+
+	err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:        "amber-memory-1",
+			Layer:     LayerShort,
+			Status:    StatusActive,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "keep exploring system state",
+		DecisionAction: ActionCreate,
+	})
+	if err != nil {
+		t.Fatalf("upsert abstract memory: %v", err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(root, "*.tmp"))
+	if err != nil {
+		t.Fatalf("glob tmp files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected no temp files, got %#v", matches)
+	}
+}
+
 func TestCompactResidentMergesDuplicateHistoryGroupsAndRemapsMemory(t *testing.T) {
 	root := t.TempDir()
 	store := NewFileStore(root)

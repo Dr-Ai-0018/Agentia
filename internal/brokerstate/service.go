@@ -15,12 +15,13 @@ type BrokerService struct {
 }
 
 type PreparedAdmission struct {
-	ResidentID   string                   `json:"resident_id"`
-	BeforeStatus ResidentStatus           `json:"before_status"`
-	Quota        QuotaSnapshot            `json:"quota"`
-	Prepared     runtimecore.PreparedCall `json:"prepared"`
-	Denied       bool                     `json:"denied"`
-	DeniedReason []string                 `json:"denied_reason,omitempty"`
+	ResidentID       string                   `json:"resident_id"`
+	SnapshotRevision uint64                   `json:"snapshot_revision"`
+	BeforeStatus     ResidentStatus           `json:"before_status"`
+	Quota            QuotaSnapshot            `json:"quota"`
+	Prepared         runtimecore.PreparedCall `json:"prepared"`
+	Denied           bool                     `json:"denied"`
+	DeniedReason     []string                 `json:"denied_reason,omitempty"`
 }
 
 type AdmitRequest struct {
@@ -139,7 +140,7 @@ func (s *BrokerService) PrepareAdmission(residentID string, kind runtimeguard.Ca
 	if residentID == "" {
 		return PreparedAdmission{}, nil, fmt.Errorf("resident id is required")
 	}
-	engine, status, err := s.sessions.LoadResident(residentID)
+	engine, status, revision, err := s.sessions.LoadResidentWithRevision(residentID)
 	if err != nil {
 		return PreparedAdmission{}, nil, err
 	}
@@ -148,11 +149,12 @@ func (s *BrokerService) PrepareAdmission(residentID string, kind runtimeguard.Ca
 		return PreparedAdmission{}, nil, err
 	}
 	resp := PreparedAdmission{
-		ResidentID:   residentID,
-		BeforeStatus: status,
-		Quota:        BuildQuotaSnapshot(status),
-		Prepared:     prepared,
-		Denied:       !prepared.Decision.Allowed,
+		ResidentID:       residentID,
+		SnapshotRevision: revision,
+		BeforeStatus:     status,
+		Quota:            BuildQuotaSnapshot(status),
+		Prepared:         prepared,
+		Denied:           !prepared.Decision.Allowed,
 	}
 	if !prepared.Decision.Allowed {
 		resp.DeniedReason = append(resp.DeniedReason, prepared.Decision.Reasons...)
@@ -171,7 +173,7 @@ func (s *BrokerService) ApplyPreparedCall(engine *runtimecore.Engine, prepared P
 	if err != nil {
 		return runtimecore.AppliedCall{}, ResidentStatus{}, "", err
 	}
-	path, err := s.sessions.SaveResident(engine)
+	path, err := s.sessions.SaveResidentExpected(engine, prepared.SnapshotRevision, true)
 	if err != nil {
 		return runtimecore.AppliedCall{}, ResidentStatus{}, "", err
 	}

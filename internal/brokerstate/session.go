@@ -53,21 +53,34 @@ func NewSessionManager(store *Store, registry *Registry, cfg runtimecore.Config)
 }
 
 func (m *SessionManager) LoadResident(residentID string) (*runtimecore.Engine, ResidentStatus, error) {
+	engine, status, _, err := m.LoadResidentWithRevision(residentID)
+	return engine, status, err
+}
+
+func (m *SessionManager) LoadResidentWithRevision(residentID string) (*runtimecore.Engine, ResidentStatus, uint64, error) {
 	now := m.rootNow()
-	engine, loaded, path, err := m.registry.LoadOrInitEngine(m.store, m.cfg, residentID, now)
+	engine, loaded, path, revision, err := m.registry.LoadOrInitEngine(m.store, m.cfg, residentID, now)
 	if err != nil {
-		return nil, ResidentStatus{}, err
+		return nil, ResidentStatus{}, 0, err
 	}
 	status := BuildResidentStatusAt(engine, loaded, path, now)
-	return engine, status, nil
+	return engine, status, revision, nil
 }
 
 func (m *SessionManager) SaveResident(engine *runtimecore.Engine) (string, error) {
+	return m.SaveResidentExpected(engine, 0, false)
+}
+
+func (m *SessionManager) SaveResidentExpected(engine *runtimecore.Engine, expectedRevision uint64, enforceRevision bool) (string, error) {
 	state := engine.State()
 	if state.ResidentID == "" {
 		return "", fmt.Errorf("resident id is empty")
 	}
-	return m.store.SaveResidentSnapshot(state.ResidentID, engine.Snapshot(m.rootNow()))
+	snapshot := engine.Snapshot(m.rootNow())
+	if enforceRevision {
+		return m.store.SaveResidentSnapshotCAS(state.ResidentID, snapshot, expectedRevision)
+	}
+	return m.store.SaveResidentSnapshot(state.ResidentID, snapshot)
 }
 
 func BuildResidentStatus(engine *runtimecore.Engine, loaded bool, snapshotPath string) ResidentStatus {

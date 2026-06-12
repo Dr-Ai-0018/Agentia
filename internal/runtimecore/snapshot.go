@@ -9,9 +9,10 @@ import (
 )
 
 type Snapshot struct {
-	Version     string              `json:"version"`
-	SavedAt     time.Time           `json:"saved_at"`
-	State       ResidentState       `json:"state"`
+	Version      string              `json:"version"`
+	Revision     uint64              `json:"revision,omitempty"`
+	SavedAt      time.Time           `json:"saved_at"`
+	State        ResidentState       `json:"state"`
 	SparkAccount sparkledger.Account `json:"spark_account"`
 	SparkEntries []sparkledger.Entry `json:"spark_entries"`
 }

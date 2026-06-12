@@ -1,6 +1,7 @@
 package brokerstate
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -193,6 +194,46 @@ func TestBrokerServicePrepareAndApplySeparated(t *testing.T) {
 	}
 	if after.SparkBalance >= prepared.BeforeStatus.SparkBalance {
 		t.Fatalf("expected spark balance to decrease")
+	}
+}
+
+func TestBrokerServiceApplyPreparedCallRejectsStaleSnapshot(t *testing.T) {
+	store := New(t.TempDir())
+	registry := NewRegistry(DefaultResidentProfiles())
+	manager := NewSessionManager(store, registry, DefaultRuntimeConfig())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+	manager.rootNow = func() time.Time { return now }
+	service := NewBrokerService(manager)
+
+	preparedA, engineA, err := service.PrepareAdmission("amber", "work", tokenledger.Usage{
+		InputTokens:  1200,
+		CachedTokens: 800,
+		OutputTokens: 300,
+		TotalTokens:  1500,
+		Model:        "gpt-5.4",
+		FinishedAt:   now.Add(time.Minute),
+	}, tokenledger.Penalties{ToolCallCount: 2})
+	if err != nil {
+		t.Fatalf("prepare A: %v", err)
+	}
+
+	preparedB, engineB, err := service.PrepareAdmission("amber", "work", tokenledger.Usage{
+		InputTokens:  1200,
+		CachedTokens: 800,
+		OutputTokens: 300,
+		TotalTokens:  1500,
+		Model:        "gpt-5.4",
+		FinishedAt:   now.Add(2 * time.Minute),
+	}, tokenledger.Penalties{ToolCallCount: 2})
+	if err != nil {
+		t.Fatalf("prepare B: %v", err)
+	}
+
+	if _, _, _, err := service.ApplyPreparedCall(engineA, preparedA, tokenledger.ActivityNormalWork); err != nil {
+		t.Fatalf("apply A: %v", err)
+	}
+	if _, _, _, err := service.ApplyPreparedCall(engineB, preparedB, tokenledger.ActivityNormalWork); !errors.Is(err, ErrSnapshotVersionConflict) {
+		t.Fatalf("expected version conflict on stale apply, got %v", err)
 	}
 }
 
