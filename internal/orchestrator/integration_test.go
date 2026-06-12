@@ -66,4 +66,10 @@ func TestEndToEndControlSurfaceWithoutOpenAI(t *testing.T) {
 	if report.ResidentsFinished != 2 || report.ResidentsErrored != 0 {
 		t.Fatalf("unexpected inspection report: %#v", report)
 	}
+	if report.UsefulRuns != 2 || report.BudgetBlockedRuns != 0 {
+		t.Fatalf("unexpected inspection report assessment counts: %#v", report)
+	}
+	if !report.Residents[0].CompletedUseful || report.Residents[0].BudgetBlocked {
+		t.Fatalf("expected resident usefulness flags in report: %#v", report.Residents[0])
+	}
 }

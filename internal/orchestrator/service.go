@@ -66,11 +66,13 @@ type RunSummary struct {
 }
 
 type InspectionResidentReport struct {
-	Resident      string `json:"resident"`
-	Status        string `json:"status"`
-	Rounds        int    `json:"rounds,omitempty"`
-	StoppedReason string `json:"stopped_reason,omitempty"`
-	Error         string `json:"error,omitempty"`
+	Resident        string `json:"resident"`
+	Status          string `json:"status"`
+	Rounds          int    `json:"rounds,omitempty"`
+	StoppedReason   string `json:"stopped_reason,omitempty"`
+	BudgetBlocked   bool   `json:"budget_blocked,omitempty"`
+	CompletedUseful bool   `json:"completed_useful,omitempty"`
+	Error           string `json:"error,omitempty"`
 }
 
 type InspectionReport struct {
@@ -80,6 +82,8 @@ type InspectionReport struct {
 	ResidentsPlanned  []string                   `json:"residents_planned"`
 	ResidentsFinished int                        `json:"residents_finished"`
 	ResidentsErrored  int                        `json:"residents_errored"`
+	UsefulRuns        int                        `json:"useful_runs"`
+	BudgetBlockedRuns int                        `json:"budget_blocked_runs"`
 	StartedAt         string                     `json:"started_at"`
 	EndedAt           string                     `json:"ended_at"`
 	Duration          string                     `json:"duration"`
