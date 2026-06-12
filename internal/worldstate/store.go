@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var ErrMessageFileConflict = errors.New("message file changed during rewrite")
+
 const (
 	DirectionResidentToChenglin = "resident_to_chenglin"
 	DirectionChenglinToResident = "chenglin_to_resident"
@@ -34,17 +36,22 @@ type Store struct {
 	root string
 }
 
+type MessageFileIssue struct {
+	Path    string `json:"path"`
+	Line    int    `json:"line,omitempty"`
+	Message string `json:"message"`
+}
+
 type Message struct {
-	ID                string `json:"id"`
-	Direction         string `json:"direction"`
-	Resident          string `json:"resident"`
-	From              string `json:"from"`
-	To                string `json:"to"`
-	Body              string `json:"body"`
-	CreatedAt         string `json:"created_at"`
-	ReplyToID         string `json:"reply_to_id,omitempty"`
-	DefaultFeedbackForID string `json:"default_feedback_for_id,omitempty"`
-	ReadAt            string `json:"read_at,omitempty"`
+	ID        string `json:"id"`
+	Direction string `json:"direction"`
+	Resident  string `json:"resident"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+	ReplyToID string `json:"reply_to_id,omitempty"`
+	ReadAt    string `json:"read_at,omitempty"`
 }
 
 type ThreadMessage struct {
@@ -52,7 +59,6 @@ type ThreadMessage struct {
 	Status            string `json:"status"`
 	ProcessedAt       string `json:"processed_at,omitempty"`
 	ProcessedBy       string `json:"processed_by,omitempty"`
-	DefaultFeedback   bool   `json:"default_feedback,omitempty"`
 	NeedsHostDecision bool   `json:"needs_host_decision,omitempty"`
 }
 
@@ -127,6 +133,80 @@ func New(root string) *Store {
 	return &Store{root: root}
 }
 
+func (s *Store) ScanMessageFiles() []MessageFileIssue {
+	files, err := filepath.Glob(filepath.Join(s.root, "world", "messages", "*.jsonl"))
+	if err != nil {
+		return []MessageFileIssue{{
+			Path:    filepath.Join(s.root, "world", "messages"),
+			Message: err.Error(),
+		}}
+	}
+	issues := make([]MessageFileIssue, 0)
+	for _, path := range files {
+		file, err := os.Open(path)
+		if err != nil {
+			issues = append(issues, MessageFileIssue{
+				Path:    path,
+				Message: "cannot open message file: " + err.Error(),
+			})
+			continue
+		}
+		scanner := bufio.NewScanner(file)
+		lineNo := 0
+		for scanner.Scan() {
+			lineNo++
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var msg Message
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				issues = append(issues, MessageFileIssue{
+					Path:    path,
+					Line:    lineNo,
+					Message: "cannot parse message record: " + err.Error(),
+				})
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			issues = append(issues, MessageFileIssue{
+				Path:    path,
+				Message: "cannot scan message file: " + err.Error(),
+			})
+		}
+		_ = file.Close()
+	}
+	return issues
+}
+
+func (s *Store) QuarantineMessageFile(path string, now time.Time, reason string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("message file path is required")
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	rootPath, err := filepath.Abs(filepath.Join(s.root, "world", "messages"))
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(absPath, rootPath+string(os.PathSeparator)) && absPath != rootPath {
+		return "", fmt.Errorf("message file is outside world messages root: %s", path)
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		return "", err
+	}
+	stamp := now.UTC().Format("20060102T150405.000000000Z")
+	suffix := sanitizeReason(reason)
+	dst := absPath + "." + stamp + "." + suffix + ".bak"
+	if err := os.Rename(absPath, dst); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
 func (s *Store) AppendResidentToChenglin(resident, body string, now time.Time) (Message, error) {
 	msg := Message{
 		ID:        fmt.Sprintf("%s-%s", resident, now.UTC().Format("20060102T150405.000000000Z")),
@@ -160,24 +240,6 @@ func (s *Store) AppendChenglinReplyToResident(resident, body, replyToID string, 
 	return msg, nil
 }
 
-func (s *Store) AppendDefaultFeedbackToResident(resident, body, replyToID string, now time.Time) (Message, error) {
-	msg := Message{
-		ID:                  fmt.Sprintf("world-%s", now.UTC().Format("20060102T150405.000000000Z")),
-		Direction:           DirectionChenglinToResident,
-		Resident:            resident,
-		From:                "world",
-		To:                  resident,
-		Body:                strings.TrimSpace(body),
-		CreatedAt:           now.UTC().Format(time.RFC3339),
-		ReplyToID:           strings.TrimSpace(replyToID),
-		DefaultFeedbackForID: strings.TrimSpace(replyToID),
-	}
-	if err := s.append(msg, now); err != nil {
-		return Message{}, err
-	}
-	return msg, nil
-}
-
 func (s *Store) ReplyToResidentMessage(messageID, body string, now time.Time) (Message, error) {
 	target, err := s.findMessage(messageID)
 	if err != nil {
@@ -194,25 +256,6 @@ func (s *Store) ReplyToResidentMessage(messageID, body string, now time.Time) (M
 		return Message{}, fmt.Errorf("message %s is already processed with status %s", messageID, status)
 	}
 	return s.AppendChenglinReplyToResident(target.Resident, body, target.ID, now)
-}
-
-func (s *Store) IgnoreResidentMessage(messageID string, now time.Time) (Message, error) {
-	target, err := s.findMessage(messageID)
-	if err != nil {
-		return Message{}, err
-	}
-	if target.Direction != DirectionResidentToChenglin {
-		return Message{}, fmt.Errorf("message %s is not a resident_to_chenglin message", messageID)
-	}
-	status, err := s.MessageStatus(messageID)
-	if err != nil {
-		return Message{}, err
-	}
-	if status != StatusPending {
-		return Message{}, fmt.Errorf("message %s is already processed with status %s", messageID, status)
-	}
-	body := "No direct reply is being sent right now. Your message remains part of the shared world state, but this thread is not awaiting a host answer anymore."
-	return s.AppendDefaultFeedbackToResident(target.Resident, body, target.ID, now)
 }
 
 func (s *Store) ReadRecentForResident(resident string, limit int) ([]ThreadMessage, error) {
@@ -241,7 +284,7 @@ func (s *Store) MarkResidentMessagesRead(resident string, ids []string, now time
 		return nil
 	}
 
-	all, err := s.readAll()
+	all, fileState, err := s.readAllWithState()
 	if err != nil {
 		return err
 	}
@@ -263,7 +306,7 @@ func (s *Store) MarkResidentMessagesRead(resident string, ids []string, now time
 	if !changed {
 		return nil
 	}
-	return s.rewriteAll(all)
+	return s.rewriteAllChecked(all, fileState)
 }
 
 func (s *Store) ReadThreadForResident(resident string) ([]ThreadMessage, error) {
@@ -295,6 +338,42 @@ func (s *Store) ReadPendingResidentMessages(limit int) ([]ThreadMessage, error) 
 
 	out := make([]ThreadMessage, 0, len(seen))
 	for _, item := range seen {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt > out[j].CreatedAt
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (s *Store) ReadLatestPendingResidentMessages(limit int) ([]ThreadMessage, error) {
+	all, err := s.readAll()
+	if err != nil {
+		return nil, err
+	}
+
+	latestByResident := map[string]ThreadMessage{}
+	for _, msg := range all {
+		if msg.Direction != DirectionResidentToChenglin {
+			continue
+		}
+		thread := deriveThread(all, msg.Resident)
+		for _, item := range thread {
+			if item.Direction != DirectionResidentToChenglin || item.Status != StatusPending {
+				continue
+			}
+			current, ok := latestByResident[item.Resident]
+			if !ok || item.CreatedAt > current.CreatedAt {
+				latestByResident[item.Resident] = item
+			}
+		}
+	}
+
+	out := make([]ThreadMessage, 0, len(latestByResident))
+	for _, item := range latestByResident {
 		out = append(out, item)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -382,7 +461,7 @@ func (s *Store) ReadHostInboxSummary(chatLimit, ticketLimit int) (HostInboxSumma
 	if err != nil {
 		return HostInboxSummary{}, err
 	}
-	pending, err := s.ReadPendingResidentMessages(chatLimit)
+	pending, err := s.ReadLatestPendingResidentMessages(chatLimit)
 	if err != nil {
 		return HostInboxSummary{}, err
 	}
@@ -414,7 +493,7 @@ func (s *Store) ReadHostInboxSummary(chatLimit, ticketLimit int) (HostInboxSumma
 }
 
 func (s *Store) ReadHostFollowups(limit int) ([]HostFollowup, error) {
-	pending, err := s.ReadPendingResidentMessages(limit)
+	pending, err := s.ReadLatestPendingResidentMessages(limit)
 	if err != nil {
 		return nil, err
 	}
@@ -506,6 +585,10 @@ func (s *Store) append(msg Message, now time.Time) error {
 }
 
 func (s *Store) rewriteAll(messages []Message) error {
+	return s.rewriteAllChecked(messages, nil)
+}
+
+func (s *Store) rewriteAllChecked(messages []Message, expected map[string]string) error {
 	dir := filepath.Join(s.root, "world", "messages")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -535,7 +618,17 @@ func (s *Store) rewriteAll(messages []Message) error {
 		if content != "" {
 			content += "\n"
 		}
-		if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		if expected != nil {
+			currentRaw, err := os.ReadFile(file)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			current := string(currentRaw)
+			if current != expected[file] {
+				return fmt.Errorf("%w: %s", ErrMessageFileConflict, file)
+			}
+		}
+		if err := atomicWriteFile(file, []byte(content), 0o644); err != nil {
 			return err
 		}
 	}
@@ -556,19 +649,26 @@ func (s *Store) findMessage(messageID string) (Message, error) {
 }
 
 func (s *Store) readAll() ([]Message, error) {
+	messages, _, err := s.readAllWithState()
+	return messages, err
+}
+
+func (s *Store) readAllWithState() ([]Message, map[string]string, error) {
 	files, err := filepath.Glob(filepath.Join(s.root, "world", "messages", "*.jsonl"))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sort.Strings(files)
 
 	out := []Message{}
+	state := map[string]string{}
 	for _, name := range files {
-		file, err := os.Open(name)
+		raw, err := os.ReadFile(name)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		scanner := bufio.NewScanner(file)
+		state[name] = string(raw)
+		scanner := bufio.NewScanner(strings.NewReader(string(raw)))
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
@@ -576,18 +676,15 @@ func (s *Store) readAll() ([]Message, error) {
 			}
 			var msg Message
 			if err := json.Unmarshal([]byte(line), &msg); err != nil {
-				_ = file.Close()
-				return nil, err
+				return nil, nil, err
 			}
 			out = append(out, msg)
 		}
 		if err := scanner.Err(); err != nil {
-			_ = file.Close()
-			return nil, err
+			return nil, nil, err
 		}
-		_ = file.Close()
 	}
-	return out, nil
+	return out, state, nil
 }
 
 func deriveThread(all []Message, resident string) []ThreadMessage {
@@ -607,18 +704,11 @@ func deriveThread(all []Message, resident string) []ThreadMessage {
 			indexByID[msg.ID] = len(thread)
 		case DirectionChenglinToResident:
 			item.Status = StatusDelivered
-			if strings.TrimSpace(msg.DefaultFeedbackForID) != "" {
-				item.DefaultFeedback = true
-			}
 			if msg.ReplyToID != "" {
 				if idx, ok := indexByID[msg.ReplyToID]; ok {
 					thread[idx].Status = StatusReplied
 					thread[idx].ProcessedAt = msg.CreatedAt
-					if item.DefaultFeedback {
-						thread[idx].ProcessedBy = "world-default"
-					} else {
-						thread[idx].ProcessedBy = "chenglin"
-					}
+					thread[idx].ProcessedBy = "chenglin"
 					thread[idx].NeedsHostDecision = false
 				}
 			}
@@ -630,6 +720,20 @@ func deriveThread(all []Message, resident string) []ThreadMessage {
 	}
 
 	return thread
+}
+
+func sanitizeReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "quarantine"
+	}
+	replacer := strings.NewReplacer("/", "-", "\\", "-", " ", "-", "\t", "-", "\n", "-")
+	reason = replacer.Replace(reason)
+	reason = strings.Trim(reason, "-")
+	if reason == "" {
+		return "quarantine"
+	}
+	return reason
 }
 
 func ValidateReplyBody(body string) error {
@@ -809,7 +913,7 @@ func (s *Store) writeTicket(ticket Ticket) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.ticketDir(), ticket.ID+".json"), raw, 0o644)
+	return atomicWriteFile(filepath.Join(s.ticketDir(), ticket.ID+".json"), raw, 0o644)
 }
 
 func (s *Store) loadTicket(ticketID string) (Ticket, error) {
@@ -866,6 +970,18 @@ func summarizeTicket(ticket Ticket) ResidentTicketSummary {
 		summary.LastPreview = previewText(last.Body, 160)
 	}
 	return summary
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func normalizeTicketPriority(priority string) string {

@@ -1,11 +1,15 @@
 package worldstate
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestReplyAndIgnoreLifecycle(t *testing.T) {
+func TestReplyLifecycle(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
@@ -112,7 +116,7 @@ func TestPendingInboxAndStatusFilter(t *testing.T) {
 	}
 }
 
-func TestCannotProcessHandledMessageTwice(t *testing.T) {
+func TestCannotReplyHandledMessageTwice(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
@@ -124,54 +128,8 @@ func TestCannotProcessHandledMessageTwice(t *testing.T) {
 	if _, err := store.ReplyToResidentMessage(msg.ID, "handled", now.Add(time.Second)); err != nil {
 		t.Fatalf("reply amber: %v", err)
 	}
-	if _, err := store.IgnoreResidentMessage(msg.ID, now.Add(2*time.Second)); err == nil {
-		t.Fatalf("expected chat ignore to fail")
-	}
-}
-
-func TestIgnoreResidentMessageCreatesDefaultFeedback(t *testing.T) {
-	root := t.TempDir()
-	store := New(root)
-	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
-
-	msg, err := store.AppendResidentToChenglin("amber", "hello", now)
-	if err != nil {
-		t.Fatalf("append amber: %v", err)
-	}
-	feedback, err := store.IgnoreResidentMessage(msg.ID, now.Add(time.Second))
-	if err != nil {
-		t.Fatalf("ignore resident message: %v", err)
-	}
-	if feedback.From != "world" {
-		t.Fatalf("expected world default feedback, got from=%s", feedback.From)
-	}
-	if feedback.DefaultFeedbackForID != msg.ID {
-		t.Fatalf("expected default feedback to reference %s, got %s", msg.ID, feedback.DefaultFeedbackForID)
-	}
-
-	thread, err := store.ReadThreadForResident("amber")
-	if err != nil {
-		t.Fatalf("read amber thread: %v", err)
-	}
-	if len(thread) != 2 {
-		t.Fatalf("expected 2 thread messages, got %d", len(thread))
-	}
-	if thread[0].Status != StatusReplied || thread[0].ProcessedBy != "world-default" {
-		t.Fatalf("expected original message to be closed by world-default, got %#v", thread[0])
-	}
-	if !thread[1].DefaultFeedback {
-		t.Fatalf("expected second message to be marked as default feedback")
-	}
-	if thread[1].Status != StatusDelivered {
-		t.Fatalf("expected default feedback to be delivered, got %s", thread[1].Status)
-	}
-
-	followups, err := store.ReadHostFollowups(10)
-	if err != nil {
-		t.Fatalf("read host followups: %v", err)
-	}
-	if len(followups) != 0 {
-		t.Fatalf("expected no host followups after ignore, got %#v", followups)
+	if _, err := store.ReplyToResidentMessage(msg.ID, "handled again", now.Add(2*time.Second)); err == nil {
+		t.Fatalf("expected second chat reply to fail")
 	}
 }
 
@@ -288,6 +246,9 @@ func TestReadHostInboxSummary(t *testing.T) {
 	if _, err := store.AppendResidentToChenglin("jade", "pending jade", now); err != nil {
 		t.Fatalf("append jade: %v", err)
 	}
+	if _, err := store.AppendResidentToChenglin("jade", "pending jade again", now.Add(time.Second)); err != nil {
+		t.Fatalf("append jade second: %v", err)
+	}
 	if _, err := store.CreateResidentTicket("amber", "Need disk", "Please increase disk to 20G", TicketPriorityHigh, now.Add(time.Second)); err != nil {
 		t.Fatalf("create amber ticket: %v", err)
 	}
@@ -305,6 +266,9 @@ func TestReadHostInboxSummary(t *testing.T) {
 	if len(summary.PendingChatMessages) != 1 || summary.PendingChatMessages[0].Resident != "jade" {
 		t.Fatalf("expected pending jade chat, got %#v", summary.PendingChatMessages)
 	}
+	if summary.PendingChatMessages[0].Body != "pending jade again" {
+		t.Fatalf("expected latest pending jade chat, got %#v", summary.PendingChatMessages[0])
+	}
 	if len(summary.OpenTickets) != 1 || summary.OpenTickets[0].Resident != "amber" {
 		t.Fatalf("expected amber open ticket, got %#v", summary.OpenTickets)
 	}
@@ -321,6 +285,9 @@ func TestReadHostFollowups(t *testing.T) {
 	if _, err := store.AppendResidentToChenglin("jade", "pending jade", now); err != nil {
 		t.Fatalf("append jade: %v", err)
 	}
+	if _, err := store.AppendResidentToChenglin("jade", "pending jade again", now.Add(time.Second)); err != nil {
+		t.Fatalf("append jade second: %v", err)
+	}
 	ticket, err := store.CreateResidentTicket("amber", "Need disk", "Please increase disk to 20G", TicketPriorityHigh, now.Add(time.Second))
 	if err != nil {
 		t.Fatalf("create amber ticket: %v", err)
@@ -333,10 +300,217 @@ func TestReadHostFollowups(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("expected 2 followups, got %d", len(items))
 	}
-	if items[0].Kind != "ticket_reply" || items[0].TargetID != ticket.ID {
-		t.Fatalf("expected ticket followup first, got %#v", items[0])
+	if items[0].Kind != "chat_reply" || items[0].Resident != "jade" {
+		t.Fatalf("expected latest jade chat followup first, got %#v", items[0])
 	}
-	if items[1].Kind != "chat_reply" || items[1].Resident != "jade" {
-		t.Fatalf("expected jade chat followup second, got %#v", items[1])
+	if items[1].Kind != "ticket_reply" || items[1].TargetID != ticket.ID {
+		t.Fatalf("expected ticket followup second, got %#v", items[1])
+	}
+	if items[0].Preview != previewText("pending jade again", 160) {
+		t.Fatalf("expected latest jade followup preview, got %#v", items[0])
+	}
+}
+
+func TestMarkResidentMessagesReadDoesNotLeaveTempFiles(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	msg, err := store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append amber: %v", err)
+	}
+	reply, err := store.ReplyToResidentMessage(msg.ID, "reply one", now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("reply amber: %v", err)
+	}
+	if err := store.MarkResidentMessagesRead("amber", []string{reply.ID}, now.Add(2*time.Second)); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(root, "world", "messages", "*.tmp"))
+	if err != nil {
+		t.Fatalf("glob tmp files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected no temp files, got %#v", matches)
+	}
+}
+
+func TestWriteTicketDoesNotLeaveTempFiles(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	ticket, err := store.CreateResidentTicket("amber", "Need disk", "Please increase disk", TicketPriorityHigh, now)
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "world", "tickets", ticket.ID+".json")); err != nil {
+		t.Fatalf("expected ticket file: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, "world", "tickets", "*.tmp"))
+	if err != nil {
+		t.Fatalf("glob tmp files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected no temp files, got %#v", matches)
+	}
+}
+
+func TestMarkResidentMessagesReadDoesNotModifyTickets(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	msg, err := store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append amber: %v", err)
+	}
+	reply, err := store.ReplyToResidentMessage(msg.ID, "reply one", now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("reply amber: %v", err)
+	}
+	ticket, err := store.CreateResidentTicket("amber", "Need disk", "Please increase disk", TicketPriorityHigh, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	ticketPath := filepath.Join(root, "world", "tickets", ticket.ID+".json")
+	before, err := os.ReadFile(ticketPath)
+	if err != nil {
+		t.Fatalf("read ticket before mark-read: %v", err)
+	}
+
+	if err := store.MarkResidentMessagesRead("amber", []string{reply.ID}, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+
+	after, err := os.ReadFile(ticketPath)
+	if err != nil {
+		t.Fatalf("read ticket after mark-read: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("expected ticket file to remain unchanged during message read marking")
+	}
+}
+
+func TestRewriteAllCheckedDetectsMessageFileConflict(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	msg, err := store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append amber: %v", err)
+	}
+	reply, err := store.ReplyToResidentMessage(msg.ID, "reply one", now.Add(time.Second))
+	if err != nil {
+		t.Fatalf("reply amber: %v", err)
+	}
+
+	all, fileState, err := store.readAllWithState()
+	if err != nil {
+		t.Fatalf("read all with state: %v", err)
+	}
+	for i := range all {
+		if all[i].ID == reply.ID {
+			all[i].ReadAt = now.Add(2 * time.Second).UTC().Format(time.RFC3339)
+		}
+	}
+
+	if _, err := store.AppendResidentToChenglin("amber", "late new message", now.Add(3*time.Second)); err != nil {
+		t.Fatalf("append late amber message: %v", err)
+	}
+
+	err = store.rewriteAllChecked(all, fileState)
+	if !errors.Is(err, ErrMessageFileConflict) {
+		t.Fatalf("expected ErrMessageFileConflict, got %v", err)
+	}
+
+	thread, err := store.ReadThreadForResident("amber")
+	if err != nil {
+		t.Fatalf("read amber thread: %v", err)
+	}
+	if len(thread) != 3 {
+		t.Fatalf("expected appended message to survive conflict path, got %d thread items", len(thread))
+	}
+}
+
+func TestQuarantineMessageFile(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	if _, err := store.AppendResidentToChenglin("amber", "hello", now); err != nil {
+		t.Fatalf("append amber: %v", err)
+	}
+	path := filepath.Join(root, "world", "messages", "2026-06-06.jsonl")
+	dst, err := store.QuarantineMessageFile(path, now.Add(time.Second), "corrupt")
+	if err != nil {
+		t.Fatalf("quarantine message file: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected original message file to be moved away, stat err=%v", err)
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Fatalf("expected quarantined message file to exist: %v", err)
+	}
+	if !strings.HasSuffix(dst, ".corrupt.bak") {
+		t.Fatalf("expected quarantined file suffix, got %s", dst)
+	}
+}
+
+func TestMessagesAndTicketsStayConsistentAcrossMixedOperations(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	amberMsg, err := store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append amber message: %v", err)
+	}
+	if _, err := store.ReplyToResidentMessage(amberMsg.ID, "reply one", now.Add(time.Second)); err != nil {
+		t.Fatalf("reply amber message: %v", err)
+	}
+	ticket, err := store.CreateResidentTicket("amber", "Need disk", "Please increase disk", TicketPriorityHigh, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	if _, err := store.ReplyTicket(ticket.ID, "Approved later", false, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("reply ticket: %v", err)
+	}
+
+	thread, err := store.ReadThreadForResident("amber")
+	if err != nil {
+		t.Fatalf("read amber thread: %v", err)
+	}
+	if len(thread) != 2 {
+		t.Fatalf("expected 2 thread messages, got %d", len(thread))
+	}
+	if thread[0].Status != StatusReplied || thread[1].Status != StatusDelivered {
+		t.Fatalf("unexpected thread state after mixed operations: %#v", thread)
+	}
+
+	tickets, err := store.ReadTickets("amber", "", "", 10)
+	if err != nil {
+		t.Fatalf("read tickets: %v", err)
+	}
+	if len(tickets) != 1 {
+		t.Fatalf("expected 1 ticket summary, got %d", len(tickets))
+	}
+	if tickets[0].Status != TicketStatusAnswered {
+		t.Fatalf("expected answered ticket after host reply, got %#v", tickets[0])
+	}
+
+	inbox, err := store.ReadHostInboxSummary(10, 10)
+	if err != nil {
+		t.Fatalf("read host inbox: %v", err)
+	}
+	if inbox.ResidentsNeedingChatReply != 0 {
+		t.Fatalf("expected no pending host chat replies, got %#v", inbox)
+	}
+	if inbox.ResidentsWithOpenTickets != 0 {
+		t.Fatalf("expected no open tickets after ticket reply, got %#v", inbox)
 	}
 }

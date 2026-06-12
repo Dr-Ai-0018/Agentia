@@ -9,13 +9,14 @@ import (
 
 	"ai-arena/internal/auth"
 	"ai-arena/internal/broker"
+	"ai-arena/internal/diagnostics"
 	"ai-arena/internal/runtimeguard"
 	"ai-arena/internal/tokenledger"
 	"ai-arena/internal/worldstate"
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|ignore|tickets|ticket|get-ticket|ticket-reply")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -30,8 +31,9 @@ func main() {
 	responseID := flag.String("response-id", "", "Optional response id for admit mode")
 	limit := flag.Int("limit", 8, "Message limit for messages mode")
 	status := flag.String("status", "", "Optional status filter for messages mode")
-	messageID := flag.String("message-id", "", "Target message ID for reply/ignore modes")
+	messageID := flag.String("message-id", "", "Target message ID for reply/ticket-reply/get-ticket modes")
 	body := flag.String("body", "", "Reply body for reply mode")
+	pathArg := flag.String("path", "", "Target file path for world quarantine modes")
 	priority := flag.String("priority", "", "Optional ticket priority filter or value: low|medium|high|urgent")
 	title := flag.String("title", "", "Optional title for ticket modes that create one")
 	amount := flag.String("amount", "", "Requested amount for self-request-* modes")
@@ -242,15 +244,27 @@ func main() {
 			exitf("%v", err)
 		}
 		printJSON(out)
-	case "ignore":
-		if *messageID == "" {
-			exitf("message-id is required for ignore mode")
-		}
-		out, err := host.Ignore(*messageID)
+	case "doctor":
+		out, err := diagnostics.RunDoctor(".agents")
 		if err != nil {
 			exitf("%v", err)
 		}
 		printJSON(out)
+	case "world-scan":
+		printJSON(world.ScanMessageFiles())
+	case "world-quarantine-message-file":
+		if *pathArg == "" {
+			exitf("path is required for world-quarantine-message-file mode")
+		}
+		out, err := world.QuarantineMessageFile(*pathArg, time.Now().UTC(), *reason)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(map[string]any{
+			"ok":               true,
+			"quarantined_from": *pathArg,
+			"quarantined_to":   out,
+		})
 	case "tickets":
 		out, err := world.ReadTickets(*residentID, *status, *priority, *limit)
 		if err != nil {
