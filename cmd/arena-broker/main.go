@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|capacity|inventory|host-inspect|checkpoint-list|checkpoint-create|checkpoint-cleanup|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|capacity|inventory|host-inspect|checkpoint-list|checkpoint-create|checkpoint-cleanup|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -50,6 +50,7 @@ func main() {
 	closeTicket := flag.Bool("close-ticket", false, "Whether ticket-reply should close the ticket")
 	keep := flag.Int("keep", 2, "How many newest host checkpoints to retain for checkpoint-cleanup")
 	createCheckpoint := flag.Bool("create-checkpoint", false, "Whether maintenance planning should create a host checkpoint before execution")
+	checkpointName := flag.String("checkpoint-name", "", "Checkpoint name for maintenance start/complete metadata")
 	flag.Parse()
 
 	app := broker.New(".agents")
@@ -424,6 +425,26 @@ func main() {
 			Note:     *body,
 			Close:    *closeTicket,
 			Operator: *operator,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-start-maintenance":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-start-maintenance mode")
+		}
+		if *residentID == "" {
+			exitf("resident is required for ticket-start-maintenance mode")
+		}
+		out, err := host.StartResourceMaintenance(broker.ResourceMaintenanceStartInput{
+			TicketID:       *messageID,
+			Resident:       *residentID,
+			Resource:       *resource,
+			Amount:         *amount,
+			Note:           *body,
+			Operator:       *operator,
+			CheckpointName: *checkpointName,
 		})
 		if err != nil {
 			exitf("%v", err)

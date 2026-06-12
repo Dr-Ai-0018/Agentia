@@ -294,6 +294,64 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	}
 }
 
+func TestHostActionServiceStartResourceMaintenanceMarksInterventionInProgress(t *testing.T) {
+	root := t.TempDir()
+	store := worldstate.New(root)
+	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+
+	ticket, err := store.CreateResidentTicket("amber", "Request CPU increase", "Please increase CPU", worldstate.TicketPriorityHigh, now)
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
+	if _, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
+		TicketID:               ticket.ID,
+		Resident:               "amber",
+		Resource:               "cpu",
+		Amount:                 "2",
+		Note:                   "Approved for compute burst.",
+		Operator:               "chenglin",
+		AlsoCreateIntervention: true,
+		CreateHostCheckpoint:   true,
+	}); err != nil {
+		t.Fatalf("plan maintenance: %v", err)
+	}
+	checkpointName := fake.snapshotName
+
+	updated, err := service.StartResourceMaintenance(ResourceMaintenanceStartInput{
+		TicketID:       ticket.ID,
+		Resident:       "amber",
+		Resource:       "cpu",
+		Amount:         "2",
+		Note:           "Maintenance window has started.",
+		Operator:       "chenglin",
+		CheckpointName: checkpointName,
+	})
+	if err != nil {
+		t.Fatalf("start maintenance: %v", err)
+	}
+	last := updated.Replies[len(updated.Replies)-1]
+	if !strings.Contains(last.Body, "maintenance_started=true") {
+		t.Fatalf("expected maintenance started marker, got %q", last.Body)
+	}
+	if !strings.Contains(last.Body, "maintenance_state=in_progress") {
+		t.Fatalf("expected maintenance in-progress marker, got %q", last.Body)
+	}
+	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
+	if err != nil {
+		t.Fatalf("read host interventions: %v", err)
+	}
+	if len(interventions) != 1 {
+		t.Fatalf("expected 1 host intervention, got %d", len(interventions))
+	}
+	if interventions[0].Status != "in_progress" {
+		t.Fatalf("expected in_progress intervention, got %#v", interventions[0])
+	}
+}
+
 func TestHostActionServiceApplyCPUAdjustment(t *testing.T) {
 	root := t.TempDir()
 	store := worldstate.New(root)

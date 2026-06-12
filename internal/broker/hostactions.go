@@ -50,6 +50,16 @@ type ResourceMaintenanceCompleteInput struct {
 	CheckpointName      string `json:"checkpoint_name"`
 }
 
+type ResourceMaintenanceStartInput struct {
+	TicketID       string `json:"ticket_id"`
+	Resident       string `json:"resident"`
+	Resource       string `json:"resource"`
+	Amount         string `json:"amount"`
+	Note           string `json:"note"`
+	Operator       string `json:"operator"`
+	CheckpointName string `json:"checkpoint_name"`
+}
+
 type HostInterventionInput struct {
 	Resident string `json:"resident"`
 	Kind     string `json:"kind"`
@@ -313,6 +323,23 @@ func buildMaintenanceCompletionNoteWithCheckpoint(note, operator, checkpointName
 	return strings.Join(lines, "\n")
 }
 
+func buildMaintenanceStartNote(note, operator, checkpointName string) string {
+	lines := []string{}
+	if trimmed := strings.TrimSpace(note); trimmed != "" {
+		lines = append(lines, trimmed)
+	}
+	lines = append(lines,
+		"maintenance_started=true",
+		"maintenance_state=in_progress",
+		fmt.Sprintf("operator=%s", defaultMaintenanceOperator(operator)),
+		"resident_expectation=approved maintenance is now underway; temporary unavailability or reboot may occur until completion notice is sent.",
+	)
+	if checkpointName != "" {
+		lines = append(lines, fmt.Sprintf("maintenance_checkpoint=%s", checkpointName))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func defaultMaintenanceWindow(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -379,6 +406,52 @@ func (s *HostActionService) PlanResourceMaintenance(input ResourceMaintenancePla
 		}); err != nil {
 			return worldstate.Ticket{}, err
 		}
+	}
+	return ticket, nil
+}
+
+func (s *HostActionService) StartResourceMaintenance(input ResourceMaintenanceStartInput) (worldstate.Ticket, error) {
+	ticketID := strings.TrimSpace(input.TicketID)
+	residentID := strings.TrimSpace(input.Resident)
+	resource := normalizeResource(input.Resource)
+	amount := strings.TrimSpace(input.Amount)
+	if ticketID == "" {
+		return worldstate.Ticket{}, fmt.Errorf("ticket id is required")
+	}
+	if residentID == "" {
+		return worldstate.Ticket{}, fmt.Errorf("resident id is required")
+	}
+	if resource == "" {
+		return worldstate.Ticket{}, fmt.Errorf("resource is required")
+	}
+	if amount == "" {
+		return worldstate.Ticket{}, fmt.Errorf("amount is required")
+	}
+	if _, ok := s.app.Binding(residentID); !ok {
+		return worldstate.Ticket{}, fmt.Errorf("unknown resident binding: %s", residentID)
+	}
+	startNote := buildMaintenanceStartNote(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	ticket, err := s.SettleResourceTicket(ResourceSettlementInput{
+		TicketID: ticketID,
+		Resource: resource,
+		Amount:   amount,
+		Decision: "approved",
+		Note:     startNote,
+		Close:    false,
+	})
+	if err != nil {
+		return worldstate.Ticket{}, err
+	}
+	if _, _, err := s.world.UpdateLatestOpenHostIntervention(
+		residentID,
+		"maintenance",
+		buildMaintenanceInterventionTitle(resource, amount),
+		"in_progress",
+		startNote,
+		input.Operator,
+		time.Now().UTC(),
+	); err != nil {
+		return worldstate.Ticket{}, err
 	}
 	return ticket, nil
 }

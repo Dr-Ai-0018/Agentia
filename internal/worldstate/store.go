@@ -966,7 +966,7 @@ func (s *Store) CreateHostIntervention(resident, kind, title, body, operator str
 		Kind:      kind,
 		Title:     title,
 		Body:      body,
-		Status:    "open",
+		Status:    "planned",
 		CreatedAt: now.UTC().Format(time.RFC3339),
 		UpdatedAt: now.UTC().Format(time.RFC3339),
 		Operator:  strings.TrimSpace(operator),
@@ -977,10 +977,14 @@ func (s *Store) CreateHostIntervention(resident, kind, title, body, operator str
 	return item, nil
 }
 
-func (s *Store) ResolveHostIntervention(id, body, operator string, now time.Time) (HostIntervention, error) {
+func (s *Store) UpdateHostInterventionStatus(id, status, body, operator string, now time.Time) (HostIntervention, error) {
 	item, err := s.loadHostIntervention(id)
 	if err != nil {
 		return HostIntervention{}, err
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return HostIntervention{}, errors.New("intervention status cannot be empty")
 	}
 	body = strings.TrimSpace(body)
 	if body != "" {
@@ -989,7 +993,7 @@ func (s *Store) ResolveHostIntervention(id, body, operator string, now time.Time
 	if op := strings.TrimSpace(operator); op != "" {
 		item.Operator = op
 	}
-	item.Status = "completed"
+	item.Status = status
 	item.UpdatedAt = now.UTC().Format(time.RFC3339)
 	if err := s.writeHostIntervention(item); err != nil {
 		return HostIntervention{}, err
@@ -997,7 +1001,11 @@ func (s *Store) ResolveHostIntervention(id, body, operator string, now time.Time
 	return item, nil
 }
 
-func (s *Store) ResolveLatestOpenHostIntervention(resident, kind, title, body, operator string, now time.Time) (HostIntervention, bool, error) {
+func (s *Store) ResolveHostIntervention(id, body, operator string, now time.Time) (HostIntervention, error) {
+	return s.UpdateHostInterventionStatus(id, "completed", body, operator, now)
+}
+
+func (s *Store) UpdateLatestOpenHostIntervention(resident, kind, title, status, body, operator string, now time.Time) (HostIntervention, bool, error) {
 	items, err := s.loadAllHostInterventions()
 	if err != nil {
 		return HostIntervention{}, false, err
@@ -1034,11 +1042,15 @@ func (s *Store) ResolveLatestOpenHostIntervention(resident, kind, title, body, o
 		return HostIntervention{}, false, nil
 	}
 	item := items[best]
-	resolved, err := s.ResolveHostIntervention(item.ID, body, operator, now)
+	updated, err := s.UpdateHostInterventionStatus(item.ID, status, body, operator, now)
 	if err != nil {
 		return HostIntervention{}, false, err
 	}
-	return resolved, true, nil
+	return updated, true, nil
+}
+
+func (s *Store) ResolveLatestOpenHostIntervention(resident, kind, title, body, operator string, now time.Time) (HostIntervention, bool, error) {
+	return s.UpdateLatestOpenHostIntervention(resident, kind, title, "completed", body, operator, now)
 }
 
 func (s *Store) ReadHostInterventions(resident, status string, limit int) ([]ResidentInterventionSummary, error) {

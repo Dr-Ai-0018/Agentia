@@ -237,6 +237,34 @@ func TestConsumeFreshHostInterventionsMarksSeen(t *testing.T) {
 	}
 }
 
+func TestUpdateLatestOpenHostInterventionChangesStatus(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	created, err := store.CreateHostIntervention("amber", "maintenance", "Planned maintenance", "Scheduled maintenance is approved.", "chenglin", now)
+	if err != nil {
+		t.Fatalf("create host intervention: %v", err)
+	}
+	if created.Status != "planned" {
+		t.Fatalf("expected planned intervention, got %#v", created)
+	}
+
+	updated, ok, err := store.UpdateLatestOpenHostIntervention("amber", "maintenance", "Planned maintenance", "in_progress", "Maintenance has started.", "chenglin", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("update intervention status: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected matching intervention to update")
+	}
+	if updated.Status != "in_progress" {
+		t.Fatalf("expected in_progress intervention, got %#v", updated)
+	}
+	if !strings.Contains(updated.Body, "Maintenance has started.") {
+		t.Fatalf("expected updated body, got %#v", updated)
+	}
+}
+
 func TestReadAllThreadSummaries(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)
