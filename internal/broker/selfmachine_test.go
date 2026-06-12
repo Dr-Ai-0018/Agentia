@@ -12,6 +12,11 @@ type fakeMachineControl struct {
 	snapshotName     string
 	restoreInstance  string
 	restoreName      string
+	deletedInstance  string
+	deletedName      string
+	memoryInstance   string
+	memoryMiB        int64
+	memoryErr        error
 }
 
 func (f *fakeMachineControl) Reboot(instance string) error {
@@ -28,6 +33,28 @@ func (f *fakeMachineControl) Snapshot(instance, name string) error {
 func (f *fakeMachineControl) Restore(instance, snapshot string) error {
 	f.restoreInstance = instance
 	f.restoreName = snapshot
+	return nil
+}
+
+func (f *fakeMachineControl) SetMemory(instance string, memoryMiB int64) error {
+	f.memoryInstance = instance
+	f.memoryMiB = memoryMiB
+	return f.memoryErr
+}
+
+func (f *fakeMachineControl) ListSnapshots(instance string) ([]MachineSnapshot, error) {
+	return []MachineSnapshot{
+		{Name: "clean-base", CreatedAt: "2026-06-01T00:00:00Z"},
+		{Name: "self-amber-before-upgrade", CreatedAt: "2026-06-10T00:00:00Z"},
+		{Name: "checkpoint-amber-20260612T010000Z", CreatedAt: "2026-06-12T01:00:00Z"},
+		{Name: "checkpoint-amber-20260612T020000Z", CreatedAt: "2026-06-12T02:00:00Z"},
+		{Name: "checkpoint-amber-20260612T030000Z", CreatedAt: "2026-06-12T03:00:00Z"},
+	}, nil
+}
+
+func (f *fakeMachineControl) DeleteSnapshot(instance, name string) error {
+	f.deletedInstance = instance
+	f.deletedName = name
 	return nil
 }
 

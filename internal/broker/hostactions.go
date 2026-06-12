@@ -28,24 +28,26 @@ type ResourceSettlementInput struct {
 }
 
 type ResourceMaintenancePlanInput struct {
-	TicketID  string `json:"ticket_id"`
-	Resident  string `json:"resident"`
-	Resource  string `json:"resource"`
-	Amount    string `json:"amount"`
-	Note      string `json:"note"`
-	Window    string `json:"window"`
-	Operator  string `json:"operator"`
-	AlsoCreateIntervention bool `json:"also_create_intervention"`
+	TicketID                string `json:"ticket_id"`
+	Resident                string `json:"resident"`
+	Resource                string `json:"resource"`
+	Amount                  string `json:"amount"`
+	Note                    string `json:"note"`
+	Window                  string `json:"window"`
+	Operator                string `json:"operator"`
+	AlsoCreateIntervention  bool   `json:"also_create_intervention"`
+	CreateHostCheckpoint    bool   `json:"create_host_checkpoint"`
 }
 
 type ResourceMaintenanceCompleteInput struct {
-	TicketID string `json:"ticket_id"`
-	Resident string `json:"resident"`
-	Resource string `json:"resource"`
-	Amount   string `json:"amount"`
-	Note     string `json:"note"`
-	Close    bool   `json:"close"`
-	Operator string `json:"operator"`
+	TicketID            string `json:"ticket_id"`
+	Resident            string `json:"resident"`
+	Resource            string `json:"resource"`
+	Amount              string `json:"amount"`
+	Note                string `json:"note"`
+	Close               bool   `json:"close"`
+	Operator            string `json:"operator"`
+	CheckpointName      string `json:"checkpoint_name"`
 }
 
 type HostInterventionInput struct {
@@ -261,6 +263,10 @@ func normalizeResource(value string) string {
 }
 
 func buildMaintenanceApprovalNote(note, window, operator string) string {
+	return buildMaintenanceApprovalNoteWithCheckpoint(note, window, operator, "")
+}
+
+func buildMaintenanceApprovalNoteWithCheckpoint(note, window, operator, checkpointName string) string {
 	lines := []string{}
 	if trimmed := strings.TrimSpace(note); trimmed != "" {
 		lines = append(lines, trimmed)
@@ -272,6 +278,9 @@ func buildMaintenanceApprovalNote(note, window, operator string) string {
 		fmt.Sprintf("operator=%s", defaultMaintenanceOperator(operator)),
 		"resident_expectation=normal use can continue until maintenance window; VM will reboot automatically during the approved maintenance change; a follow-up notice will be sent after completion.",
 	)
+	if checkpointName != "" {
+		lines = append(lines, fmt.Sprintf("maintenance_checkpoint=%s", checkpointName))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -284,6 +293,10 @@ func buildMaintenanceCompletionNote(note string) string {
 }
 
 func buildMaintenanceCompletionNoteWithOperator(note, operator string) string {
+	return buildMaintenanceCompletionNoteWithCheckpoint(note, operator, "")
+}
+
+func buildMaintenanceCompletionNoteWithCheckpoint(note, operator, checkpointName string) string {
 	lines := []string{}
 	if trimmed := strings.TrimSpace(note); trimmed != "" {
 		lines = append(lines, trimmed)
@@ -294,6 +307,9 @@ func buildMaintenanceCompletionNoteWithOperator(note, operator string) string {
 		fmt.Sprintf("operator=%s", defaultMaintenanceOperator(operator)),
 		"resident_expectation=approved resource change has been applied; VM service has been brought back after maintenance.",
 	)
+	if checkpointName != "" {
+		lines = append(lines, fmt.Sprintf("maintenance_checkpoint=%s", checkpointName))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -333,12 +349,21 @@ func (s *HostActionService) PlanResourceMaintenance(input ResourceMaintenancePla
 	if _, ok := s.app.Binding(residentID); !ok {
 		return worldstate.Ticket{}, fmt.Errorf("unknown resident binding: %s", residentID)
 	}
+	checkpointName := ""
+	if input.CreateHostCheckpoint {
+		created, err := s.CreateHostCheckpoint(residentID, input.Operator, time.Now().UTC())
+		if err != nil {
+			return worldstate.Ticket{}, err
+		}
+		checkpointName = created.Name
+	}
+	approvalNote := buildMaintenanceApprovalNoteWithCheckpoint(input.Note, input.Window, input.Operator, checkpointName)
 	ticket, err := s.SettleResourceTicket(ResourceSettlementInput{
 		TicketID: ticketID,
 		Resource: resource,
 		Amount:   amount,
 		Decision: "approved",
-		Note:     buildMaintenanceApprovalNote(input.Note, input.Window, input.Operator),
+		Note:     approvalNote,
 		Close:    false,
 	})
 	if err != nil {
@@ -349,7 +374,7 @@ func (s *HostActionService) PlanResourceMaintenance(input ResourceMaintenancePla
 			Resident: residentID,
 			Kind:     "maintenance",
 			Title:    buildMaintenanceInterventionTitle(resource, amount),
-			Body:     buildMaintenanceApprovalNote(input.Note, input.Window, input.Operator),
+			Body:     approvalNote,
 			Operator: input.Operator,
 		}); err != nil {
 			return worldstate.Ticket{}, err
@@ -378,12 +403,13 @@ func (s *HostActionService) CompleteResourceMaintenance(input ResourceMaintenanc
 	if _, ok := s.app.Binding(residentID); !ok {
 		return worldstate.Ticket{}, fmt.Errorf("unknown resident binding: %s", residentID)
 	}
+	completionNote := buildMaintenanceCompletionNoteWithCheckpoint(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
 	ticket, err := s.SettleResourceTicket(ResourceSettlementInput{
 		TicketID: ticketID,
 		Resource: resource,
 		Amount:   amount,
 		Decision: "approved",
-		Note:     buildMaintenanceCompletionNoteWithOperator(input.Note, input.Operator),
+		Note:     completionNote,
 		Close:    input.Close,
 	})
 	if err != nil {
@@ -393,7 +419,7 @@ func (s *HostActionService) CompleteResourceMaintenance(input ResourceMaintenanc
 		residentID,
 		"maintenance",
 		buildMaintenanceInterventionTitle(resource, amount),
-		buildMaintenanceCompletionNoteWithOperator(input.Note, input.Operator),
+		completionNote,
 		input.Operator,
 		time.Now().UTC(),
 	); err != nil {
@@ -407,12 +433,13 @@ func (s *HostActionService) ApplyMemoryAdjustment(ticketID, residentID string, m
 		return worldstate.Ticket{}, fmt.Errorf("memory MiB must be positive")
 	}
 	return s.PlanResourceMaintenance(ResourceMaintenancePlanInput{
-		TicketID: ticketID,
-		Resident: residentID,
-		Resource: "memory",
-		Amount:   fmt.Sprintf("%dMiB", memoryMiB),
-		Note:     note,
+		TicketID:               ticketID,
+		Resident:               residentID,
+		Resource:               "memory",
+		Amount:                 fmt.Sprintf("%dMiB", memoryMiB),
+		Note:                   note,
 		AlsoCreateIntervention: true,
+		CreateHostCheckpoint:   true,
 	})
 }
 
@@ -421,12 +448,13 @@ func (s *HostActionService) ApplyCPUAdjustment(ticketID, residentID string, vcpu
 		return worldstate.Ticket{}, fmt.Errorf("vcpu must be positive")
 	}
 	return s.PlanResourceMaintenance(ResourceMaintenancePlanInput{
-		TicketID: ticketID,
-		Resident: residentID,
-		Resource: "cpu",
-		Amount:   fmt.Sprintf("%d", vcpu),
-		Note:     note,
+		TicketID:               ticketID,
+		Resident:               residentID,
+		Resource:               "cpu",
+		Amount:                 fmt.Sprintf("%d", vcpu),
+		Note:                   note,
 		AlsoCreateIntervention: true,
+		CreateHostCheckpoint:   true,
 	})
 }
 
@@ -435,12 +463,13 @@ func (s *HostActionService) ApplyDiskAdjustment(ticketID, residentID string, dis
 		return worldstate.Ticket{}, fmt.Errorf("disk GiB must be positive")
 	}
 	return s.PlanResourceMaintenance(ResourceMaintenancePlanInput{
-		TicketID: ticketID,
-		Resident: residentID,
-		Resource: "disk",
-		Amount:   fmt.Sprintf("%dGiB", diskGiB),
-		Note:     note,
+		TicketID:               ticketID,
+		Resident:               residentID,
+		Resource:               "disk",
+		Amount:                 fmt.Sprintf("%dGiB", diskGiB),
+		Note:                   note,
 		AlsoCreateIntervention: true,
+		CreateHostCheckpoint:   true,
 	})
 }
 
@@ -458,7 +487,7 @@ func parseMaintenanceMetadata(note string) map[string]string {
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
 		switch key {
-		case "approved_for_maintenance", "maintenance_action", "maintenance_window", "maintenance_completed", "maintenance_result", "operator":
+		case "approved_for_maintenance", "maintenance_action", "maintenance_window", "maintenance_completed", "maintenance_result", "operator", "maintenance_checkpoint":
 			out[key] = value
 		}
 	}

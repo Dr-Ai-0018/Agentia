@@ -139,6 +139,12 @@ func TestHostActionServiceApplyMemoryAdjustment(t *testing.T) {
 	if !strings.Contains(last.Body, "maintenance_action=host_planned_stop_change_start") {
 		t.Fatalf("expected maintenance action note, got %q", last.Body)
 	}
+	if !strings.Contains(last.Body, "maintenance_checkpoint=checkpoint-amber-") {
+		t.Fatalf("expected maintenance checkpoint in note, got %q", last.Body)
+	}
+	if fake.snapshotInstance != "amber" || !strings.HasPrefix(fake.snapshotName, "checkpoint-amber-") {
+		t.Fatalf("expected host checkpoint creation, got fake=%#v", fake)
+	}
 	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
 	if err != nil {
 		t.Fatalf("read host interventions: %v", err)
@@ -162,6 +168,8 @@ func TestHostActionServicePlanResourceMaintenanceForDisk(t *testing.T) {
 	}
 
 	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
 	updated, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
 		TicketID: ticket.ID,
 		Resident: "amber",
@@ -170,6 +178,7 @@ func TestHostActionServicePlanResourceMaintenanceForDisk(t *testing.T) {
 		Note:     "Approved for current workload.",
 		Window:   "2026-06-12T22:00Z/2026-06-12T22:15Z",
 		Operator: "chenglin",
+		CreateHostCheckpoint: true,
 	})
 	if err != nil {
 		t.Fatalf("plan maintenance: %v", err)
@@ -184,6 +193,12 @@ func TestHostActionServicePlanResourceMaintenanceForDisk(t *testing.T) {
 	if !strings.Contains(last.Body, "maintenance_window=2026-06-12T22:00Z/2026-06-12T22:15Z") {
 		t.Fatalf("expected maintenance window, got %q", last.Body)
 	}
+	if !strings.Contains(last.Body, "maintenance_checkpoint=checkpoint-amber-") {
+		t.Fatalf("expected maintenance checkpoint, got %q", last.Body)
+	}
+	if fake.snapshotInstance != "amber" || !strings.HasPrefix(fake.snapshotName, "checkpoint-amber-") {
+		t.Fatalf("expected host checkpoint creation, got fake=%#v", fake)
+	}
 }
 
 func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) {
@@ -197,6 +212,8 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	}
 
 	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
 	if _, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
 		TicketID: ticket.ID,
 		Resident: "amber",
@@ -205,9 +222,11 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 		Note:     "Approved for compute burst.",
 		Operator: "chenglin",
 		AlsoCreateIntervention: true,
+		CreateHostCheckpoint:   true,
 	}); err != nil {
 		t.Fatalf("plan maintenance: %v", err)
 	}
+	checkpointName := fake.snapshotName
 	updated, err := service.CompleteResourceMaintenance(ResourceMaintenanceCompleteInput{
 		TicketID: ticket.ID,
 		Resident: "amber",
@@ -216,6 +235,7 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 		Note:     "Maintenance finished successfully.",
 		Close:    true,
 		Operator: "chenglin",
+		CheckpointName: checkpointName,
 	})
 	if err != nil {
 		t.Fatalf("complete maintenance: %v", err)
@@ -232,6 +252,9 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	}
 	if !strings.Contains(last.Body, "operator=chenglin") {
 		t.Fatalf("expected operator marker, got %q", last.Body)
+	}
+	if !strings.Contains(last.Body, "maintenance_checkpoint="+checkpointName) {
+		t.Fatalf("expected maintenance checkpoint marker, got %q", last.Body)
 	}
 	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
 	if err != nil {
@@ -259,6 +282,8 @@ func TestHostActionServiceApplyCPUAdjustment(t *testing.T) {
 	}
 
 	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
 	updated, err := service.ApplyCPUAdjustment(ticket.ID, "amber", 2, "Approved for compute burst.")
 	if err != nil {
 		t.Fatalf("apply cpu adjustment: %v", err)
@@ -269,6 +294,12 @@ func TestHostActionServiceApplyCPUAdjustment(t *testing.T) {
 	last := updated.Replies[len(updated.Replies)-1]
 	if !strings.Contains(last.Body, "resource=cpu") || !strings.Contains(last.Body, "amount=2") {
 		t.Fatalf("unexpected cpu maintenance body: %q", last.Body)
+	}
+	if !strings.Contains(last.Body, "maintenance_checkpoint=checkpoint-amber-") {
+		t.Fatalf("expected maintenance checkpoint in cpu note, got %q", last.Body)
+	}
+	if fake.snapshotInstance != "amber" || !strings.HasPrefix(fake.snapshotName, "checkpoint-amber-") {
+		t.Fatalf("expected host checkpoint creation, got fake=%#v", fake)
 	}
 	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
 	if err != nil {
@@ -290,6 +321,8 @@ func TestHostActionServiceApplyDiskAdjustment(t *testing.T) {
 	}
 
 	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
 	updated, err := service.ApplyDiskAdjustment(ticket.ID, "amber", 20, "Approved for storage growth.")
 	if err != nil {
 		t.Fatalf("apply disk adjustment: %v", err)
@@ -300,6 +333,12 @@ func TestHostActionServiceApplyDiskAdjustment(t *testing.T) {
 	last := updated.Replies[len(updated.Replies)-1]
 	if !strings.Contains(last.Body, "resource=disk") || !strings.Contains(last.Body, "amount=20GiB") {
 		t.Fatalf("unexpected disk maintenance body: %q", last.Body)
+	}
+	if !strings.Contains(last.Body, "maintenance_checkpoint=checkpoint-amber-") {
+		t.Fatalf("expected maintenance checkpoint in disk note, got %q", last.Body)
+	}
+	if fake.snapshotInstance != "amber" || !strings.HasPrefix(fake.snapshotName, "checkpoint-amber-") {
+		t.Fatalf("expected host checkpoint creation, got fake=%#v", fake)
 	}
 	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
 	if err != nil {

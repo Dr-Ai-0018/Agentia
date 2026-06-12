@@ -4,23 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
-
-func (f *fakeMachineControl) ListSnapshots(instance string) ([]MachineSnapshot, error) {
-	return []MachineSnapshot{
-		{Name: "clean-base", CreatedAt: "2026-06-01T00:00:00Z"},
-		{Name: "self-amber-before-upgrade", CreatedAt: "2026-06-10T00:00:00Z"},
-		{Name: "checkpoint-amber-20260612T010000Z", CreatedAt: "2026-06-12T01:00:00Z"},
-		{Name: "checkpoint-amber-20260612T020000Z", CreatedAt: "2026-06-12T02:00:00Z"},
-		{Name: "checkpoint-amber-20260612T030000Z", CreatedAt: "2026-06-12T03:00:00Z"},
-	}, nil
-}
-
-func (f *fakeMachineControl) DeleteSnapshot(instance, name string) error {
-	f.restoreInstance = instance
-	f.restoreName = name
-	return nil
-}
 
 func TestListResidentCheckpoints(t *testing.T) {
 	service := NewHostActionService(t.TempDir())
@@ -97,10 +82,29 @@ func TestCleanupResidentCheckpointsApplyDeletesOldHostCheckpoints(t *testing.T) 
 	if len(out.Deleted) != 1 || out.Deleted[0].Name != "checkpoint-amber-20260612T010000Z" {
 		t.Fatalf("unexpected deleted checkpoints: %#v", out.Deleted)
 	}
-	if fake.restoreInstance != "amber" || fake.restoreName != "checkpoint-amber-20260612T010000Z" {
+	if fake.deletedInstance != "amber" || fake.deletedName != "checkpoint-amber-20260612T010000Z" {
 		t.Fatalf("expected delete call, got fake=%#v", fake)
 	}
 	if _, err := os.Stat(filepath.Join(root, "world")); err != nil {
 		t.Fatalf("expected history/audit output directories to exist: %v", err)
+	}
+}
+
+func TestCreateHostCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
+	now := time.Date(2026, 6, 12, 5, 0, 0, 0, time.UTC)
+
+	out, err := service.CreateHostCheckpoint("amber", "chenglin", now)
+	if err != nil {
+		t.Fatalf("create host checkpoint: %v", err)
+	}
+	if out.Name != "checkpoint-amber-20260612T050000Z" {
+		t.Fatalf("unexpected checkpoint output: %#v", out)
+	}
+	if fake.snapshotInstance != "amber" || fake.snapshotName != "checkpoint-amber-20260612T050000Z" {
+		t.Fatalf("expected snapshot create call, got fake=%#v", fake)
 	}
 }

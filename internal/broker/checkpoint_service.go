@@ -41,6 +41,15 @@ type CheckpointCleanupOutput struct {
 	Retained     []ResidentCheckpoint `json:"retained"`
 }
 
+type CheckpointCreateOutput struct {
+	ResidentID   string `json:"resident_id"`
+	InstanceName string `json:"instance_name"`
+	Name         string `json:"name"`
+	CreatedAt    string `json:"created_at"`
+	Operator     string `json:"operator"`
+	Kind         string `json:"kind"`
+}
+
 func classifyCheckpoint(residentID, name string) string {
 	switch {
 	case name == BaselineSnapshotName():
@@ -81,6 +90,47 @@ func (s *HostActionService) ListResidentCheckpoints(residentID string) (Checkpoi
 		ResidentID:   binding.ResidentID,
 		InstanceName: binding.InstanceName,
 		Checkpoints:  checkpoints,
+	}, nil
+}
+
+func (s *HostActionService) CreateHostCheckpoint(residentID, operator string, now time.Time) (CheckpointCreateOutput, error) {
+	binding, ok := s.app.Binding(strings.TrimSpace(residentID))
+	if !ok {
+		return CheckpointCreateOutput{}, fmt.Errorf("unknown resident binding: %s", residentID)
+	}
+	name := HostCheckpointName(binding.ResidentID, now)
+	if err := s.machine.Snapshot(binding.InstanceName, name); err != nil {
+		return CheckpointCreateOutput{}, err
+	}
+	_ = s.audit.Write(audit.Event{
+		Actor:      defaultMaintenanceOperator(operator),
+		ResidentID: binding.ResidentID,
+		Kind:       "checkpoint_create",
+		TargetID:   binding.InstanceName,
+		Summary:    fmt.Sprintf("Created host checkpoint %s for %s", name, binding.ResidentID),
+		Metadata: map[string]any{
+			"instance_name":   binding.InstanceName,
+			"checkpoint_name": name,
+			"kind":            "host_checkpoint",
+		},
+	})
+	_ = s.history.Write(world.HistoryEntry{
+		ResidentID: binding.ResidentID,
+		Kind:       "checkpoint_create",
+		Summary:    fmt.Sprintf("Chenglin created host checkpoint %s", name),
+		Details: map[string]any{
+			"instance_name":   binding.InstanceName,
+			"checkpoint_name": name,
+			"kind":            "host_checkpoint",
+		},
+	})
+	return CheckpointCreateOutput{
+		ResidentID:   binding.ResidentID,
+		InstanceName: binding.InstanceName,
+		Name:         name,
+		CreatedAt:    now.UTC().Format(time.RFC3339),
+		Operator:     defaultMaintenanceOperator(operator),
+		Kind:         "host_checkpoint",
 	}, nil
 }
 

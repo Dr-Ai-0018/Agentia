@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|capacity|inventory|host-inspect|checkpoint-list|checkpoint-cleanup|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|capacity|inventory|host-inspect|checkpoint-list|checkpoint-create|checkpoint-cleanup|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -49,6 +49,7 @@ func main() {
 	operator := flag.String("operator", "", "Maintenance operator label for maintenance planning modes")
 	closeTicket := flag.Bool("close-ticket", false, "Whether ticket-reply should close the ticket")
 	keep := flag.Int("keep", 2, "How many newest host checkpoints to retain for checkpoint-cleanup")
+	createCheckpoint := flag.Bool("create-checkpoint", false, "Whether maintenance planning should create a host checkpoint before execution")
 	flag.Parse()
 
 	app := broker.New(".agents")
@@ -94,6 +95,12 @@ func main() {
 		printJSON(out)
 	case "checkpoint-list":
 		out, err := host.ListResidentCheckpoints(*residentID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "checkpoint-create":
+		out, err := host.CreateHostCheckpoint(*residentID, *operator, time.Now().UTC())
 		if err != nil {
 			exitf("%v", err)
 		}
@@ -389,13 +396,14 @@ func main() {
 			exitf("resident is required for ticket-plan-maintenance mode")
 		}
 		out, err := host.PlanResourceMaintenance(broker.ResourceMaintenancePlanInput{
-			TicketID: *messageID,
-			Resident: *residentID,
-			Resource: *resource,
-			Amount:   *amount,
-			Note:     *body,
-			Window:   *window,
-			Operator: *operator,
+			TicketID:             *messageID,
+			Resident:             *residentID,
+			Resource:             *resource,
+			Amount:               *amount,
+			Note:                 *body,
+			Window:               *window,
+			Operator:             *operator,
+			CreateHostCheckpoint: *createCheckpoint,
 		})
 		if err != nil {
 			exitf("%v", err)
