@@ -117,4 +117,12 @@ func TestServiceRunWritesSummaryFile(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("expected summary file at %s: %v", path, err)
 	}
+	statusPath := filepath.Join(root, "orchestrator-runs", out.RunID, "run-status.json")
+	if _, err := os.Stat(statusPath); err != nil {
+		t.Fatalf("expected run status file at %s: %v", statusPath, err)
+	}
+	residentPath := filepath.Join(root, "orchestrator-runs", out.RunID, "resident-jade.json")
+	if _, err := os.Stat(residentPath); err != nil {
+		t.Fatalf("expected resident status file at %s: %v", residentPath, err)
+	}
 }
