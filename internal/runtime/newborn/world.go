@@ -51,15 +51,19 @@ func (w *WorldBridge) BuildResidentWorldView(profile ResidentProfile, limit int)
 		"ticket_rule: use chat for ordinary conversation; use tickets for requests that require a clear host decision",
 	}
 	ticketBlock, freshTicketItems := w.buildResidentTicketBlock(profile, 6)
+	interventionBlock, freshInterventionItems := w.buildResidentInterventionBlock(profile, 6)
 
 	if err != nil || len(messages) == 0 {
 		header = append(header, "recent_chat: none recorded")
 		if ticketBlock != "" {
 			header = append(header, ticketBlock)
 		}
+		if interventionBlock != "" {
+			header = append(header, interventionBlock)
+		}
 		return ResidentWorldView{
 			RenderedChat:        strings.Join(header, "\n"),
-			FreshDeliveredItems: freshTicketItems,
+			FreshDeliveredItems: append(freshTicketItems, freshInterventionItems...),
 		}
 	}
 
@@ -89,17 +93,17 @@ func (w *WorldBridge) BuildResidentWorldView(profile ResidentProfile, limit int)
 		if msg.ReplyToID != "" {
 			suffix = fmt.Sprintf(" reply_to=%s", msg.ReplyToID)
 		}
-		if msg.DefaultFeedback {
-			suffix += " default_feedback=true"
-		}
 		lines = append(lines, fmt.Sprintf("- [%s] status=%s %s -> %s%s: %s", msg.CreatedAt, msg.Status, msg.From, msg.To, suffix, oneLine(msg.Body)))
 	}
 	if ticketBlock != "" {
 		lines = append(lines, ticketBlock)
 	}
+	if interventionBlock != "" {
+		lines = append(lines, interventionBlock)
+	}
 	return ResidentWorldView{
 		RenderedChat:        strings.Join(lines, "\n"),
-		FreshDeliveredItems: append(freshDelivered, freshTicketItems...),
+		FreshDeliveredItems: append(append(freshDelivered, freshTicketItems...), freshInterventionItems...),
 	}
 }
 
@@ -129,6 +133,35 @@ func (w *WorldBridge) buildResidentTicketBlock(profile ResidentProfile, limit in
 			ticket.Priority,
 			oneLine(ticket.Title),
 			oneLine(ticket.LastPreview),
+		))
+	}
+	return strings.Join(lines, "\n"), freshLines
+}
+
+func (w *WorldBridge) buildResidentInterventionBlock(profile ResidentProfile, limit int) (string, []string) {
+	items, fresh, err := w.store.ConsumeFreshHostInterventions(profile.Name, limit)
+	if err != nil || len(items) == 0 {
+		return "recent_host_interventions: none recorded", nil
+	}
+	lines := []string{"recent_host_interventions:"}
+	for _, item := range items {
+		lines = append(lines, fmt.Sprintf("- [%s] intervention=%s kind=%s status=%s title=%s preview=%s",
+			item.UpdatedAt,
+			item.ID,
+			item.Kind,
+			item.Status,
+			oneLine(item.Title),
+			oneLine(item.LastPreview),
+		))
+	}
+	freshLines := make([]string, 0, len(fresh))
+	for _, item := range fresh {
+		freshLines = append(freshLines, fmt.Sprintf("host_intervention_update intervention=%s kind=%s status=%s title=%s preview=%s",
+			item.ID,
+			item.Kind,
+			item.Status,
+			oneLine(item.Title),
+			oneLine(item.LastPreview),
 		))
 	}
 	return strings.Join(lines, "\n"), freshLines

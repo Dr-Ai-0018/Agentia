@@ -39,6 +39,15 @@ type QuotaOutput struct {
 	Quota  brokerstate.QuotaSnapshot  `json:"quota"`
 }
 
+type CapacityOutput struct {
+	Capacity HostCapacityReport `json:"capacity"`
+}
+
+type InventoryOutput struct {
+	Inventory InventorySnapshot `json:"inventory"`
+	Path      string            `json:"path,omitempty"`
+}
+
 type CallSpec struct {
 	Kind      runtimeguard.CallKind
 	Usage     tokenledger.Usage
@@ -139,6 +148,29 @@ func (a *App) RunQuota(residentID string) (QuotaOutput, error) {
 	return QuotaOutput{
 		Status: status,
 		Quota:  brokerstate.BuildQuotaSnapshot(status),
+	}, nil
+}
+
+func (a *App) RunCapacity() (CapacityOutput, error) {
+	report, err := BuildHostCapacityReport(a.cfg)
+	if err != nil {
+		return CapacityOutput{}, err
+	}
+	return CapacityOutput{Capacity: report}, nil
+}
+
+func (a *App) RunInventory() (InventoryOutput, error) {
+	snapshot, err := CollectInventorySnapshot(a.cfg, time.Now().UTC())
+	if err != nil {
+		return InventoryOutput{}, err
+	}
+	path, err := SaveInventorySnapshot(a.root, snapshot)
+	if err != nil {
+		return InventoryOutput{}, err
+	}
+	return InventoryOutput{
+		Inventory: snapshot,
+		Path:      path,
 	}, nil
 }
 

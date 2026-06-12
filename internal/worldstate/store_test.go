@@ -207,6 +207,36 @@ func TestConsumeFreshTicketUpdatesMarksLatestHostReplySeen(t *testing.T) {
 	}
 }
 
+func TestConsumeFreshHostInterventionsMarksSeen(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	item, err := store.CreateHostIntervention("amber", "maintenance", "Planned maintenance", "A short maintenance window is scheduled.", "chenglin", now)
+	if err != nil {
+		t.Fatalf("create host intervention: %v", err)
+	}
+
+	summaries, fresh, err := store.ConsumeFreshHostInterventions("amber", 10)
+	if err != nil {
+		t.Fatalf("consume fresh interventions: %v", err)
+	}
+	if len(summaries) != 1 || len(fresh) != 1 {
+		t.Fatalf("expected 1 summary and 1 fresh intervention, got %d / %d", len(summaries), len(fresh))
+	}
+	if fresh[0].ID != item.ID {
+		t.Fatalf("expected fresh intervention %s, got %s", item.ID, fresh[0].ID)
+	}
+
+	_, againFresh, err := store.ConsumeFreshHostInterventions("amber", 10)
+	if err != nil {
+		t.Fatalf("consume fresh interventions again: %v", err)
+	}
+	if len(againFresh) != 0 {
+		t.Fatalf("expected no fresh interventions after consumption, got %d", len(againFresh))
+	}
+}
+
 func TestReadAllThreadSummaries(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)

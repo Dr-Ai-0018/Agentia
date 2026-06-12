@@ -94,6 +94,19 @@ type HostFollowup struct {
 	Status     string `json:"status,omitempty"`
 }
 
+type HostIntervention struct {
+	ID             string `json:"id"`
+	Resident       string `json:"resident"`
+	Kind           string `json:"kind"`
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	Status         string `json:"status"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+	Operator       string `json:"operator,omitempty"`
+	ResidentSeenAt string `json:"resident_seen_at,omitempty"`
+}
+
 type Ticket struct {
 	ID         string        `json:"id"`
 	Resident   string        `json:"resident"`
@@ -127,6 +140,19 @@ type ResidentTicketSummary struct {
 	LastPreview  string `json:"last_preview,omitempty"`
 	ReplyCount   int    `json:"reply_count"`
 	NeedsReply   bool   `json:"needs_reply"`
+}
+
+type ResidentInterventionSummary struct {
+	ID           string `json:"id"`
+	Resident     string `json:"resident"`
+	Kind         string `json:"kind"`
+	Title        string `json:"title"`
+	Status       string `json:"status"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+	LastPreview  string `json:"last_preview,omitempty"`
+	Operator     string `json:"operator,omitempty"`
+	NeedsAttention bool `json:"needs_attention"`
 }
 
 func New(root string) *Store {
@@ -501,8 +527,12 @@ func (s *Store) ReadHostFollowups(limit int) ([]HostFollowup, error) {
 	if err != nil {
 		return nil, err
 	}
+	openInterventions, err := s.ReadHostInterventions("", "", limit)
+	if err != nil {
+		return nil, err
+	}
 
-	out := make([]HostFollowup, 0, len(pending)+len(openTickets))
+	out := make([]HostFollowup, 0, len(pending)+len(openTickets)+len(openInterventions))
 	for _, item := range pending {
 		out = append(out, HostFollowup{
 			Kind:      "chat_reply",
@@ -524,6 +554,18 @@ func (s *Store) ReadHostFollowups(limit int) ([]HostFollowup, error) {
 			Title:     ticket.Title,
 			Preview:   ticket.LastPreview,
 			Status:    ticket.Status,
+		})
+	}
+	for _, item := range openInterventions {
+		out = append(out, HostFollowup{
+			Kind:      "host_intervention",
+			Resident:  item.Resident,
+			TargetID:  item.ID,
+			CreatedAt: item.CreatedAt,
+			UpdatedAt: item.UpdatedAt,
+			Title:     item.Title,
+			Preview:   item.LastPreview,
+			Status:    item.Status,
 		})
 	}
 
@@ -901,8 +943,137 @@ func (s *Store) ReadTicket(ticketID string) (Ticket, error) {
 	return s.loadTicket(ticketID)
 }
 
+func (s *Store) CreateHostIntervention(resident, kind, title, body, operator string, now time.Time) (HostIntervention, error) {
+	resident = strings.TrimSpace(resident)
+	kind = strings.TrimSpace(kind)
+	title = strings.TrimSpace(title)
+	body = strings.TrimSpace(body)
+	if resident == "" {
+		return HostIntervention{}, errors.New("resident cannot be empty")
+	}
+	if kind == "" {
+		return HostIntervention{}, errors.New("intervention kind cannot be empty")
+	}
+	if title == "" {
+		return HostIntervention{}, errors.New("intervention title cannot be empty")
+	}
+	if body == "" {
+		return HostIntervention{}, errors.New("intervention body cannot be empty")
+	}
+	item := HostIntervention{
+		ID:        fmt.Sprintf("host-%s-%s", resident, now.UTC().Format("20060102T150405.000000000Z")),
+		Resident:  resident,
+		Kind:      kind,
+		Title:     title,
+		Body:      body,
+		Status:    "open",
+		CreatedAt: now.UTC().Format(time.RFC3339),
+		UpdatedAt: now.UTC().Format(time.RFC3339),
+		Operator:  strings.TrimSpace(operator),
+	}
+	if err := s.writeHostIntervention(item); err != nil {
+		return HostIntervention{}, err
+	}
+	return item, nil
+}
+
+func (s *Store) ResolveHostIntervention(id, body, operator string, now time.Time) (HostIntervention, error) {
+	item, err := s.loadHostIntervention(id)
+	if err != nil {
+		return HostIntervention{}, err
+	}
+	body = strings.TrimSpace(body)
+	if body != "" {
+		item.Body = body
+	}
+	if op := strings.TrimSpace(operator); op != "" {
+		item.Operator = op
+	}
+	item.Status = "completed"
+	item.UpdatedAt = now.UTC().Format(time.RFC3339)
+	if err := s.writeHostIntervention(item); err != nil {
+		return HostIntervention{}, err
+	}
+	return item, nil
+}
+
+func (s *Store) ReadHostInterventions(resident, status string, limit int) ([]ResidentInterventionSummary, error) {
+	items, err := s.loadAllHostInterventions()
+	if err != nil {
+		return nil, err
+	}
+	resident = strings.TrimSpace(resident)
+	status = strings.TrimSpace(status)
+	out := make([]ResidentInterventionSummary, 0, len(items))
+	for _, item := range items {
+		if resident != "" && item.Resident != resident {
+			continue
+		}
+		if status != "" && item.Status != status {
+			continue
+		}
+		out = append(out, summarizeHostIntervention(item))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].UpdatedAt > out[j].UpdatedAt
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (s *Store) ConsumeFreshHostInterventions(resident string, limit int) ([]ResidentInterventionSummary, []ResidentInterventionSummary, error) {
+	items, err := s.loadAllHostInterventions()
+	if err != nil {
+		return nil, nil, err
+	}
+	resident = strings.TrimSpace(resident)
+	summaries := make([]ResidentInterventionSummary, 0, len(items))
+	fresh := make([]ResidentInterventionSummary, 0, len(items))
+	changed := false
+	for i := range items {
+		item := &items[i]
+		if resident != "" && item.Resident != resident {
+			continue
+		}
+		summary := summarizeHostIntervention(*item)
+		summaries = append(summaries, summary)
+		if strings.TrimSpace(item.ResidentSeenAt) == item.UpdatedAt {
+			continue
+		}
+		fresh = append(fresh, summary)
+		item.ResidentSeenAt = item.UpdatedAt
+		changed = true
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].UpdatedAt > summaries[j].UpdatedAt
+	})
+	sort.Slice(fresh, func(i, j int) bool {
+		return fresh[i].UpdatedAt > fresh[j].UpdatedAt
+	})
+	if limit > 0 && len(summaries) > limit {
+		summaries = summaries[:limit]
+	}
+	if limit > 0 && len(fresh) > limit {
+		fresh = fresh[:limit]
+	}
+	if changed {
+		for _, item := range items {
+			if err := s.writeHostIntervention(item); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	return summaries, fresh, nil
+}
+
 func (s *Store) ticketDir() string {
 	return filepath.Join(s.root, "world", "tickets")
+}
+
+func (s *Store) hostInterventionDir() string {
+	return filepath.Join(s.root, "world", "host-interventions")
 }
 
 func (s *Store) writeTicket(ticket Ticket) error {
@@ -951,6 +1122,52 @@ func (s *Store) loadAllTickets() ([]Ticket, error) {
 	return out, nil
 }
 
+func (s *Store) writeHostIntervention(item HostIntervention) error {
+	if err := os.MkdirAll(s.hostInterventionDir(), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(item, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(filepath.Join(s.hostInterventionDir(), item.ID+".json"), raw, 0o644)
+}
+
+func (s *Store) loadHostIntervention(id string) (HostIntervention, error) {
+	raw, err := os.ReadFile(filepath.Join(s.hostInterventionDir(), id+".json"))
+	if err != nil {
+		return HostIntervention{}, err
+	}
+	var item HostIntervention
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return HostIntervention{}, err
+	}
+	return item, nil
+}
+
+func (s *Store) loadAllHostInterventions() ([]HostIntervention, error) {
+	dir := s.hostInterventionDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]HostIntervention, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		item, err := s.loadHostIntervention(strings.TrimSuffix(entry.Name(), ".json"))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
 func summarizeTicket(ticket Ticket) ResidentTicketSummary {
 	summary := ResidentTicketSummary{
 		ID:         ticket.ID,
@@ -970,6 +1187,21 @@ func summarizeTicket(ticket Ticket) ResidentTicketSummary {
 		summary.LastPreview = previewText(last.Body, 160)
 	}
 	return summary
+}
+
+func summarizeHostIntervention(item HostIntervention) ResidentInterventionSummary {
+	return ResidentInterventionSummary{
+		ID:             item.ID,
+		Resident:       item.Resident,
+		Kind:           item.Kind,
+		Title:          item.Title,
+		Status:         item.Status,
+		CreatedAt:      item.CreatedAt,
+		UpdatedAt:      item.UpdatedAt,
+		LastPreview:    previewText(item.Body, 160),
+		Operator:       item.Operator,
+		NeedsAttention: strings.TrimSpace(item.ResidentSeenAt) != item.UpdatedAt,
+	}
 }
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {

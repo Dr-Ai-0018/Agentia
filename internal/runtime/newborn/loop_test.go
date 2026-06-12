@@ -1251,3 +1251,30 @@ func TestBuildResidentWorldViewReturnsFreshTicketUpdatesOnce(t *testing.T) {
 		t.Fatalf("expected ticket fresh update to be consumed once, got %#v", second.FreshDeliveredItems)
 	}
 }
+
+func TestBuildResidentWorldViewReturnsFreshHostInterventionsOnce(t *testing.T) {
+	dir := t.TempDir()
+	world := NewWorldBridge(dir)
+	profile := ResidentProfile{Name: "amber"}
+	now := time.Date(2026, 6, 7, 7, 0, 0, 0, time.UTC)
+
+	if _, err := world.store.CreateHostIntervention("amber", "maintenance", "Planned maintenance", "A short maintenance window is scheduled.", "chenglin", now); err != nil {
+		t.Fatalf("create host intervention: %v", err)
+	}
+
+	first := world.BuildResidentWorldView(profile, 10)
+	if !strings.Contains(first.RenderedChat, "recent_host_interventions:") {
+		t.Fatalf("expected intervention block in rendered chat")
+	}
+	if len(first.FreshDeliveredItems) != 1 {
+		t.Fatalf("expected 1 fresh host intervention update, got %d", len(first.FreshDeliveredItems))
+	}
+	if !strings.Contains(first.FreshDeliveredItems[0], "host_intervention_update") {
+		t.Fatalf("expected host_intervention_update marker, got %q", first.FreshDeliveredItems[0])
+	}
+
+	second := world.BuildResidentWorldView(profile, 10)
+	if len(second.FreshDeliveredItems) != 0 {
+		t.Fatalf("expected host intervention fresh update to be consumed once, got %#v", second.FreshDeliveredItems)
+	}
+}

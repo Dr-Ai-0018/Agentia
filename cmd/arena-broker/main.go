@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|capacity|inventory|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -37,9 +37,16 @@ func main() {
 	priority := flag.String("priority", "", "Optional ticket priority filter or value: low|medium|high|urgent")
 	title := flag.String("title", "", "Optional title for ticket modes that create one")
 	amount := flag.String("amount", "", "Requested amount for self-request-* modes")
+	cpuCount := flag.Int64("cpu-count", 0, "Target CPU count for CPU adjustment modes")
+	memoryMiB := flag.Int64("memory-mib", 0, "Memory target in MiB for memory adjustment modes")
+	diskGiB := flag.Int64("disk-gib", 0, "Target disk size in GiB for disk adjustment modes")
+	resource := flag.String("resource", "", "Resource name for resource settlement modes")
+	decision := flag.String("decision", "", "Decision for settlement modes: approved|rejected|deferred")
 	reason := flag.String("reason", "", "Request reason for self-request-* modes")
 	summary := flag.String("summary", "", "Summary for self-submit-result")
 	snapshotName := flag.String("snapshot-name", "", "Snapshot name for self-snapshot/self-restore")
+	window := flag.String("window", "", "Maintenance window label for maintenance planning modes")
+	operator := flag.String("operator", "", "Maintenance operator label for maintenance planning modes")
 	closeTicket := flag.Bool("close-ticket", false, "Whether ticket-reply should close the ticket")
 	flag.Parse()
 
@@ -62,6 +69,18 @@ func main() {
 		printJSON(out)
 	case "quota":
 		out, err := app.RunQuota(*residentID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "capacity":
+		out, err := app.RunCapacity()
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "inventory":
+		out, err := app.RunInventory()
 		if err != nil {
 			exitf("%v", err)
 		}
@@ -297,6 +316,119 @@ func main() {
 			exitf("message-id is required for ticket-reply mode")
 		}
 		out, err := host.ReplyTicket(*messageID, *body, *closeTicket)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-settle-resource":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-settle-resource mode")
+		}
+		out, err := host.SettleResourceTicket(broker.ResourceSettlementInput{
+			TicketID: *messageID,
+			Resource: *resource,
+			Amount:   *amount,
+			Decision: *decision,
+			Note:     *body,
+			Close:    *closeTicket,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-intervention":
+		if *residentID == "" {
+			exitf("resident is required for host-intervention mode")
+		}
+		if *resource == "" {
+			exitf("resource is required for host-intervention mode")
+		}
+		if *title == "" {
+			exitf("title is required for host-intervention mode")
+		}
+		out, err := host.CreateHostIntervention(broker.HostInterventionInput{
+			Resident: *residentID,
+			Kind:     *resource,
+			Title:    *title,
+			Body:     *body,
+			Operator: *operator,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-plan-maintenance":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-plan-maintenance mode")
+		}
+		if *residentID == "" {
+			exitf("resident is required for ticket-plan-maintenance mode")
+		}
+		out, err := host.PlanResourceMaintenance(broker.ResourceMaintenancePlanInput{
+			TicketID: *messageID,
+			Resident: *residentID,
+			Resource: *resource,
+			Amount:   *amount,
+			Note:     *body,
+			Window:   *window,
+			Operator: *operator,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-complete-maintenance":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-complete-maintenance mode")
+		}
+		if *residentID == "" {
+			exitf("resident is required for ticket-complete-maintenance mode")
+		}
+		out, err := host.CompleteResourceMaintenance(broker.ResourceMaintenanceCompleteInput{
+			TicketID: *messageID,
+			Resident: *residentID,
+			Resource: *resource,
+			Amount:   *amount,
+			Note:     *body,
+			Close:    *closeTicket,
+			Operator: *operator,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-apply-cpu":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-apply-cpu mode")
+		}
+		if *residentID == "" {
+			exitf("resident is required for ticket-apply-cpu mode")
+		}
+		out, err := host.ApplyCPUAdjustment(*messageID, *residentID, *cpuCount, *body)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-apply-memory":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-apply-memory mode")
+		}
+		if *residentID == "" {
+			exitf("resident is required for ticket-apply-memory mode")
+		}
+		out, err := host.ApplyMemoryAdjustment(*messageID, *residentID, *memoryMiB, *body)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-apply-disk":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-apply-disk mode")
+		}
+		if *residentID == "" {
+			exitf("resident is required for ticket-apply-disk mode")
+		}
+		out, err := host.ApplyDiskAdjustment(*messageID, *residentID, *diskGiB, *body)
 		if err != nil {
 			exitf("%v", err)
 		}
