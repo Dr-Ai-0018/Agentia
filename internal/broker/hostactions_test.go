@@ -197,6 +197,17 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	}
 
 	service := NewHostActionService(root)
+	if _, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
+		TicketID: ticket.ID,
+		Resident: "amber",
+		Resource: "cpu",
+		Amount:   "2",
+		Note:     "Approved for compute burst.",
+		Operator: "chenglin",
+		AlsoCreateIntervention: true,
+	}); err != nil {
+		t.Fatalf("plan maintenance: %v", err)
+	}
 	updated, err := service.CompleteResourceMaintenance(ResourceMaintenanceCompleteInput{
 		TicketID: ticket.ID,
 		Resident: "amber",
@@ -221,6 +232,19 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	}
 	if !strings.Contains(last.Body, "operator=chenglin") {
 		t.Fatalf("expected operator marker, got %q", last.Body)
+	}
+	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
+	if err != nil {
+		t.Fatalf("read host interventions: %v", err)
+	}
+	if len(interventions) != 1 {
+		t.Fatalf("expected 1 host intervention, got %d", len(interventions))
+	}
+	if interventions[0].Status != "completed" {
+		t.Fatalf("expected completed intervention, got %#v", interventions[0])
+	}
+	if !strings.Contains(interventions[0].LastPreview, "maintenance_completed=true") {
+		t.Fatalf("expected completion note in intervention preview, got %#v", interventions[0])
 	}
 }
 

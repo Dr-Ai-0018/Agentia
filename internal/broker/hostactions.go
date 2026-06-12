@@ -378,7 +378,7 @@ func (s *HostActionService) CompleteResourceMaintenance(input ResourceMaintenanc
 	if _, ok := s.app.Binding(residentID); !ok {
 		return worldstate.Ticket{}, fmt.Errorf("unknown resident binding: %s", residentID)
 	}
-	return s.SettleResourceTicket(ResourceSettlementInput{
+	ticket, err := s.SettleResourceTicket(ResourceSettlementInput{
 		TicketID: ticketID,
 		Resource: resource,
 		Amount:   amount,
@@ -386,6 +386,20 @@ func (s *HostActionService) CompleteResourceMaintenance(input ResourceMaintenanc
 		Note:     buildMaintenanceCompletionNoteWithOperator(input.Note, input.Operator),
 		Close:    input.Close,
 	})
+	if err != nil {
+		return worldstate.Ticket{}, err
+	}
+	if _, _, err := s.world.ResolveLatestOpenHostIntervention(
+		residentID,
+		"maintenance",
+		buildMaintenanceInterventionTitle(resource, amount),
+		buildMaintenanceCompletionNoteWithOperator(input.Note, input.Operator),
+		input.Operator,
+		time.Now().UTC(),
+	); err != nil {
+		return worldstate.Ticket{}, err
+	}
+	return ticket, nil
 }
 
 func (s *HostActionService) ApplyMemoryAdjustment(ticketID, residentID string, memoryMiB int64, note string) (worldstate.Ticket, error) {

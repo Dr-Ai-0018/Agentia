@@ -997,6 +997,50 @@ func (s *Store) ResolveHostIntervention(id, body, operator string, now time.Time
 	return item, nil
 }
 
+func (s *Store) ResolveLatestOpenHostIntervention(resident, kind, title, body, operator string, now time.Time) (HostIntervention, bool, error) {
+	items, err := s.loadAllHostInterventions()
+	if err != nil {
+		return HostIntervention{}, false, err
+	}
+	resident = strings.TrimSpace(resident)
+	kind = strings.TrimSpace(kind)
+	title = strings.TrimSpace(title)
+	best := -1
+	bestUpdatedAt := time.Time{}
+	for i := range items {
+		item := items[i]
+		if resident != "" && item.Resident != resident {
+			continue
+		}
+		if kind != "" && item.Kind != kind {
+			continue
+		}
+		if title != "" && item.Title != title {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(item.Status), "completed") {
+			continue
+		}
+		updatedAt, err := time.Parse(time.RFC3339, item.UpdatedAt)
+		if err != nil {
+			updatedAt = time.Time{}
+		}
+		if best == -1 || updatedAt.After(bestUpdatedAt) {
+			best = i
+			bestUpdatedAt = updatedAt
+		}
+	}
+	if best == -1 {
+		return HostIntervention{}, false, nil
+	}
+	item := items[best]
+	resolved, err := s.ResolveHostIntervention(item.ID, body, operator, now)
+	if err != nil {
+		return HostIntervention{}, false, err
+	}
+	return resolved, true, nil
+}
+
 func (s *Store) ReadHostInterventions(resident, status string, limit int) ([]ResidentInterventionSummary, error) {
 	items, err := s.loadAllHostInterventions()
 	if err != nil {
