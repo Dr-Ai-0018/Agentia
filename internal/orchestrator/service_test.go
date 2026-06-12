@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -65,6 +67,9 @@ func TestServiceRunSequential(t *testing.T) {
 	if out.Assessment.UsefulRuns != 2 {
 		t.Fatalf("expected useful run summary, got %#v", out.Assessment)
 	}
+	if out.RunID == "" || out.Contract.RunID == "" {
+		t.Fatalf("expected run id in summary: %#v", out)
+	}
 }
 
 func TestServiceRunRejectsUnknownResident(t *testing.T) {
@@ -86,5 +91,30 @@ func TestServiceRunRejectsUnknownResident(t *testing.T) {
 	}
 	if out.Runs[1].Status != "error" {
 		t.Fatalf("expected unknown resident error, got %#v", out.Runs[1])
+	}
+}
+
+func TestServiceRunWritesSummaryFile(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	runner := &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+		return runner
+	}
+
+	out, err := service.Run(RunInput{
+		Residents: []string{"jade"},
+		Duration:  30 * time.Second,
+		OutDir:    filepath.Join(root, "out"),
+		Mode:      RunModeSequential,
+	})
+	if err != nil {
+		t.Fatalf("run orchestrator: %v", err)
+	}
+	path := filepath.Join(root, "orchestrator-runs", out.RunID, "summary.json")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected summary file at %s: %v", path, err)
 	}
 }

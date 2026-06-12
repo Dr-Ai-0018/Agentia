@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +34,19 @@ type ResidentRun struct {
 	Error    string                `json:"error,omitempty"`
 }
 
+type RunContract struct {
+	RunID         string        `json:"run_id"`
+	Mode          RunMode       `json:"mode"`
+	Residents     []string      `json:"residents"`
+	Duration      time.Duration `json:"duration"`
+	OutDir        string        `json:"out_dir"`
+	ResetResident bool          `json:"reset_resident"`
+	Verbose       bool          `json:"verbose"`
+}
+
 type RunSummary struct {
+	RunID      string                     `json:"run_id"`
+	Contract   RunContract                `json:"contract"`
 	StartedAt  string                     `json:"started_at"`
 	EndedAt    string                     `json:"ended_at"`
 	Duration   string                     `json:"duration"`
@@ -57,6 +71,7 @@ type Service struct {
 	apiKey        string
 	client        *http.Client
 	runnerFactory RunnerFactory
+	stateRoot      string
 }
 
 func New(app *broker.App, client *http.Client, baseURL, apiKey string) *Service {
@@ -65,6 +80,7 @@ func New(app *broker.App, client *http.Client, baseURL, apiKey string) *Service 
 		client:  client,
 		baseURL: strings.TrimSpace(baseURL),
 		apiKey:  strings.TrimSpace(apiKey),
+		stateRoot: ".agents/orchestrator-runs",
 		runnerFactory: func(client *http.Client, baseURL, apiKey string) Runner {
 			return newborn.NewRunner(client, baseURL, apiKey)
 		},
@@ -110,6 +126,15 @@ func (s *Service) Run(input RunInput) (RunSummary, error) {
 		input.Mode = RunModeSequential
 	}
 	started := time.Now().UTC()
+	contract := RunContract{
+		RunID:         fmt.Sprintf("orchestrator-%s", started.Format("20060102T150405Z")),
+		Mode:          input.Mode,
+		Residents:     append([]string(nil), input.Residents...),
+		Duration:      input.Duration,
+		OutDir:        input.OutDir,
+		ResetResident: input.ResetResident,
+		Verbose:       input.Verbose,
+	}
 	runs := make([]ResidentRun, len(input.Residents))
 	switch input.Mode {
 	case RunModeSequential:
@@ -138,7 +163,9 @@ func (s *Service) Run(input RunInput) (RunSummary, error) {
 			reports = append(reports, *item.Report)
 		}
 	}
-	return RunSummary{
+	summary := RunSummary{
+		RunID:      contract.RunID,
+		Contract:   contract,
 		StartedAt:  started.Format(time.RFC3339),
 		EndedAt:    time.Now().UTC().Format(time.RFC3339),
 		Duration:   time.Since(started).String(),
@@ -146,7 +173,11 @@ func (s *Service) Run(input RunInput) (RunSummary, error) {
 		Residents:  append([]string(nil), input.Residents...),
 		Runs:       runs,
 		Assessment: newborn.SummarizeParallelReports(reports),
-	}, nil
+	}
+	if err := s.writeSummary(summary); err != nil {
+		return RunSummary{}, err
+	}
+	return summary, nil
 }
 
 func (s *Service) runResident(resident string, input RunInput) ResidentRun {
@@ -172,4 +203,28 @@ func (s *Service) runResident(resident string, input RunInput) ResidentRun {
 	run.Status = "ok"
 	run.Report = &report
 	return run
+}
+
+func (s *Service) writeSummary(summary RunSummary) error {
+	runDir := filepath.Join(s.stateRoot, summary.RunID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir orchestrator run dir: %w", err)
+	}
+	raw, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal orchestrator summary: %w", err)
+	}
+	return atomicWriteFile(filepath.Join(runDir, "summary.json"), raw, 0o644)
+}
+
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
