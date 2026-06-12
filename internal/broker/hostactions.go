@@ -60,6 +60,27 @@ type ResourceMaintenanceStartInput struct {
 	CheckpointName string `json:"checkpoint_name"`
 }
 
+type ResourceMaintenanceFailedInput struct {
+	TicketID       string `json:"ticket_id"`
+	Resident       string `json:"resident"`
+	Resource       string `json:"resource"`
+	Amount         string `json:"amount"`
+	Note           string `json:"note"`
+	Operator       string `json:"operator"`
+	CheckpointName string `json:"checkpoint_name"`
+}
+
+type ResourceMaintenanceRollbackInput struct {
+	TicketID       string `json:"ticket_id"`
+	Resident       string `json:"resident"`
+	Resource       string `json:"resource"`
+	Amount         string `json:"amount"`
+	Note           string `json:"note"`
+	Close          bool   `json:"close"`
+	Operator       string `json:"operator"`
+	CheckpointName string `json:"checkpoint_name"`
+}
+
 type HostInterventionInput struct {
 	Resident string `json:"resident"`
 	Kind     string `json:"kind"`
@@ -340,6 +361,40 @@ func buildMaintenanceStartNote(note, operator, checkpointName string) string {
 	return strings.Join(lines, "\n")
 }
 
+func buildMaintenanceFailureNote(note, operator, checkpointName string) string {
+	lines := []string{}
+	if trimmed := strings.TrimSpace(note); trimmed != "" {
+		lines = append(lines, trimmed)
+	}
+	lines = append(lines,
+		"maintenance_failed=true",
+		"maintenance_state=failed",
+		fmt.Sprintf("operator=%s", defaultMaintenanceOperator(operator)),
+		"resident_expectation=approved maintenance did not complete successfully; follow-up or rollback instructions will be sent separately.",
+	)
+	if checkpointName != "" {
+		lines = append(lines, fmt.Sprintf("maintenance_checkpoint=%s", checkpointName))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func buildMaintenanceRollbackNote(note, operator, checkpointName string) string {
+	lines := []string{}
+	if trimmed := strings.TrimSpace(note); trimmed != "" {
+		lines = append(lines, trimmed)
+	}
+	lines = append(lines,
+		"maintenance_rolled_back=true",
+		"maintenance_state=rolled_back",
+		fmt.Sprintf("operator=%s", defaultMaintenanceOperator(operator)),
+		"resident_expectation=the attempted maintenance change has been rolled back; service should be back on the prior baseline while follow-up decisions are pending.",
+	)
+	if checkpointName != "" {
+		lines = append(lines, fmt.Sprintf("maintenance_checkpoint=%s", checkpointName))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func defaultMaintenanceWindow(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -504,6 +559,101 @@ func (s *HostActionService) CompleteResourceMaintenance(input ResourceMaintenanc
 	return ticket, nil
 }
 
+func (s *HostActionService) FailResourceMaintenance(input ResourceMaintenanceFailedInput) (worldstate.Ticket, error) {
+	ticketID := strings.TrimSpace(input.TicketID)
+	residentID := strings.TrimSpace(input.Resident)
+	resource := normalizeResource(input.Resource)
+	amount := strings.TrimSpace(input.Amount)
+	if ticketID == "" {
+		return worldstate.Ticket{}, fmt.Errorf("ticket id is required")
+	}
+	if residentID == "" {
+		return worldstate.Ticket{}, fmt.Errorf("resident id is required")
+	}
+	if resource == "" {
+		return worldstate.Ticket{}, fmt.Errorf("resource is required")
+	}
+	if amount == "" {
+		return worldstate.Ticket{}, fmt.Errorf("amount is required")
+	}
+	if _, ok := s.app.Binding(residentID); !ok {
+		return worldstate.Ticket{}, fmt.Errorf("unknown resident binding: %s", residentID)
+	}
+	failureNote := buildMaintenanceFailureNote(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	ticket, err := s.SettleResourceTicket(ResourceSettlementInput{
+		TicketID: ticketID,
+		Resource: resource,
+		Amount:   amount,
+		Decision: "deferred",
+		Note:     failureNote,
+		Close:    false,
+	})
+	if err != nil {
+		return worldstate.Ticket{}, err
+	}
+	if _, _, err := s.world.UpdateLatestOpenHostIntervention(
+		residentID,
+		"maintenance",
+		buildMaintenanceInterventionTitle(resource, amount),
+		"failed",
+		failureNote,
+		input.Operator,
+		time.Now().UTC(),
+	); err != nil {
+		return worldstate.Ticket{}, err
+	}
+	return ticket, nil
+}
+
+func (s *HostActionService) RollbackResourceMaintenance(input ResourceMaintenanceRollbackInput) (worldstate.Ticket, error) {
+	ticketID := strings.TrimSpace(input.TicketID)
+	residentID := strings.TrimSpace(input.Resident)
+	resource := normalizeResource(input.Resource)
+	amount := strings.TrimSpace(input.Amount)
+	if ticketID == "" {
+		return worldstate.Ticket{}, fmt.Errorf("ticket id is required")
+	}
+	if residentID == "" {
+		return worldstate.Ticket{}, fmt.Errorf("resident id is required")
+	}
+	if resource == "" {
+		return worldstate.Ticket{}, fmt.Errorf("resource is required")
+	}
+	if amount == "" {
+		return worldstate.Ticket{}, fmt.Errorf("amount is required")
+	}
+	if _, ok := s.app.Binding(residentID); !ok {
+		return worldstate.Ticket{}, fmt.Errorf("unknown resident binding: %s", residentID)
+	}
+	rollbackNote := buildMaintenanceRollbackNote(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	ticket, err := s.SettleResourceTicket(ResourceSettlementInput{
+		TicketID: ticketID,
+		Resource: resource,
+		Amount:   amount,
+		Decision: "approved",
+		Note:     rollbackNote,
+		Close:    input.Close,
+	})
+	if err != nil {
+		return worldstate.Ticket{}, err
+	}
+	if _, _, err := s.world.UpdateLatestOpenHostIntervention(
+		residentID,
+		"maintenance",
+		buildMaintenanceInterventionTitle(resource, amount),
+		"rolled_back",
+		rollbackNote,
+		input.Operator,
+		time.Now().UTC(),
+	); err != nil {
+		return worldstate.Ticket{}, err
+	}
+	if _, _, err := s.app.RefreshInventorySnapshot(time.Now().UTC()); err != nil {
+		return worldstate.Ticket{}, fmt.Errorf("refresh inventory snapshot after maintenance rollback: %w", err)
+	}
+	return ticket, nil
+}
+
 func (s *HostActionService) ApplyMemoryAdjustment(ticketID, residentID string, memoryMiB int64, note string) (worldstate.Ticket, error) {
 	if memoryMiB <= 0 {
 		return worldstate.Ticket{}, fmt.Errorf("memory MiB must be positive")
@@ -563,7 +713,7 @@ func parseMaintenanceMetadata(note string) map[string]string {
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
 		switch key {
-		case "approved_for_maintenance", "maintenance_action", "maintenance_window", "maintenance_completed", "maintenance_result", "operator", "maintenance_checkpoint":
+		case "approved_for_maintenance", "maintenance_action", "maintenance_window", "maintenance_completed", "maintenance_result", "maintenance_started", "maintenance_failed", "maintenance_rolled_back", "maintenance_state", "operator", "maintenance_checkpoint":
 			out[key] = value
 		}
 	}

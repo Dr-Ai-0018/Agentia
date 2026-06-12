@@ -352,6 +352,157 @@ func TestHostActionServiceStartResourceMaintenanceMarksInterventionInProgress(t 
 	}
 }
 
+func TestHostActionServiceFailResourceMaintenanceMarksInterventionFailed(t *testing.T) {
+	root := t.TempDir()
+	store := worldstate.New(root)
+	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+
+	ticket, err := store.CreateResidentTicket("amber", "Request CPU increase", "Please increase CPU", worldstate.TicketPriorityHigh, now)
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
+	if _, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
+		TicketID:               ticket.ID,
+		Resident:               "amber",
+		Resource:               "cpu",
+		Amount:                 "2",
+		Note:                   "Approved for compute burst.",
+		Operator:               "chenglin",
+		AlsoCreateIntervention: true,
+		CreateHostCheckpoint:   true,
+	}); err != nil {
+		t.Fatalf("plan maintenance: %v", err)
+	}
+	checkpointName := fake.snapshotName
+
+	updated, err := service.FailResourceMaintenance(ResourceMaintenanceFailedInput{
+		TicketID:       ticket.ID,
+		Resident:       "amber",
+		Resource:       "cpu",
+		Amount:         "2",
+		Note:           "Maintenance could not complete because the instance failed to restart.",
+		Operator:       "chenglin",
+		CheckpointName: checkpointName,
+	})
+	if err != nil {
+		t.Fatalf("fail maintenance: %v", err)
+	}
+	last := updated.Replies[len(updated.Replies)-1]
+	if !strings.Contains(last.Body, "maintenance_failed=true") {
+		t.Fatalf("expected maintenance failed marker, got %q", last.Body)
+	}
+	if !strings.Contains(last.Body, "maintenance_state=failed") {
+		t.Fatalf("expected maintenance failed state, got %q", last.Body)
+	}
+	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
+	if err != nil {
+		t.Fatalf("read host interventions: %v", err)
+	}
+	if len(interventions) != 1 {
+		t.Fatalf("expected 1 host intervention, got %d", len(interventions))
+	}
+	if interventions[0].Status != "failed" {
+		t.Fatalf("expected failed intervention, got %#v", interventions[0])
+	}
+}
+
+func TestHostActionServiceRollbackResourceMaintenanceMarksInterventionRolledBack(t *testing.T) {
+	root := t.TempDir()
+	store := worldstate.New(root)
+	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
+
+	ticket, err := store.CreateResidentTicket("amber", "Request CPU increase", "Please increase CPU", worldstate.TicketPriorityHigh, now)
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
+	refreshed := false
+	service.app.inventoryCollector = func(cfg Config, now time.Time) (InventorySnapshot, error) {
+		refreshed = true
+		return InventorySnapshot{
+			CollectedAt: now.Format(time.RFC3339),
+			Residents: []ResidentInventoryFact{{
+				ResidentID:     "amber",
+				InstanceName:   "amber",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           1,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        12,
+				UpdatedAt:      now.Format(time.RFC3339),
+			}},
+		}, nil
+	}
+	service.app.inventorySaver = func(root string, snapshot InventorySnapshot) (string, error) {
+		return filepath.Join(root, "inventory", "incus-inventory.json"), nil
+	}
+	if _, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
+		TicketID:               ticket.ID,
+		Resident:               "amber",
+		Resource:               "cpu",
+		Amount:                 "2",
+		Note:                   "Approved for compute burst.",
+		Operator:               "chenglin",
+		AlsoCreateIntervention: true,
+		CreateHostCheckpoint:   true,
+	}); err != nil {
+		t.Fatalf("plan maintenance: %v", err)
+	}
+	checkpointName := fake.snapshotName
+	if _, err := service.StartResourceMaintenance(ResourceMaintenanceStartInput{
+		TicketID:       ticket.ID,
+		Resident:       "amber",
+		Resource:       "cpu",
+		Amount:         "2",
+		Note:           "Maintenance window has started.",
+		Operator:       "chenglin",
+		CheckpointName: checkpointName,
+	}); err != nil {
+		t.Fatalf("start maintenance: %v", err)
+	}
+
+	updated, err := service.RollbackResourceMaintenance(ResourceMaintenanceRollbackInput{
+		TicketID:       ticket.ID,
+		Resident:       "amber",
+		Resource:       "cpu",
+		Amount:         "2",
+		Note:           "Rolled back to the pre-maintenance checkpoint after validation failure.",
+		Close:          true,
+		Operator:       "chenglin",
+		CheckpointName: checkpointName,
+	})
+	if err != nil {
+		t.Fatalf("rollback maintenance: %v", err)
+	}
+	last := updated.Replies[len(updated.Replies)-1]
+	if !strings.Contains(last.Body, "maintenance_rolled_back=true") {
+		t.Fatalf("expected maintenance rolled back marker, got %q", last.Body)
+	}
+	if !strings.Contains(last.Body, "maintenance_state=rolled_back") {
+		t.Fatalf("expected maintenance rolled back state, got %q", last.Body)
+	}
+	if !refreshed {
+		t.Fatalf("expected rollback to refresh inventory snapshot")
+	}
+	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
+	if err != nil {
+		t.Fatalf("read host interventions: %v", err)
+	}
+	if len(interventions) != 1 {
+		t.Fatalf("expected 1 host intervention, got %d", len(interventions))
+	}
+	if interventions[0].Status != "rolled_back" {
+		t.Fatalf("expected rolled_back intervention, got %#v", interventions[0])
+	}
+}
+
 func TestHostActionServiceApplyCPUAdjustment(t *testing.T) {
 	root := t.TempDir()
 	store := worldstate.New(root)

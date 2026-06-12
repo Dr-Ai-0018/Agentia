@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|capacity|inventory|host-inspect|checkpoint-list|checkpoint-create|checkpoint-cleanup|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|capacity|inventory|host-inspect|checkpoint-list|checkpoint-create|checkpoint-cleanup|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -443,6 +443,47 @@ func main() {
 			Resource:       *resource,
 			Amount:         *amount,
 			Note:           *body,
+			Operator:       *operator,
+			CheckpointName: *checkpointName,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-fail-maintenance":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-fail-maintenance mode")
+		}
+		if *residentID == "" {
+			exitf("resident is required for ticket-fail-maintenance mode")
+		}
+		out, err := host.FailResourceMaintenance(broker.ResourceMaintenanceFailedInput{
+			TicketID:       *messageID,
+			Resident:       *residentID,
+			Resource:       *resource,
+			Amount:         *amount,
+			Note:           *body,
+			Operator:       *operator,
+			CheckpointName: *checkpointName,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "ticket-rollback-maintenance":
+		if *messageID == "" {
+			exitf("message-id is required for ticket-rollback-maintenance mode")
+		}
+		if *residentID == "" {
+			exitf("resident is required for ticket-rollback-maintenance mode")
+		}
+		out, err := host.RollbackResourceMaintenance(broker.ResourceMaintenanceRollbackInput{
+			TicketID:       *messageID,
+			Resident:       *residentID,
+			Resource:       *resource,
+			Amount:         *amount,
+			Note:           *body,
+			Close:          *closeTicket,
 			Operator:       *operator,
 			CheckpointName: *checkpointName,
 		})
