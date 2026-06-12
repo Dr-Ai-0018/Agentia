@@ -1,6 +1,9 @@
 package broker
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"time"
 
 	"ai-arena/internal/brokerstate"
@@ -8,6 +11,7 @@ import (
 	"ai-arena/internal/runtimecore"
 	"ai-arena/internal/runtimeguard"
 	"ai-arena/internal/tokenledger"
+	"ai-arena/internal/worldstate"
 )
 
 type DemoOutput struct {
@@ -46,6 +50,15 @@ type CapacityOutput struct {
 type InventoryOutput struct {
 	Inventory InventorySnapshot `json:"inventory"`
 	Path      string            `json:"path,omitempty"`
+}
+
+type HostInspectOutput struct {
+	Capacity      HostCapacityReport          `json:"capacity"`
+	Inventory     InventorySnapshot           `json:"inventory"`
+	ResidentFacts []ResidentRuntimeFact       `json:"resident_facts"`
+	Inbox         worldstate.HostInboxSummary `json:"inbox"`
+	Followups     []worldstate.HostFollowup   `json:"followups"`
+	Path          string                      `json:"inventory_path,omitempty"`
 }
 
 type CallSpec struct {
@@ -171,6 +184,71 @@ func (a *App) RunInventory() (InventoryOutput, error) {
 	return InventoryOutput{
 		Inventory: snapshot,
 		Path:      path,
+	}, nil
+}
+
+func (a *App) RunHostInspect(limit int) (HostInspectOutput, error) {
+	capacity, err := BuildHostCapacityReport(a.cfg)
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	snapshot, err := CollectInventorySnapshot(a.cfg, time.Now().UTC())
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	path, err := SaveInventorySnapshot(a.root, snapshot)
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	world := worldstate.New(a.root)
+	inbox, err := world.ReadHostInboxSummary(limit, limit)
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	followups, err := world.ReadHostFollowups(limit)
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	return HostInspectOutput{
+		Capacity:      capacity,
+		Inventory:     snapshot,
+		ResidentFacts: BuildResidentRuntimeFacts(a.cfg, snapshot),
+		Inbox:         inbox,
+		Followups:     followups,
+		Path:          path,
+	}, nil
+}
+
+func (a *App) RunHostInspectFromSnapshot(limit int) (HostInspectOutput, error) {
+	capacity, err := BuildHostCapacityReport(a.cfg)
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	path := filepath.Join(a.root, "inventory", "incus-inventory.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	var snapshot InventorySnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return HostInspectOutput{}, err
+	}
+	world := worldstate.New(a.root)
+	inbox, err := world.ReadHostInboxSummary(limit, limit)
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	followups, err := world.ReadHostFollowups(limit)
+	if err != nil {
+		return HostInspectOutput{}, err
+	}
+	return HostInspectOutput{
+		Capacity:      capacity,
+		Inventory:     snapshot,
+		ResidentFacts: BuildResidentRuntimeFacts(a.cfg, snapshot),
+		Inbox:         inbox,
+		Followups:     followups,
+		Path:          path,
 	}, nil
 }
 

@@ -28,6 +28,22 @@ type InventorySnapshot struct {
 	Residents   []ResidentInventoryFact `json:"residents"`
 }
 
+type ResidentRuntimeFact struct {
+	ResidentID         string   `json:"resident_id"`
+	InstanceName       string   `json:"instance_name"`
+	Status             string   `json:"status"`
+	Type               string   `json:"type"`
+	ConfiguredVCPU     int      `json:"configured_vcpu"`
+	ObservedVCPU       int      `json:"observed_vcpu"`
+	ConfiguredMemoryMiB int64   `json:"configured_memory_mib"`
+	ObservedMemoryMiB  int64    `json:"observed_memory_mib"`
+	ConfiguredDiskGiB  int64    `json:"configured_disk_gib"`
+	ObservedDiskGiB    int64    `json:"observed_disk_gib"`
+	IPv4               string   `json:"ipv4,omitempty"`
+	UpdatedAt          string   `json:"updated_at"`
+	DriftFields        []string `json:"drift_fields,omitempty"`
+}
+
 func CollectInventorySnapshot(cfg Config, now time.Time) (InventorySnapshot, error) {
 	type incusInstance struct {
 		Name           string            `json:"name"`
@@ -109,6 +125,52 @@ func SaveInventorySnapshot(root string, snapshot InventorySnapshot) (string, err
 	return path, nil
 }
 
+func BuildResidentRuntimeFacts(cfg Config, snapshot InventorySnapshot) []ResidentRuntimeFact {
+	byResident := make(map[string]ResidentInventoryFact, len(snapshot.Residents))
+	for _, item := range snapshot.Residents {
+		byResident[item.ResidentID] = item
+	}
+
+	facts := make([]ResidentRuntimeFact, 0, len(cfg.Residents))
+	for _, binding := range cfg.Residents {
+		observed := ResidentInventoryFact{
+			ResidentID:     binding.ResidentID,
+			InstanceName:   binding.InstanceName,
+			VCPU:           binding.VCPU,
+			MemoryLimitMiB: binding.MemoryMiB,
+			DiskGiB:        binding.DiskGiB,
+		}
+		if item, ok := byResident[binding.ResidentID]; ok {
+			observed = item
+		}
+		fact := ResidentRuntimeFact{
+			ResidentID:          binding.ResidentID,
+			InstanceName:        binding.InstanceName,
+			Status:              observed.Status,
+			Type:                observed.Type,
+			ConfiguredVCPU:      binding.VCPU,
+			ObservedVCPU:        observed.VCPU,
+			ConfiguredMemoryMiB: binding.MemoryMiB,
+			ObservedMemoryMiB:   observed.MemoryLimitMiB,
+			ConfiguredDiskGiB:   binding.DiskGiB,
+			ObservedDiskGiB:     observed.DiskGiB,
+			IPv4:                observed.IPv4,
+			UpdatedAt:           observed.UpdatedAt,
+		}
+		if fact.ObservedVCPU != fact.ConfiguredVCPU {
+			fact.DriftFields = append(fact.DriftFields, "vcpu")
+		}
+		if fact.ObservedMemoryMiB != fact.ConfiguredMemoryMiB {
+			fact.DriftFields = append(fact.DriftFields, "memory")
+		}
+		if fact.ObservedDiskGiB != fact.ConfiguredDiskGiB {
+			fact.DriftFields = append(fact.DriftFields, "disk")
+		}
+		facts = append(facts, fact)
+	}
+	return facts
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -153,7 +215,7 @@ func extractIPv4(item struct {
 }) string {
 	for _, network := range item.State.Network {
 		for _, addr := range network.Addresses {
-			if addr.Family == "inet" && addr.Address != "" {
+			if addr.Family == "inet" && addr.Address != "" && addr.Address != "127.0.0.1" {
 				return addr.Address
 			}
 		}
