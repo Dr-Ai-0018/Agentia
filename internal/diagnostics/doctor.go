@@ -40,16 +40,16 @@ type ResidentHealth struct {
 }
 
 type CountSummary struct {
-	Residents        int `json:"residents"`
-	BrokerSnapshots  int `json:"broker_snapshots"`
-	MemoryBundles    int `json:"memory_bundles"`
-	MessageFiles     int `json:"message_files"`
-	MessageRecords   int `json:"message_records"`
-	TicketFiles      int `json:"ticket_files"`
-	OpenTickets      int `json:"open_tickets"`
-	PendingChats     int `json:"pending_chats"`
-	AuditFiles       int `json:"audit_files"`
-	PublicHistories  int `json:"public_history_files"`
+	Residents       int `json:"residents"`
+	BrokerSnapshots int `json:"broker_snapshots"`
+	MemoryBundles   int `json:"memory_bundles"`
+	MessageFiles    int `json:"message_files"`
+	MessageRecords  int `json:"message_records"`
+	TicketFiles     int `json:"ticket_files"`
+	OpenTickets     int `json:"open_tickets"`
+	PendingChats    int `json:"pending_chats"`
+	AuditFiles      int `json:"audit_files"`
+	PublicHistories int `json:"public_history_files"`
 }
 
 type DoctorReport struct {
@@ -204,8 +204,29 @@ func scanMemoryBundles(root string, addResident func(string) *ResidentHealth, co
 		item.HasMemoryBundle = true
 		item.HistoryGroupCount = len(bundle.HistoryGroups)
 		item.AbstractMemoryCount = len(bundle.AbstractMemories)
+		if duplicates := countDuplicateHistoryGroupSignatures(bundle.HistoryGroups); duplicates > 0 {
+			addFinding(SeverityWarn, "memory", path, "memory bundle has duplicate history groups; run memory-compact for resident: "+resident)
+		}
 	}
 	return nil
+}
+
+func countDuplicateHistoryGroupSignatures(groups []memory.HistoryGroup) int {
+	seen := map[string]struct{}{}
+	duplicates := 0
+	for _, group := range groups {
+		signature := strings.Join(group.RawEventRefs, "\n")
+		signature = strings.TrimSpace(signature)
+		if signature == "" {
+			continue
+		}
+		if _, ok := seen[signature]; ok {
+			duplicates++
+			continue
+		}
+		seen[signature] = struct{}{}
+	}
+	return duplicates
 }
 
 func scanWorld(root string, addResident func(string) *ResidentHealth, counts *CountSummary, addFinding func(Severity, string, string, string)) error {

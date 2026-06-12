@@ -165,3 +165,38 @@ func TestRunDoctorFlagsBrokenWorldMessageFile(t *testing.T) {
 		t.Fatalf("expected world parse error finding, got %#v", report.Findings)
 	}
 }
+
+func TestRunDoctorFlagsDuplicateMemoryHistoryGroups(t *testing.T) {
+	root := t.TempDir()
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+
+	for _, id := range []string{"group-a", "group-b"} {
+		if err := store.UpsertHistoryGroup(memory.HistoryGroup{
+			GroupUUID:    id,
+			Resident:     "amber",
+			CreatedAt:    now,
+			SourceKind:   "dialogue_window",
+			State:        memory.HistoryGroupClosed,
+			EventCount:   2,
+			RawEventRefs: []string{"evt-1", "evt-2"},
+		}); err != nil {
+			t.Fatalf("upsert history group: %v", err)
+		}
+	}
+
+	report, err := RunDoctor(root)
+	if err != nil {
+		t.Fatalf("run doctor: %v", err)
+	}
+	found := false
+	for _, finding := range report.Findings {
+		if finding.Scope == "memory" && finding.Severity == SeverityWarn && finding.Message == "memory bundle has duplicate history groups; run memory-compact for resident: amber" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected duplicate memory warning, got %#v", report.Findings)
+	}
+}
