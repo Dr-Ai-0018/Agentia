@@ -27,33 +27,110 @@ func main() {
 		outDir    = flag.String("out-dir", "runs/orchestrator", "Output directory")
 		verbose   = flag.Bool("verbose", false, "Print streamed text as it arrives")
 		reset     = flag.Bool("reset-resident", false, "Reset resident runtime state before each run")
-		mode      = flag.String("mode", "sequential", "Mode: sequential|parallel")
+		mode      = flag.String("mode", "run", "Mode: run|list|status|summary|report|pause|resume|retry-failed")
+		runMode   = flag.String("run-mode", "sequential", "Run mode for run: sequential|parallel")
+		runID     = flag.String("run-id", "", "Run ID for status|summary|pause|resume")
+		limit     = flag.Int("limit", 10, "Run list limit for list mode")
 	)
 	flag.Parse()
 
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		exitf("OPENAI_API_KEY is required")
-	}
-	if err := os.MkdirAll(*outDir, 0o755); err != nil {
-		exitf("create out dir: %v", err)
-	}
-
 	app := broker.New(".agents")
-	service := orchestrator.New(app, &http.Client{Timeout: 5 * time.Minute}, *baseURL, apiKey)
-	out, err := service.Run(orchestrator.RunInput{
-		Residents:     orchestrator.ParseResidentRoster(*residents),
-		Duration:      *duration,
-		OutDir:        *outDir,
-		Verbose:       *verbose,
-		ResetResident: *reset,
-		Mode:          orchestrator.RunMode(strings.ToLower(strings.TrimSpace(*mode))),
-	})
-	if err != nil {
-		exitf("%v", err)
+	modeValue := strings.ToLower(strings.TrimSpace(*mode))
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	if modeValue == "run" || modeValue == "retry-failed" {
+		if apiKey == "" {
+			exitf("OPENAI_API_KEY is required")
+		}
+		if err := os.MkdirAll(*outDir, 0o755); err != nil {
+			exitf("create out dir: %v", err)
+		}
 	}
-	raw, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Println(string(raw))
+	service := orchestrator.New(app, &http.Client{Timeout: 5 * time.Minute}, *baseURL, apiKey)
+	switch modeValue {
+	case "run":
+		out, err := service.Run(orchestrator.RunInput{
+			Residents:     orchestrator.ParseResidentRoster(*residents),
+			Duration:      *duration,
+			OutDir:        *outDir,
+			Verbose:       *verbose,
+			ResetResident: *reset,
+			Mode:          orchestrator.RunMode(strings.ToLower(strings.TrimSpace(*runMode))),
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
+	case "list":
+		out, err := service.ListRuns(*limit)
+		if err != nil {
+			exitf("%v", err)
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
+	case "status":
+		if strings.TrimSpace(*runID) == "" {
+			exitf("run-id is required for status mode")
+		}
+		out, err := service.ReadRunStatus(*runID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
+	case "summary":
+		if strings.TrimSpace(*runID) == "" {
+			exitf("run-id is required for summary mode")
+		}
+		out, err := service.ReadRunSummary(*runID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
+	case "report":
+		if strings.TrimSpace(*runID) == "" {
+			exitf("run-id is required for report mode")
+		}
+		out, err := service.ReadInspectionReport(*runID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
+	case "pause":
+		if strings.TrimSpace(*runID) == "" {
+			exitf("run-id is required for pause mode")
+		}
+		out, err := service.PauseRun(*runID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
+	case "resume":
+		if strings.TrimSpace(*runID) == "" {
+			exitf("run-id is required for resume mode")
+		}
+		out, err := service.ResumeRun(*runID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
+	case "retry-failed":
+		if strings.TrimSpace(*runID) == "" {
+			exitf("run-id is required for retry-failed mode")
+		}
+		out, err := service.RetryFailedRun(*runID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
+	default:
+		exitf("unknown mode: %s", *mode)
+	}
 }
 
 func loadDotEnvIfPresent(path string) {

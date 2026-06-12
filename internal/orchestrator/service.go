@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,10 +29,10 @@ type Runner interface {
 type RunnerFactory func(client *http.Client, baseURL, apiKey string) Runner
 
 type ResidentRun struct {
-	Resident string                `json:"resident"`
-	Status   string                `json:"status"`
-	Report   *newborn.FinalReport  `json:"report,omitempty"`
-	Error    string                `json:"error,omitempty"`
+	Resident string               `json:"resident"`
+	Status   string               `json:"status"`
+	Report   *newborn.FinalReport `json:"report,omitempty"`
+	Error    string               `json:"error,omitempty"`
 }
 
 type ResidentRunStatus struct {
@@ -43,6 +44,7 @@ type ResidentRunStatus struct {
 
 type RunContract struct {
 	RunID         string        `json:"run_id"`
+	RetryOf       string        `json:"retry_of,omitempty"`
 	Mode          RunMode       `json:"mode"`
 	Residents     []string      `json:"residents"`
 	Duration      time.Duration `json:"duration"`
@@ -63,6 +65,28 @@ type RunSummary struct {
 	Assessment newborn.ParallelRunSummary `json:"assessment"`
 }
 
+type InspectionResidentReport struct {
+	Resident      string `json:"resident"`
+	Status        string `json:"status"`
+	Rounds        int    `json:"rounds,omitempty"`
+	StoppedReason string `json:"stopped_reason,omitempty"`
+	Error         string `json:"error,omitempty"`
+}
+
+type InspectionReport struct {
+	RunID             string                     `json:"run_id"`
+	RetryOf           string                     `json:"retry_of,omitempty"`
+	Mode              RunMode                    `json:"mode"`
+	ResidentsPlanned  []string                   `json:"residents_planned"`
+	ResidentsFinished int                        `json:"residents_finished"`
+	ResidentsErrored  int                        `json:"residents_errored"`
+	StartedAt         string                     `json:"started_at"`
+	EndedAt           string                     `json:"ended_at"`
+	Duration          string                     `json:"duration"`
+	Assessment        newborn.ParallelRunSummary `json:"assessment"`
+	Residents         []InspectionResidentReport `json:"residents"`
+}
+
 type RunStatus struct {
 	RunID      string              `json:"run_id"`
 	Status     string              `json:"status"`
@@ -71,6 +95,16 @@ type RunStatus struct {
 	StartedAt  string              `json:"started_at"`
 	UpdatedAt  string              `json:"updated_at"`
 	FinishedAt string              `json:"finished_at,omitempty"`
+}
+
+type RunRecord struct {
+	RunID      string   `json:"run_id"`
+	Status     string   `json:"status"`
+	Mode       RunMode  `json:"mode"`
+	Residents  []string `json:"residents"`
+	StartedAt  string   `json:"started_at"`
+	UpdatedAt  string   `json:"updated_at,omitempty"`
+	FinishedAt string   `json:"finished_at,omitempty"`
 }
 
 type RunInput struct {
@@ -88,15 +122,15 @@ type Service struct {
 	apiKey        string
 	client        *http.Client
 	runnerFactory RunnerFactory
-	stateRoot      string
+	stateRoot     string
 }
 
 func New(app *broker.App, client *http.Client, baseURL, apiKey string) *Service {
 	return &Service{
-		app:     app,
-		client:  client,
-		baseURL: strings.TrimSpace(baseURL),
-		apiKey:  strings.TrimSpace(apiKey),
+		app:       app,
+		client:    client,
+		baseURL:   strings.TrimSpace(baseURL),
+		apiKey:    strings.TrimSpace(apiKey),
 		stateRoot: ".agents/orchestrator-runs",
 		runnerFactory: func(client *http.Client, baseURL, apiKey string) Runner {
 			return newborn.NewRunner(client, baseURL, apiKey)
@@ -130,6 +164,10 @@ func EnvOrDefault(key, fallback string) string {
 }
 
 func (s *Service) Run(input RunInput) (RunSummary, error) {
+	return s.runWithRetryOf(input, "")
+}
+
+func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, error) {
 	if len(input.Residents) == 0 {
 		return RunSummary{}, fmt.Errorf("at least one resident is required")
 	}
@@ -144,7 +182,8 @@ func (s *Service) Run(input RunInput) (RunSummary, error) {
 	}
 	started := time.Now().UTC()
 	contract := RunContract{
-		RunID:         fmt.Sprintf("orchestrator-%s", started.Format("20060102T150405Z")),
+		RunID:         fmt.Sprintf("orchestrator-%s", started.Format("20060102T150405.000000000Z")),
+		RetryOf:       strings.TrimSpace(retryOf),
 		Mode:          input.Mode,
 		Residents:     append([]string(nil), input.Residents...),
 		Duration:      input.Duration,
@@ -174,6 +213,9 @@ func (s *Service) Run(input RunInput) (RunSummary, error) {
 	switch input.Mode {
 	case RunModeSequential:
 		for i, resident := range input.Residents {
+			if err := s.waitIfPaused(contract.RunID, &runStatus); err != nil {
+				return RunSummary{}, err
+			}
 			runs[i] = s.runResident(resident, input, &runStatus)
 		}
 	case RunModeParallel:
@@ -224,6 +266,62 @@ func (s *Service) Run(input RunInput) (RunSummary, error) {
 	return summary, nil
 }
 
+func (s *Service) RetryFailedRun(runID string) (RunSummary, error) {
+	summary, err := s.ReadRunSummary(runID)
+	if err != nil {
+		return RunSummary{}, err
+	}
+	failed := make([]string, 0, len(summary.Runs))
+	for _, item := range summary.Runs {
+		if item.Status == "error" {
+			failed = append(failed, item.Resident)
+		}
+	}
+	if len(failed) == 0 {
+		return RunSummary{}, fmt.Errorf("run %s has no failed residents to retry", runID)
+	}
+	return s.runWithRetryOf(RunInput{
+		Residents:     failed,
+		Duration:      summary.Contract.Duration,
+		OutDir:        summary.Contract.OutDir,
+		Verbose:       summary.Contract.Verbose,
+		ResetResident: summary.Contract.ResetResident,
+		Mode:          summary.Contract.Mode,
+	}, runID)
+}
+
+func (s *Service) PauseRun(runID string) (RunStatus, error) {
+	status, err := s.ReadRunStatus(runID)
+	if err != nil {
+		return RunStatus{}, err
+	}
+	if status.Status == "finished" || status.Status == "finished_with_errors" {
+		return RunStatus{}, fmt.Errorf("run %s is already finished", runID)
+	}
+	status.Status = "paused"
+	status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := s.writeStatus(status); err != nil {
+		return RunStatus{}, err
+	}
+	return status, nil
+}
+
+func (s *Service) ResumeRun(runID string) (RunStatus, error) {
+	status, err := s.ReadRunStatus(runID)
+	if err != nil {
+		return RunStatus{}, err
+	}
+	if status.Status != "paused" {
+		return RunStatus{}, fmt.Errorf("run %s is not paused", runID)
+	}
+	status.Status = "running"
+	status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := s.writeStatus(status); err != nil {
+		return RunStatus{}, err
+	}
+	return status, nil
+}
+
 func (s *Service) runResident(resident string, input RunInput, runStatus *RunStatus) ResidentRun {
 	run := ResidentRun{Resident: resident}
 	s.updateResidentStatus(runStatus, resident, "running", "")
@@ -263,7 +361,14 @@ func (s *Service) writeSummary(summary RunSummary) error {
 	if err != nil {
 		return fmt.Errorf("marshal orchestrator summary: %w", err)
 	}
-	return atomicWriteFile(filepath.Join(runDir, "summary.json"), raw, 0o644)
+	if err := atomicWriteFile(filepath.Join(runDir, "summary.json"), raw, 0o644); err != nil {
+		return err
+	}
+	reportRaw, err := json.MarshalIndent(BuildInspectionReport(summary), "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal inspection report: %w", err)
+	}
+	return atomicWriteFile(filepath.Join(runDir, "inspection-report.json"), reportRaw, 0o644)
 }
 
 func (s *Service) writeStatus(status RunStatus) error {
@@ -295,6 +400,10 @@ func (s *Service) updateResidentStatus(runStatus *RunStatus, resident, state, er
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	latestStatus := runStatus.Status
+	if current, err := s.ReadRunStatus(runStatus.RunID); err == nil && strings.TrimSpace(current.Status) != "" {
+		latestStatus = current.Status
+	}
 	for i := range runStatus.Residents {
 		if runStatus.Residents[i].Resident != resident {
 			continue
@@ -303,6 +412,7 @@ func (s *Service) updateResidentStatus(runStatus *RunStatus, resident, state, er
 		runStatus.Residents[i].Error = errText
 		runStatus.Residents[i].UpdatedAt = now
 		runStatus.UpdatedAt = now
+		runStatus.Status = latestStatus
 		_ = s.writeStatus(*runStatus)
 		return
 	}
@@ -315,6 +425,101 @@ func hasRunErrors(runs []ResidentRun) bool {
 		}
 	}
 	return false
+}
+
+func (s *Service) waitIfPaused(runID string, current *RunStatus) error {
+	for {
+		status, err := s.ReadRunStatus(runID)
+		if err != nil {
+			return err
+		}
+		if status.Status != "paused" {
+			if current != nil {
+				*current = status
+			}
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (s *Service) ReadRunStatus(runID string) (RunStatus, error) {
+	path := filepath.Join(s.stateRoot, strings.TrimSpace(runID), "run-status.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return RunStatus{}, err
+	}
+	var out RunStatus
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return RunStatus{}, err
+	}
+	return out, nil
+}
+
+func (s *Service) ReadRunSummary(runID string) (RunSummary, error) {
+	path := filepath.Join(s.stateRoot, strings.TrimSpace(runID), "summary.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return RunSummary{}, err
+	}
+	var out RunSummary
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return RunSummary{}, err
+	}
+	return out, nil
+}
+
+func (s *Service) ReadInspectionReport(runID string) (InspectionReport, error) {
+	path := filepath.Join(s.stateRoot, strings.TrimSpace(runID), "inspection-report.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return InspectionReport{}, err
+	}
+	var out InspectionReport
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return InspectionReport{}, err
+	}
+	return out, nil
+}
+
+func (s *Service) ListRuns(limit int) ([]RunRecord, error) {
+	entries, err := os.ReadDir(s.stateRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	out := make([]RunRecord, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		status, err := s.ReadRunStatus(entry.Name())
+		if err != nil {
+			continue
+		}
+		record := RunRecord{
+			RunID:      status.RunID,
+			Status:     status.Status,
+			Mode:       status.Mode,
+			StartedAt:  status.StartedAt,
+			UpdatedAt:  status.UpdatedAt,
+			FinishedAt: status.FinishedAt,
+			Residents:  make([]string, 0, len(status.Residents)),
+		}
+		for _, resident := range status.Residents {
+			record.Residents = append(record.Residents, resident.Resident)
+		}
+		out = append(out, record)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].StartedAt > out[j].StartedAt
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {

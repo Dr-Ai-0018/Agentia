@@ -11,9 +11,10 @@ import (
 )
 
 type Config struct {
-	Root      string              `json:"root"`
-	Runtime   runtimecore.Config  `json:"runtime"`
-	Residents []ResidentBinding   `json:"residents"`
+	Root         string             `json:"root"`
+	Runtime      runtimecore.Config `json:"runtime"`
+	HostCapacity HostCapacityConfig `json:"host_capacity"`
+	Residents    []ResidentBinding  `json:"residents"`
 }
 
 type ResidentBinding struct {
@@ -23,12 +24,16 @@ type ResidentBinding struct {
 	Window6HCap  int     `json:"window_6h_cap"`
 	DayCap       int     `json:"day_cap"`
 	WeekCap      int     `json:"week_cap"`
+	VCPU         int     `json:"vcpu"`
+	MemoryMiB    int64   `json:"memory_mib"`
+	DiskGiB      int64   `json:"disk_gib"`
 }
 
 func DefaultConfig(root string) Config {
 	return Config{
-		Root:    strings.TrimSpace(root),
-		Runtime: brokerstate.DefaultRuntimeConfig(),
+		Root:         strings.TrimSpace(root),
+		Runtime:      brokerstate.DefaultRuntimeConfig(),
+		HostCapacity: DefaultHostCapacityConfig(),
 		Residents: []ResidentBinding{
 			{
 				ResidentID:   "jade",
@@ -37,6 +42,9 @@ func DefaultConfig(root string) Config {
 				Window6HCap:  12000,
 				DayCap:       60000,
 				WeekCap:      150000,
+				VCPU:         1,
+				MemoryMiB:    2048,
+				DiskGiB:      12,
 			},
 			{
 				ResidentID:   "amber",
@@ -45,6 +53,9 @@ func DefaultConfig(root string) Config {
 				Window6HCap:  15000,
 				DayCap:       75000,
 				WeekCap:      150000,
+				VCPU:         1,
+				MemoryMiB:    2048,
+				DiskGiB:      12,
 			},
 			{
 				ResidentID:   "onyx",
@@ -53,6 +64,9 @@ func DefaultConfig(root string) Config {
 				Window6HCap:  10000,
 				DayCap:       50000,
 				WeekCap:      150000,
+				VCPU:         1,
+				MemoryMiB:    2048,
+				DiskGiB:      12,
 			},
 		},
 	}

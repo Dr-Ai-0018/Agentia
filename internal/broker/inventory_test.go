@@ -167,6 +167,52 @@ func TestRunHostInspectAggregatesWorldState(t *testing.T) {
 	}
 }
 
+func TestRunHostInspectSummaryFromSnapshot(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	world := worldstate.New(root)
+	now := time.Date(2026, 6, 12, 3, 0, 0, 0, time.UTC)
+
+	if _, err := world.AppendResidentToChenglin("amber", "hello", now); err != nil {
+		t.Fatalf("append resident message: %v", err)
+	}
+	if _, err := world.CreateResidentTicket("amber", "Need help", "Please inspect this state", worldstate.TicketPriorityMedium, now); err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	if _, err := SaveInventorySnapshot(root, InventorySnapshot{
+		CollectedAt: now.Format(time.RFC3339),
+		Residents: []ResidentInventoryFact{
+			{
+				ResidentID:     "amber",
+				InstanceName:   "amber",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           2,
+				MemoryLimitMiB: 2304,
+				DiskGiB:        12,
+				IPv4:           "10.0.0.2",
+				UpdatedAt:      now.Format(time.RFC3339),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save inventory snapshot: %v", err)
+	}
+
+	out, err := app.RunHostInspectSummaryFromSnapshot(10)
+	if err != nil {
+		t.Fatalf("run host inspect summary: %v", err)
+	}
+	if out.ResidentCount != 3 {
+		t.Fatalf("expected summary for default residents, got %#v", out)
+	}
+	if out.OpenTicketCount != 1 || out.PendingChatResidents != 1 {
+		t.Fatalf("unexpected followup counts: %#v", out)
+	}
+	if out.ResidentsWithDrift == 0 {
+		t.Fatalf("expected drift to be detected from snapshot: %#v", out)
+	}
+}
+
 func TestBuildResidentRuntimeFactsMarksDrift(t *testing.T) {
 	cfg := DefaultConfig(t.TempDir())
 	now := time.Date(2026, 6, 12, 3, 0, 0, 0, time.UTC)

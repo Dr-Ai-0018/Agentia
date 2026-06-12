@@ -61,6 +61,55 @@ type HostInspectOutput struct {
 	Path          string                      `json:"inventory_path,omitempty"`
 }
 
+type HostInspectSummary struct {
+	CollectedAt               string                    `json:"collected_at"`
+	InventoryPath             string                    `json:"inventory_path,omitempty"`
+	ResidentCount             int                       `json:"resident_count"`
+	ResidentsRunning          int                       `json:"residents_running"`
+	ResidentsWithDrift        int                       `json:"residents_with_drift"`
+	ResidentsMissingInventory int                       `json:"residents_missing_inventory"`
+	PendingChatResidents      int                       `json:"pending_chat_residents"`
+	OpenTicketResidents       int                       `json:"open_ticket_residents"`
+	OpenTicketCount           int                       `json:"open_ticket_count"`
+	FollowupCount             int                       `json:"followup_count"`
+	InterventionCount         int                       `json:"intervention_count"`
+	TopFollowups              []worldstate.HostFollowup `json:"top_followups"`
+	ResidentRisk              []ResidentInspectRisk     `json:"resident_risk"`
+}
+
+type ResidentInspectRisk struct {
+	ResidentID      string   `json:"resident_id"`
+	Status          string   `json:"status,omitempty"`
+	DriftFields     []string `json:"drift_fields,omitempty"`
+	HasPendingChat  bool     `json:"has_pending_chat"`
+	HasOpenTicket   bool     `json:"has_open_ticket"`
+	HasIntervention bool     `json:"has_intervention"`
+	NeedsAttention  bool     `json:"needs_attention"`
+}
+
+type HostDecisionAssist struct {
+	CollectedAt   string                  `json:"collected_at"`
+	InventoryPath string                  `json:"inventory_path,omitempty"`
+	Severity      string                  `json:"severity"`
+	Headline      string                  `json:"headline"`
+	Reasons       []string                `json:"reasons"`
+	Actions       []HostSuggestedAction   `json:"actions"`
+	ResidentFocus []ResidentDecisionFocus `json:"resident_focus"`
+}
+
+type HostSuggestedAction struct {
+	Kind       string `json:"kind"`
+	Priority   string `json:"priority"`
+	ResidentID string `json:"resident_id,omitempty"`
+	Summary    string `json:"summary"`
+}
+
+type ResidentDecisionFocus struct {
+	ResidentID string   `json:"resident_id"`
+	Priority   string   `json:"priority"`
+	Reasons    []string `json:"reasons"`
+}
+
 type CallSpec struct {
 	Kind      runtimeguard.CallKind
 	Usage     tokenledger.Usage
@@ -215,6 +264,14 @@ func (a *App) RunHostInspect(limit int) (HostInspectOutput, error) {
 	}, nil
 }
 
+func (a *App) RunHostInspectSummary(limit int) (HostInspectSummary, error) {
+	out, err := a.RunHostInspect(limit)
+	if err != nil {
+		return HostInspectSummary{}, err
+	}
+	return SummarizeHostInspect(out), nil
+}
+
 func (a *App) RefreshInventorySnapshot(now time.Time) (InventorySnapshot, string, error) {
 	collector := a.inventoryCollector
 	if collector == nil {
@@ -266,6 +323,30 @@ func (a *App) RunHostInspectFromSnapshot(limit int) (HostInspectOutput, error) {
 		Followups:     followups,
 		Path:          path,
 	}, nil
+}
+
+func (a *App) RunHostInspectSummaryFromSnapshot(limit int) (HostInspectSummary, error) {
+	out, err := a.RunHostInspectFromSnapshot(limit)
+	if err != nil {
+		return HostInspectSummary{}, err
+	}
+	return SummarizeHostInspect(out), nil
+}
+
+func (a *App) RunHostDecisionAssist(limit int) (HostDecisionAssist, error) {
+	summary, err := a.RunHostInspectSummary(limit)
+	if err != nil {
+		return HostDecisionAssist{}, err
+	}
+	return BuildHostDecisionAssist(summary), nil
+}
+
+func (a *App) RunHostDecisionAssistFromSnapshot(limit int) (HostDecisionAssist, error) {
+	summary, err := a.RunHostInspectSummaryFromSnapshot(limit)
+	if err != nil {
+		return HostDecisionAssist{}, err
+	}
+	return BuildHostDecisionAssist(summary), nil
 }
 
 func (a *App) RunPrepareSpec(residentID string, spec CallSpec) (brokerstate.PreparedAdmission, error) {
