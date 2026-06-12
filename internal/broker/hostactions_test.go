@@ -214,6 +214,26 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	service := NewHostActionService(root)
 	fake := &fakeMachineControl{}
 	service.machine = fake
+	refreshed := false
+	service.app.inventoryCollector = func(cfg Config, now time.Time) (InventorySnapshot, error) {
+		refreshed = true
+		return InventorySnapshot{
+			CollectedAt: now.Format(time.RFC3339),
+			Residents: []ResidentInventoryFact{{
+				ResidentID:     "amber",
+				InstanceName:   "amber",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           1,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        12,
+				UpdatedAt:      now.Format(time.RFC3339),
+			}},
+		}, nil
+	}
+	service.app.inventorySaver = func(root string, snapshot InventorySnapshot) (string, error) {
+		return filepath.Join(root, "inventory", "incus-inventory.json"), nil
+	}
 	if _, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
 		TicketID: ticket.ID,
 		Resident: "amber",
@@ -255,6 +275,9 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	}
 	if !strings.Contains(last.Body, "maintenance_checkpoint="+checkpointName) {
 		t.Fatalf("expected maintenance checkpoint marker, got %q", last.Body)
+	}
+	if !refreshed {
+		t.Fatalf("expected maintenance completion to refresh inventory snapshot")
 	}
 	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
 	if err != nil {

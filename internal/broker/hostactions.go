@@ -425,6 +425,9 @@ func (s *HostActionService) CompleteResourceMaintenance(input ResourceMaintenanc
 	); err != nil {
 		return worldstate.Ticket{}, err
 	}
+	if _, _, err := s.app.RefreshInventorySnapshot(time.Now().UTC()); err != nil {
+		return worldstate.Ticket{}, fmt.Errorf("refresh inventory snapshot after maintenance: %w", err)
+	}
 	return ticket, nil
 }
 

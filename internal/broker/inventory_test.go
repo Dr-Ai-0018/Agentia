@@ -200,3 +200,51 @@ func TestBuildResidentRuntimeFactsMarksDrift(t *testing.T) {
 		t.Fatalf("expected full drift markers, got %#v", amber.DriftFields)
 	}
 }
+
+func TestRefreshInventorySnapshotUsesInjectedCollectorAndSaver(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	now := time.Date(2026, 6, 12, 6, 0, 0, 0, time.UTC)
+	calledCollector := false
+	calledSaver := false
+	app.inventoryCollector = func(cfg Config, got time.Time) (InventorySnapshot, error) {
+		calledCollector = true
+		if !got.Equal(now) {
+			t.Fatalf("unexpected collector time: %s", got)
+		}
+		return InventorySnapshot{
+			CollectedAt: now.Format(time.RFC3339),
+			Residents: []ResidentInventoryFact{{
+				ResidentID:     "amber",
+				InstanceName:   "amber",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           1,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        12,
+				UpdatedAt:      now.Format(time.RFC3339),
+			}},
+		}, nil
+	}
+	app.inventorySaver = func(gotRoot string, snapshot InventorySnapshot) (string, error) {
+		calledSaver = true
+		if gotRoot != root {
+			t.Fatalf("unexpected saver root: %s", gotRoot)
+		}
+		if snapshot.CollectedAt != now.Format(time.RFC3339) {
+			t.Fatalf("unexpected snapshot passed to saver: %#v", snapshot)
+		}
+		return filepath.Join(root, "inventory", "incus-inventory.json"), nil
+	}
+
+	snapshot, path, err := app.RefreshInventorySnapshot(now)
+	if err != nil {
+		t.Fatalf("refresh inventory snapshot: %v", err)
+	}
+	if !calledCollector || !calledSaver {
+		t.Fatalf("expected collector and saver to be called")
+	}
+	if path == "" || snapshot.CollectedAt != now.Format(time.RFC3339) {
+		t.Fatalf("unexpected refresh result: path=%q snapshot=%#v", path, snapshot)
+	}
+}

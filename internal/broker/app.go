@@ -69,17 +69,21 @@ type CallSpec struct {
 }
 
 type App struct {
-	root     string
-	cfg      Config
-	registry *ResidentRegistry
+	root               string
+	cfg                Config
+	registry           *ResidentRegistry
+	inventoryCollector func(Config, time.Time) (InventorySnapshot, error)
+	inventorySaver     func(string, InventorySnapshot) (string, error)
 }
 
 func New(root string) *App {
 	cfg := DefaultConfig(root)
 	return &App{
-		root:     root,
-		cfg:      cfg,
-		registry: NewResidentRegistry(cfg.Residents),
+		root:               root,
+		cfg:                cfg,
+		registry:           NewResidentRegistry(cfg.Residents),
+		inventoryCollector: CollectInventorySnapshot,
+		inventorySaver:     SaveInventorySnapshot,
 	}
 }
 
@@ -173,11 +177,7 @@ func (a *App) RunCapacity() (CapacityOutput, error) {
 }
 
 func (a *App) RunInventory() (InventoryOutput, error) {
-	snapshot, err := CollectInventorySnapshot(a.cfg, time.Now().UTC())
-	if err != nil {
-		return InventoryOutput{}, err
-	}
-	path, err := SaveInventorySnapshot(a.root, snapshot)
+	snapshot, path, err := a.RefreshInventorySnapshot(time.Now().UTC())
 	if err != nil {
 		return InventoryOutput{}, err
 	}
@@ -192,11 +192,7 @@ func (a *App) RunHostInspect(limit int) (HostInspectOutput, error) {
 	if err != nil {
 		return HostInspectOutput{}, err
 	}
-	snapshot, err := CollectInventorySnapshot(a.cfg, time.Now().UTC())
-	if err != nil {
-		return HostInspectOutput{}, err
-	}
-	path, err := SaveInventorySnapshot(a.root, snapshot)
+	snapshot, path, err := a.RefreshInventorySnapshot(time.Now().UTC())
 	if err != nil {
 		return HostInspectOutput{}, err
 	}
@@ -217,6 +213,26 @@ func (a *App) RunHostInspect(limit int) (HostInspectOutput, error) {
 		Followups:     followups,
 		Path:          path,
 	}, nil
+}
+
+func (a *App) RefreshInventorySnapshot(now time.Time) (InventorySnapshot, string, error) {
+	collector := a.inventoryCollector
+	if collector == nil {
+		collector = CollectInventorySnapshot
+	}
+	saver := a.inventorySaver
+	if saver == nil {
+		saver = SaveInventorySnapshot
+	}
+	snapshot, err := collector(a.cfg, now)
+	if err != nil {
+		return InventorySnapshot{}, "", err
+	}
+	path, err := saver(a.root, snapshot)
+	if err != nil {
+		return InventorySnapshot{}, "", err
+	}
+	return snapshot, path, nil
 }
 
 func (a *App) RunHostInspectFromSnapshot(limit int) (HostInspectOutput, error) {
