@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -109,6 +110,16 @@ type SnapshotEntry struct {
 type ResidentMemoryBundle struct {
 	HistoryGroups    []HistoryGroup   `json:"history_groups"`
 	AbstractMemories []AbstractMemory `json:"abstract_memories"`
+}
+
+type CompactReport struct {
+	Resident              string `json:"resident"`
+	Apply                 bool   `json:"apply"`
+	BeforeHistoryGroups   int    `json:"before_history_groups"`
+	AfterHistoryGroups    int    `json:"after_history_groups"`
+	BeforeSourceGroupRefs int    `json:"before_source_group_refs"`
+	AfterSourceGroupRefs  int    `json:"after_source_group_refs"`
+	Changed               bool   `json:"changed"`
 }
 
 type Store interface {
@@ -407,21 +418,39 @@ func (s *FileStore) UpsertHistoryGroup(group HistoryGroup) error {
 }
 
 func (s *FileStore) CompactResident(resident string) error {
+	_, err := s.CompactResidentWithReport(resident, true)
+	return err
+}
+
+func (s *FileStore) CompactResidentWithReport(resident string, apply bool) (CompactReport, error) {
 	if err := os.MkdirAll(s.root, 0o755); err != nil {
-		return err
+		return CompactReport{}, err
 	}
 	bundle, err := s.loadBundle(resident)
 	if err != nil {
-		return err
+		return CompactReport{}, err
 	}
 	groups := append([]HistoryGroup(nil), bundle.HistoryGroups...)
 	for i := range groups {
 		groups[i] = normalizeHistoryGroup(groups[i])
 	}
 	compactedGroups, groupIDMap := compactHistoryGroups(groups)
+	compactedRecords := remapAbstractMemoryGroups(bundle.AbstractMemories, groupIDMap)
+	report := CompactReport{
+		Resident:              strings.TrimSpace(resident),
+		Apply:                 apply,
+		BeforeHistoryGroups:   len(groups),
+		AfterHistoryGroups:    len(compactedGroups),
+		BeforeSourceGroupRefs: countSourceGroupRefs(bundle.AbstractMemories),
+		AfterSourceGroupRefs:  countSourceGroupRefs(compactedRecords),
+		Changed:               !reflect.DeepEqual(groups, compactedGroups) || !reflect.DeepEqual(bundle.AbstractMemories, compactedRecords),
+	}
+	if !apply {
+		return report, nil
+	}
 	bundle.HistoryGroups = compactedGroups
-	bundle.AbstractMemories = remapAbstractMemoryGroups(bundle.AbstractMemories, groupIDMap)
-	return s.writeBundle(resident, bundle)
+	bundle.AbstractMemories = compactedRecords
+	return report, s.writeBundle(resident, bundle)
 }
 
 func (s *FileStore) loadBundle(resident string) (ResidentMemoryBundle, error) {
@@ -723,6 +752,14 @@ func remapAbstractMemoryGroups(records []AbstractMemory, groupIDMap map[string]s
 		out = append(out, record)
 	}
 	return out
+}
+
+func countSourceGroupRefs(records []AbstractMemory) int {
+	total := 0
+	for _, record := range records {
+		total += len(record.SourceGroupIDs)
+	}
+	return total
 }
 
 func remapGroupIDs(groupIDs []string, groupIDMap map[string]string) []string {

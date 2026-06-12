@@ -382,6 +382,52 @@ func TestCompactResidentMergesDuplicateHistoryGroupsAndRemapsMemory(t *testing.T
 	}
 }
 
+func TestCompactResidentWithReportDryRunDoesNotWrite(t *testing.T) {
+	root := t.TempDir()
+	store := NewFileStore(root)
+	now := time.Date(2026, 6, 2, 18, 0, 0, 0, time.UTC)
+
+	g1 := HistoryGroup{
+		GroupUUID:    "group-a",
+		Resident:     "onyx",
+		CreatedAt:    now,
+		SourceKind:   "dialogue_window",
+		State:        HistoryGroupClosed,
+		EventCount:   2,
+		RawEventRefs: []string{"evt-1", "evt-2"},
+	}
+	g2 := HistoryGroup{
+		GroupUUID:    "group-b",
+		Resident:     "onyx",
+		CreatedAt:    now,
+		SourceKind:   "dialogue_window",
+		State:        HistoryGroupClosed,
+		EventCount:   2,
+		RawEventRefs: []string{"evt-1", "evt-2"},
+	}
+	if err := store.UpsertHistoryGroup(g1); err != nil {
+		t.Fatalf("upsert g1: %v", err)
+	}
+	if err := store.UpsertHistoryGroup(g2); err != nil {
+		t.Fatalf("upsert g2: %v", err)
+	}
+
+	report, err := store.CompactResidentWithReport("onyx", false)
+	if err != nil {
+		t.Fatalf("compact dry-run: %v", err)
+	}
+	if !report.Changed || report.BeforeHistoryGroups != 2 || report.AfterHistoryGroups != 1 || report.Apply {
+		t.Fatalf("unexpected dry-run report: %#v", report)
+	}
+	groups, err := store.ListHistoryGroups("onyx")
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("dry-run should not write compacted bundle, got %d groups", len(groups))
+	}
+}
+
 func TestAbstractMemoryEffectiveSummaryFallbacks(t *testing.T) {
 	record := AbstractMemory{
 		ResidentText: "resident-facing note",
