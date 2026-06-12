@@ -171,14 +171,15 @@ func TestHostActionServicePlanResourceMaintenanceForDisk(t *testing.T) {
 	fake := &fakeMachineControl{}
 	service.machine = fake
 	updated, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
-		TicketID: ticket.ID,
-		Resident: "amber",
-		Resource: "disk",
-		Amount:   "20GiB",
-		Note:     "Approved for current workload.",
-		Window:   "2026-06-12T22:00Z/2026-06-12T22:15Z",
-		Operator: "chenglin",
-		CreateHostCheckpoint: true,
+		TicketID:               ticket.ID,
+		Resident:               "amber",
+		Resource:               "disk",
+		Amount:                 "20GiB",
+		Note:                   "Approved for current workload.",
+		Window:                 "2026-06-12T22:00Z/2026-06-12T22:15Z",
+		Operator:               "chenglin",
+		AlsoCreateIntervention: true,
+		CreateHostCheckpoint:   true,
 	})
 	if err != nil {
 		t.Fatalf("plan maintenance: %v", err)
@@ -198,6 +199,16 @@ func TestHostActionServicePlanResourceMaintenanceForDisk(t *testing.T) {
 	}
 	if fake.snapshotInstance != "amber" || !strings.HasPrefix(fake.snapshotName, "checkpoint-amber-") {
 		t.Fatalf("expected host checkpoint creation, got fake=%#v", fake)
+	}
+	interventions, err := worldstate.New(root).ReadHostInterventions("amber", "", 10)
+	if err != nil {
+		t.Fatalf("read host interventions: %v", err)
+	}
+	if len(interventions) != 1 {
+		t.Fatalf("expected 1 host intervention, got %d", len(interventions))
+	}
+	if interventions[0].Status != "planned" || interventions[0].Kind != "maintenance" {
+		t.Fatalf("expected planned maintenance intervention, got %#v", interventions[0])
 	}
 }
 
@@ -235,12 +246,12 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 		return filepath.Join(root, "inventory", "incus-inventory.json"), nil
 	}
 	if _, err := service.PlanResourceMaintenance(ResourceMaintenancePlanInput{
-		TicketID: ticket.ID,
-		Resident: "amber",
-		Resource: "cpu",
-		Amount:   "2",
-		Note:     "Approved for compute burst.",
-		Operator: "chenglin",
+		TicketID:               ticket.ID,
+		Resident:               "amber",
+		Resource:               "cpu",
+		Amount:                 "2",
+		Note:                   "Approved for compute burst.",
+		Operator:               "chenglin",
 		AlsoCreateIntervention: true,
 		CreateHostCheckpoint:   true,
 	}); err != nil {
@@ -248,13 +259,13 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	}
 	checkpointName := fake.snapshotName
 	updated, err := service.CompleteResourceMaintenance(ResourceMaintenanceCompleteInput{
-		TicketID: ticket.ID,
-		Resident: "amber",
-		Resource: "cpu",
-		Amount:   "2",
-		Note:     "Maintenance finished successfully.",
-		Close:    true,
-		Operator: "chenglin",
+		TicketID:       ticket.ID,
+		Resident:       "amber",
+		Resource:       "cpu",
+		Amount:         "2",
+		Note:           "Maintenance finished successfully.",
+		Close:          true,
+		Operator:       "chenglin",
 		CheckpointName: checkpointName,
 	})
 	if err != nil {

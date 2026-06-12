@@ -427,14 +427,15 @@ func main() {
 			exitf("resident is required for ticket-plan-maintenance mode")
 		}
 		out, err := host.PlanResourceMaintenance(broker.ResourceMaintenancePlanInput{
-			TicketID:             *messageID,
-			Resident:             *residentID,
-			Resource:             *resource,
-			Amount:               *amount,
-			Note:                 *body,
-			Window:               *window,
-			Operator:             *operator,
-			CreateHostCheckpoint: *createCheckpoint,
+			TicketID:               *messageID,
+			Resident:               *residentID,
+			Resource:               *resource,
+			Amount:                 *amount,
+			Note:                   *body,
+			Window:                 *window,
+			Operator:               *operator,
+			AlsoCreateIntervention: true,
+			CreateHostCheckpoint:   *createCheckpoint,
 		})
 		if err != nil {
 			exitf("%v", err)
