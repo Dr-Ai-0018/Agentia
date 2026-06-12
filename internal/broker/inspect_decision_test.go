@@ -6,6 +6,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	out := BuildHostDecisionAssist(HostInspectSummary{
 		CollectedAt:               "2026-06-12T03:00:00Z",
 		InventoryPath:             ".agents/inventory/incus-inventory.json",
+		Capacity:                  HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "memory", AllocatableTotal: 8192, AllocatableFree: 0, Unit: "MiB"}}},
 		ResidentsWithDrift:        1,
 		ResidentsMissingInventory: 1,
 		PendingChatResidents:      1,
@@ -24,5 +25,8 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	}
 	if len(out.ResidentFocus) != 2 {
 		t.Fatalf("expected two resident focus entries, got %#v", out)
+	}
+	if len(out.Capacity.Pools) != 1 {
+		t.Fatalf("expected capacity to be carried into decision assist: %#v", out)
 	}
 }

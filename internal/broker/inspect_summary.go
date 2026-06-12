@@ -10,6 +10,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	summary := HostInspectSummary{
 		CollectedAt:   out.Inventory.CollectedAt,
 		InventoryPath: out.Path,
+		Capacity:      out.Capacity,
 		ResidentCount: len(out.ResidentFacts),
 		FollowupCount: len(out.Followups),
 		TopFollowups:  append([]worldstate.HostFollowup(nil), out.Followups...),

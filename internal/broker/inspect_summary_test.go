@@ -10,6 +10,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	out := HostInspectOutput{
 		Inventory: InventorySnapshot{CollectedAt: "2026-06-12T03:00:00Z"},
 		Path:      ".agents/inventory/incus-inventory.json",
+		Capacity: HostCapacityReport{Pools: []ResourcePoolSummary{
+			{Resource: "cpu", AllocatableTotal: 10, AllocatableFree: 4, Unit: "vcpu"},
+		}},
 		ResidentFacts: []ResidentRuntimeFact{
 			{ResidentID: "jade", Status: "Running"},
 			{ResidentID: "amber", Status: "Running", DriftFields: []string{"memory"}},
@@ -40,5 +43,8 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if len(summary.ResidentRisk) != 3 {
 		t.Fatalf("unexpected resident risk count: %#v", summary)
+	}
+	if len(summary.Capacity.Pools) != 1 || summary.Capacity.Pools[0].Resource != "cpu" {
+		t.Fatalf("expected capacity to be carried into summary: %#v", summary.Capacity)
 	}
 }

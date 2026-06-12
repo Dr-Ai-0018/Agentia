@@ -6,8 +6,34 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 	out := HostDecisionAssist{
 		CollectedAt:   summary.CollectedAt,
 		InventoryPath: summary.InventoryPath,
+		Capacity:      summary.Capacity,
 		Severity:      "normal",
 		Headline:      "No immediate host action is suggested.",
+	}
+
+	for _, pool := range summary.Capacity.Pools {
+		if pool.AllocatableTotal <= 0 {
+			continue
+		}
+		if pool.AllocatableFree <= 0 {
+			out.Severity = "high"
+			out.Reasons = append(out.Reasons, fmt.Sprintf("%s allocatable pool has no free %s after host reserve and resident allocations", pool.Resource, pool.Unit))
+			out.Actions = append(out.Actions, HostSuggestedAction{
+				Kind:     "capacity_review",
+				Priority: "high",
+				Summary:  fmt.Sprintf("Review %s pressure before approving new resource requests.", pool.Resource),
+			})
+			continue
+		}
+		if pool.AllocatableFree*100 < pool.AllocatableTotal*10 {
+			raiseSeverity(&out, "medium")
+			out.Reasons = append(out.Reasons, fmt.Sprintf("%s allocatable pool is below 10%% free capacity", pool.Resource))
+			out.Actions = append(out.Actions, HostSuggestedAction{
+				Kind:     "capacity_review",
+				Priority: "medium",
+				Summary:  fmt.Sprintf("Treat new %s requests cautiously until host free capacity improves.", pool.Resource),
+			})
+		}
 	}
 
 	if summary.ResidentsMissingInventory > 0 {

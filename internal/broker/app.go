@@ -64,6 +64,7 @@ type HostInspectOutput struct {
 type HostInspectSummary struct {
 	CollectedAt               string                    `json:"collected_at"`
 	InventoryPath             string                    `json:"inventory_path,omitempty"`
+	Capacity                  HostCapacityReport        `json:"capacity"`
 	ResidentCount             int                       `json:"resident_count"`
 	ResidentsRunning          int                       `json:"residents_running"`
 	ResidentsWithDrift        int                       `json:"residents_with_drift"`
@@ -90,6 +91,7 @@ type ResidentInspectRisk struct {
 type HostDecisionAssist struct {
 	CollectedAt   string                  `json:"collected_at"`
 	InventoryPath string                  `json:"inventory_path,omitempty"`
+	Capacity      HostCapacityReport      `json:"capacity"`
 	Severity      string                  `json:"severity"`
 	Headline      string                  `json:"headline"`
 	Reasons       []string                `json:"reasons"`
