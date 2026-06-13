@@ -73,6 +73,41 @@ func TestServiceRunSequential(t *testing.T) {
 	}
 }
 
+func TestServiceRunParallelKeepsAllResidentStatuses(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+			time.Sleep(10 * time.Millisecond)
+			return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, Rounds: 1}, nil
+		})
+	}
+
+	out, err := service.Run(RunInput{
+		Residents: []string{"jade", "amber", "onyx"},
+		Duration:  30 * time.Second,
+		OutDir:    filepath.Join(root, "out"),
+		Mode:      RunModeParallel,
+	})
+	if err != nil {
+		t.Fatalf("run orchestrator: %v", err)
+	}
+	status, err := service.ReadRunStatus(out.RunID)
+	if err != nil {
+		t.Fatalf("read run status: %v", err)
+	}
+	if len(status.Residents) != 3 {
+		t.Fatalf("expected three resident statuses, got %#v", status.Residents)
+	}
+	for _, item := range status.Residents {
+		if item.Status != "finished" {
+			t.Fatalf("expected finished resident status, got %#v", status.Residents)
+		}
+	}
+}
+
 func TestServiceRunRejectsUnknownResident(t *testing.T) {
 	app := broker.New(t.TempDir())
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
@@ -351,6 +386,20 @@ func TestRetryFailedRun(t *testing.T) {
 	}
 	if len(retried.Runs) != 1 || retried.Runs[0].Resident != "amber" || retried.Runs[0].Status != "ok" {
 		t.Fatalf("unexpected retried runs: %#v", retried.Runs)
+	}
+	items, err := service.ListRuns(10)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	foundRetry := false
+	for _, item := range items {
+		if item.RunID == retried.RunID && item.RetryOf == first.RunID {
+			foundRetry = true
+			break
+		}
+	}
+	if !foundRetry {
+		t.Fatalf("expected retry lineage in list output, got %#v", items)
 	}
 }
 

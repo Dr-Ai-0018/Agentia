@@ -103,6 +103,7 @@ type RunStatus struct {
 
 type RunRecord struct {
 	RunID      string   `json:"run_id"`
+	RetryOf    string   `json:"retry_of,omitempty"`
 	Status     string   `json:"status"`
 	Mode       RunMode  `json:"mode"`
 	Residents  []string `json:"residents"`
@@ -214,13 +215,14 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 		return RunSummary{}, err
 	}
 	runs := make([]ResidentRun, len(input.Residents))
+	var statusMu sync.Mutex
 	switch input.Mode {
 	case RunModeSequential:
 		for i, resident := range input.Residents {
 			if err := s.waitIfPaused(contract.RunID, &runStatus); err != nil {
 				return RunSummary{}, err
 			}
-			runs[i] = s.runResident(resident, input, &runStatus)
+			runs[i] = s.runResident(resident, input, &runStatus, &statusMu)
 		}
 	case RunModeParallel:
 		var wg sync.WaitGroup
@@ -230,7 +232,7 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				runs[i] = s.runResident(resident, input, &runStatus)
+				runs[i] = s.runResident(resident, input, &runStatus, &statusMu)
 			}()
 		}
 		wg.Wait()
@@ -326,20 +328,20 @@ func (s *Service) ResumeRun(runID string) (RunStatus, error) {
 	return status, nil
 }
 
-func (s *Service) runResident(resident string, input RunInput, runStatus *RunStatus) ResidentRun {
+func (s *Service) runResident(resident string, input RunInput, runStatus *RunStatus, statusMu *sync.Mutex) ResidentRun {
 	run := ResidentRun{Resident: resident}
-	s.updateResidentStatus(runStatus, resident, "running", "")
+	s.updateResidentStatus(runStatus, statusMu, resident, "running", "")
 	if _, ok := s.app.Binding(resident); !ok {
 		run.Status = "error"
 		run.Error = fmt.Sprintf("unknown resident binding: %s", resident)
-		s.updateResidentStatus(runStatus, resident, "error", run.Error)
+		s.updateResidentStatus(runStatus, statusMu, resident, "error", run.Error)
 		return run
 	}
 	profile, err := newborn.BuildProfile(resident)
 	if err != nil {
 		run.Status = "error"
 		run.Error = err.Error()
-		s.updateResidentStatus(runStatus, resident, "error", run.Error)
+		s.updateResidentStatus(runStatus, statusMu, resident, "error", run.Error)
 		return run
 	}
 	runner := s.runnerFactory(s.client, s.baseURL, s.apiKey)
@@ -347,12 +349,12 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 	if err != nil {
 		run.Status = "error"
 		run.Error = err.Error()
-		s.updateResidentStatus(runStatus, resident, "error", run.Error)
+		s.updateResidentStatus(runStatus, statusMu, resident, "error", run.Error)
 		return run
 	}
 	run.Status = "ok"
 	run.Report = &report
-	s.updateResidentStatus(runStatus, resident, "finished", "")
+	s.updateResidentStatus(runStatus, statusMu, resident, "finished", "")
 	return run
 }
 
@@ -399,9 +401,13 @@ func (s *Service) writeStatus(status RunStatus) error {
 	return nil
 }
 
-func (s *Service) updateResidentStatus(runStatus *RunStatus, resident, state, errText string) {
+func (s *Service) updateResidentStatus(runStatus *RunStatus, statusMu *sync.Mutex, resident, state, errText string) {
 	if runStatus == nil {
 		return
+	}
+	if statusMu != nil {
+		statusMu.Lock()
+		defer statusMu.Unlock()
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	latestStatus := runStatus.Status
@@ -511,6 +517,9 @@ func (s *Service) ListRuns(limit int) ([]RunRecord, error) {
 			UpdatedAt:  status.UpdatedAt,
 			FinishedAt: status.FinishedAt,
 			Residents:  make([]string, 0, len(status.Residents)),
+		}
+		if summary, err := s.ReadRunSummary(entry.Name()); err == nil {
+			record.RetryOf = summary.Contract.RetryOf
 		}
 		for _, resident := range status.Residents {
 			record.Residents = append(record.Residents, resident.Resident)
