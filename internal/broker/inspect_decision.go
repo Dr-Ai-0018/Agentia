@@ -90,6 +90,15 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 			Summary:  "Review memory lifecycle reports before enabling automatic decay or deletion.",
 		})
 	}
+	if summary.MemoryDuplicateHistoryGroups > 0 {
+		raiseSeverity(&out, "medium")
+		out.Reasons = append(out.Reasons, fmt.Sprintf("%d duplicate memory history groups across %d residents can be compacted", summary.MemoryDuplicateHistoryGroups, summary.MemoryMaintenanceResidents))
+		out.Actions = append(out.Actions, HostSuggestedAction{
+			Kind:     "memory_compaction_review",
+			Priority: "medium",
+			Summary:  "Run memory compaction dry-runs and apply only when the before/after report is acceptable.",
+		})
+	}
 
 	for _, item := range summary.ResidentRisk {
 		if !item.NeedsAttention {
@@ -116,6 +125,9 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		}
 		if item.MemoryAttention > 0 {
 			focus.Reasons = append(focus.Reasons, fmt.Sprintf("%d memory items need lifecycle attention", item.MemoryAttention))
+		}
+		if item.MemoryDuplicateHistoryGroups > 0 {
+			focus.Reasons = append(focus.Reasons, fmt.Sprintf("%d duplicate memory history groups can be compacted", item.MemoryDuplicateHistoryGroups))
 		}
 		out.ResidentFocus = append(out.ResidentFocus, focus)
 	}

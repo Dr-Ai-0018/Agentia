@@ -22,6 +22,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 		Memory: []memory.LifecycleReport{
 			{Resident: "amber", NeedsAttention: 2},
 		},
+		MemoryMaintenance: []ResidentMemoryMaintenance{
+			{ResidentID: "amber", LifecycleAttention: 2, DuplicateHistoryGroups: 3, NeedsAttention: true},
+		},
 		Followups: []worldstate.HostFollowup{
 			{Kind: "chat_reply", Resident: "jade"},
 			{Kind: "ticket_reply", Resident: "amber"},
@@ -54,6 +57,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	if summary.MemoryResidentsAttention != 1 || summary.MemoryItemsAttention != 2 {
 		t.Fatalf("unexpected memory attention summary: %#v", summary)
 	}
+	if summary.MemoryMaintenanceResidents != 1 || summary.MemoryDuplicateHistoryGroups != 3 {
+		t.Fatalf("unexpected memory maintenance summary: %#v", summary)
+	}
 	var amber ResidentInspectRisk
 	for _, item := range summary.ResidentRisk {
 		if item.ResidentID == "amber" {
@@ -63,5 +69,8 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if amber.MemoryAttention != 2 {
 		t.Fatalf("expected amber memory attention, got %#v", amber)
+	}
+	if amber.MemoryDuplicateHistoryGroups != 3 {
+		t.Fatalf("expected amber duplicate history groups, got %#v", amber)
 	}
 }
