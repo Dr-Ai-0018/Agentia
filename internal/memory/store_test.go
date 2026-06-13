@@ -428,6 +428,62 @@ func TestCompactResidentWithReportDryRunDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestLifecycleReportFlagsExpiredMemories(t *testing.T) {
+	root := t.TempDir()
+	store := NewFileStore(root)
+	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+
+	if err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:             "instant-old",
+			Layer:          LayerInstant,
+			Status:         StatusActive,
+			CreatedAt:      now.Add(-8 * time.Hour),
+			UpdatedAt:      now.Add(-8 * time.Hour),
+			LastAccessedAt: now.Add(-8 * time.Hour),
+			ExpiresAt:      now.Add(-2 * time.Hour),
+			HardExpiresAt:  now.Add(-time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "temporary note",
+		DecisionAction: ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+	if err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:             "long-fresh",
+			Layer:          LayerLong,
+			Status:         StatusActive,
+			CreatedAt:      now.Add(-2 * time.Hour),
+			UpdatedAt:      now.Add(-time.Hour),
+			LastAccessedAt: now.Add(-time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "stable useful note",
+		DecisionAction: ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	report, err := store.LifecycleReport("amber", now, DefaultPolicy())
+	if err != nil {
+		t.Fatalf("lifecycle report: %v", err)
+	}
+	if report.Total != 2 || report.NeedsAttention != 1 {
+		t.Fatalf("unexpected lifecycle counts: %#v", report)
+	}
+	if report.ActionCounts[ActionDelete] != 1 || report.ActionCounts[ActionRetain] != 1 {
+		t.Fatalf("unexpected action counts: %#v", report.ActionCounts)
+	}
+	if len(report.Items) != 2 || report.Items[0].ID != "long-fresh" || report.Items[1].ID != "instant-old" {
+		t.Fatalf("expected report to preserve memory listing order, got %#v", report.Items)
+	}
+	if !report.Items[1].HardExpired || !report.Items[1].NeedsAttention {
+		t.Fatalf("expected expired instant memory to need attention: %#v", report.Items[1])
+	}
+}
+
 func TestAbstractMemoryEffectiveSummaryFallbacks(t *testing.T) {
 	record := AbstractMemory{
 		ResidentText: "resident-facing note",

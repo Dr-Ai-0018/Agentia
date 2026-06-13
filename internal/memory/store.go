@@ -122,6 +122,29 @@ type CompactReport struct {
 	Changed               bool   `json:"changed"`
 }
 
+type LifecycleItem struct {
+	ID             string       `json:"id"`
+	Layer          Layer        `json:"layer"`
+	Status         RecordStatus `json:"status"`
+	Action         Action       `json:"action"`
+	TargetLayer    Layer        `json:"target_layer"`
+	ReasonCodes    []string     `json:"reason_codes,omitempty"`
+	ReviewAt       time.Time    `json:"review_at,omitempty"`
+	ExpiresAt      time.Time    `json:"expires_at,omitempty"`
+	HardExpiresAt  time.Time    `json:"hard_expires_at,omitempty"`
+	HardExpired    bool         `json:"hard_expired"`
+	NeedsAttention bool         `json:"needs_attention"`
+}
+
+type LifecycleReport struct {
+	Resident       string          `json:"resident"`
+	CheckedAt      time.Time       `json:"checked_at"`
+	Total          int             `json:"total"`
+	NeedsAttention int             `json:"needs_attention"`
+	ActionCounts   map[Action]int  `json:"action_counts"`
+	Items          []LifecycleItem `json:"items"`
+}
+
 type Store interface {
 	ListAbstractMemories(resident string) ([]AbstractMemory, error)
 	UpsertAbstractMemory(record AbstractMemory) error
@@ -453,6 +476,68 @@ func (s *FileStore) CompactResidentWithReport(resident string, apply bool) (Comp
 	return report, s.writeBundle(resident, bundle)
 }
 
+func (s *FileStore) LifecycleReport(resident string, now time.Time, policy Policy) (LifecycleReport, error) {
+	records, err := s.ListAbstractMemories(resident)
+	if err != nil {
+		return LifecycleReport{}, err
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if policy.InstantTTL == 0 && policy.ShortTTL == 0 && policy.LongTTL == 0 && policy.PermanentReview == 0 {
+		policy = DefaultPolicy()
+	}
+	report := LifecycleReport{
+		Resident:     strings.TrimSpace(resident),
+		CheckedAt:    now.UTC(),
+		Total:        len(records),
+		ActionCounts: map[Action]int{},
+		Items:        make([]LifecycleItem, 0, len(records)),
+	}
+	for _, record := range records {
+		if record.Status == StatusDeleted {
+			continue
+		}
+		touch := record.LastAccessedAt
+		if touch.IsZero() {
+			touch = record.UpdatedAt
+		}
+		if touch.IsZero() {
+			touch = record.CreatedAt
+		}
+		created := record.CreatedAt
+		if created.IsZero() {
+			created = touch
+		}
+		decision := policy.EvaluateDecay(record.Layer, EventSignal{
+			AgeSinceTouch:    nonNegativeDuration(now.Sub(touch)),
+			AgeSinceCreation: nonNegativeDuration(now.Sub(created)),
+			UserPinned:       record.Pinned,
+		})
+		hardExpired := !record.HardExpiresAt.IsZero() && !record.HardExpiresAt.After(now)
+		needsAttention := decision.Action != ActionRetain || hardExpired || dueAt(record.ReviewAt, now) || dueAt(record.ExpiresAt, now)
+		item := LifecycleItem{
+			ID:             record.ID,
+			Layer:          record.Layer,
+			Status:         record.Status,
+			Action:         decision.Action,
+			TargetLayer:    decision.TargetLayer,
+			ReasonCodes:    append([]string(nil), decision.ReasonCodes...),
+			ReviewAt:       record.ReviewAt,
+			ExpiresAt:      record.ExpiresAt,
+			HardExpiresAt:  record.HardExpiresAt,
+			HardExpired:    hardExpired,
+			NeedsAttention: needsAttention,
+		}
+		report.ActionCounts[decision.Action]++
+		if needsAttention {
+			report.NeedsAttention++
+		}
+		report.Items = append(report.Items, item)
+	}
+	return report, nil
+}
+
 func (s *FileStore) loadBundle(resident string) (ResidentMemoryBundle, error) {
 	path := s.residentPath(resident)
 	raw, err := os.ReadFile(path)
@@ -760,6 +845,17 @@ func countSourceGroupRefs(records []AbstractMemory) int {
 		total += len(record.SourceGroupIDs)
 	}
 	return total
+}
+
+func dueAt(value, now time.Time) bool {
+	return !value.IsZero() && !value.After(now)
+}
+
+func nonNegativeDuration(value time.Duration) time.Duration {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 func remapGroupIDs(groupIDs []string, groupIDMap map[string]string) []string {

@@ -36,3 +36,34 @@ func TestRunMemoryCompactUsesAgentsMemoryStore(t *testing.T) {
 		t.Fatalf("unexpected compact report: %#v", report)
 	}
 }
+
+func TestRunMemoryLifecycleReportsStoredMemory(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC().Add(-2 * time.Hour)
+
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-note",
+			Layer:          memory.LayerLong,
+			Status:         memory.StatusActive,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "stable useful note",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	report, err := app.RunMemoryLifecycle("amber")
+	if err != nil {
+		t.Fatalf("run memory lifecycle: %v", err)
+	}
+	if report.Total != 1 || len(report.Items) != 1 || report.Items[0].ID != "amber-note" {
+		t.Fatalf("unexpected lifecycle report: %#v", report)
+	}
+}
