@@ -59,7 +59,7 @@ func TestRunMemoryLifecycleReportsStoredMemory(t *testing.T) {
 		t.Fatalf("upsert memory: %v", err)
 	}
 
-	report, err := app.RunMemoryLifecycle("amber")
+	report, err := app.RunMemoryLifecycle("amber", false)
 	if err != nil {
 		t.Fatalf("run memory lifecycle: %v", err)
 	}

@@ -138,6 +138,7 @@ type LifecycleItem struct {
 
 type LifecycleReport struct {
 	Resident       string          `json:"resident"`
+	Apply          bool            `json:"apply"`
 	CheckedAt      time.Time       `json:"checked_at"`
 	Total          int             `json:"total"`
 	NeedsAttention int             `json:"needs_attention"`
@@ -333,12 +334,7 @@ func (s *FileStore) ListAbstractMemories(resident string) ([]AbstractMemory, err
 		return nil, err
 	}
 	records := append([]AbstractMemory(nil), bundle.AbstractMemories...)
-	sort.Slice(records, func(i, j int) bool {
-		if records[i].UpdatedAt.Equal(records[j].UpdatedAt) {
-			return records[i].ID < records[j].ID
-		}
-		return records[i].UpdatedAt.After(records[j].UpdatedAt)
-	})
+	sortAbstractMemories(records)
 	return records, nil
 }
 
@@ -477,10 +473,44 @@ func (s *FileStore) CompactResidentWithReport(resident string, apply bool) (Comp
 }
 
 func (s *FileStore) LifecycleReport(resident string, now time.Time, policy Policy) (LifecycleReport, error) {
-	records, err := s.ListAbstractMemories(resident)
+	return s.LifecycleReportWithApply(resident, now, policy, false)
+}
+
+func (s *FileStore) LifecycleReportWithApply(resident string, now time.Time, policy Policy, apply bool) (LifecycleReport, error) {
+	if err := os.MkdirAll(s.root, 0o755); err != nil {
+		return LifecycleReport{}, err
+	}
+	bundle, err := s.loadBundle(resident)
 	if err != nil {
 		return LifecycleReport{}, err
 	}
+	records := append([]AbstractMemory(nil), bundle.AbstractMemories...)
+	sortAbstractMemories(records)
+	report := buildLifecycleReport(resident, records, now, policy, apply)
+	if !apply || report.NeedsAttention == 0 {
+		return report, nil
+	}
+	for i := range bundle.AbstractMemories {
+		if bundle.AbstractMemories[i].Status == StatusDeleted {
+			continue
+		}
+		decision := lifecycleDecision(bundle.AbstractMemories[i], report.CheckedAt, policy)
+		if decision.Action == ActionRetain {
+			continue
+		}
+		bundle.AbstractMemories[i].Record = ApplyDecision(report.CheckedAt, bundle.AbstractMemories[i].Record, decision)
+		if bundle.AbstractMemories[i].Governance.ReviewState == "" && decision.Action == ActionReview {
+			bundle.AbstractMemories[i].Governance.ReviewState = "needs_resident_review"
+			bundle.AbstractMemories[i].Governance.ReviewReason = strings.Join(decision.ReasonCodes, ",")
+		}
+	}
+	if err := s.writeBundle(resident, bundle); err != nil {
+		return LifecycleReport{}, err
+	}
+	return report, nil
+}
+
+func buildLifecycleReport(resident string, records []AbstractMemory, now time.Time, policy Policy, apply bool) LifecycleReport {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -489,6 +519,7 @@ func (s *FileStore) LifecycleReport(resident string, now time.Time, policy Polic
 	}
 	report := LifecycleReport{
 		Resident:     strings.TrimSpace(resident),
+		Apply:        apply,
 		CheckedAt:    now.UTC(),
 		Total:        len(records),
 		ActionCounts: map[Action]int{},
@@ -498,22 +529,7 @@ func (s *FileStore) LifecycleReport(resident string, now time.Time, policy Polic
 		if record.Status == StatusDeleted {
 			continue
 		}
-		touch := record.LastAccessedAt
-		if touch.IsZero() {
-			touch = record.UpdatedAt
-		}
-		if touch.IsZero() {
-			touch = record.CreatedAt
-		}
-		created := record.CreatedAt
-		if created.IsZero() {
-			created = touch
-		}
-		decision := policy.EvaluateDecay(record.Layer, EventSignal{
-			AgeSinceTouch:    nonNegativeDuration(now.Sub(touch)),
-			AgeSinceCreation: nonNegativeDuration(now.Sub(created)),
-			UserPinned:       record.Pinned,
-		})
+		decision := lifecycleDecision(record, now, policy)
 		hardExpired := !record.HardExpiresAt.IsZero() && !record.HardExpiresAt.After(now)
 		needsAttention := decision.Action != ActionRetain || hardExpired || dueAt(record.ReviewAt, now) || dueAt(record.ExpiresAt, now)
 		item := LifecycleItem{
@@ -535,7 +551,26 @@ func (s *FileStore) LifecycleReport(resident string, now time.Time, policy Polic
 		}
 		report.Items = append(report.Items, item)
 	}
-	return report, nil
+	return report
+}
+
+func lifecycleDecision(record AbstractMemory, now time.Time, policy Policy) Decision {
+	touch := record.LastAccessedAt
+	if touch.IsZero() {
+		touch = record.UpdatedAt
+	}
+	if touch.IsZero() {
+		touch = record.CreatedAt
+	}
+	created := record.CreatedAt
+	if created.IsZero() {
+		created = touch
+	}
+	return policy.EvaluateDecay(record.Layer, EventSignal{
+		AgeSinceTouch:    nonNegativeDuration(now.Sub(touch)),
+		AgeSinceCreation: nonNegativeDuration(now.Sub(created)),
+		UserPinned:       record.Pinned,
+	})
 }
 
 func (s *FileStore) loadBundle(resident string) (ResidentMemoryBundle, error) {
@@ -972,6 +1007,15 @@ func maxInt(left, right int) int {
 		return left
 	}
 	return right
+}
+
+func sortAbstractMemories(records []AbstractMemory) {
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].UpdatedAt.Equal(records[j].UpdatedAt) {
+			return records[i].ID < records[j].ID
+		}
+		return records[i].UpdatedAt.After(records[j].UpdatedAt)
+	})
 }
 
 func atomicWriteResidentBundle(path string, data []byte, mode os.FileMode) error {

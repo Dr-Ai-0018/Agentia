@@ -154,7 +154,7 @@ func main() {
 		}
 		printJSON(out)
 	case "memory-lifecycle":
-		out, err := app.RunMemoryLifecycle(*residentID)
+		out, err := app.RunMemoryLifecycle(*residentID, *apply)
 		if err != nil {
 			exitf("%v", err)
 		}

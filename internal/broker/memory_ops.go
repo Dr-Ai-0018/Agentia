@@ -13,9 +13,9 @@ func (a *App) RunMemoryCompact(residentID string, apply bool) (memory.CompactRep
 	return store.CompactResidentWithReport(strings.TrimSpace(residentID), apply)
 }
 
-func (a *App) RunMemoryLifecycle(residentID string) (memory.LifecycleReport, error) {
+func (a *App) RunMemoryLifecycle(residentID string, apply bool) (memory.LifecycleReport, error) {
 	store := memory.NewFileStore(filepath.Join(a.root, "memory"))
-	return store.LifecycleReport(strings.TrimSpace(residentID), time.Now().UTC(), memory.DefaultPolicy())
+	return store.LifecycleReportWithApply(strings.TrimSpace(residentID), time.Now().UTC(), memory.DefaultPolicy(), apply)
 }
 
 func (a *App) buildMemoryLifecycleReports() []memory.LifecycleReport {

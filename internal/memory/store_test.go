@@ -484,6 +484,66 @@ func TestLifecycleReportFlagsExpiredMemories(t *testing.T) {
 	}
 }
 
+func TestLifecycleReportWithApplyMarksExpiredMemories(t *testing.T) {
+	root := t.TempDir()
+	store := NewFileStore(root)
+	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+
+	if err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:             "instant-old",
+			Layer:          LayerInstant,
+			Status:         StatusActive,
+			CreatedAt:      now.Add(-8 * time.Hour),
+			UpdatedAt:      now.Add(-8 * time.Hour),
+			LastAccessedAt: now.Add(-8 * time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "temporary note",
+		DecisionAction: ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert instant memory: %v", err)
+	}
+	if err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:             "short-old",
+			Layer:          LayerShort,
+			Status:         StatusActive,
+			CreatedAt:      now.Add(-96 * time.Hour),
+			UpdatedAt:      now.Add(-96 * time.Hour),
+			LastAccessedAt: now.Add(-96 * time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "short note",
+		DecisionAction: ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert short memory: %v", err)
+	}
+
+	report, err := store.LifecycleReportWithApply("amber", now, DefaultPolicy(), true)
+	if err != nil {
+		t.Fatalf("lifecycle apply: %v", err)
+	}
+	if !report.Apply || report.ActionCounts[ActionDelete] != 1 || report.ActionCounts[ActionDecay] != 1 {
+		t.Fatalf("unexpected apply report: %#v", report)
+	}
+
+	deleted, ok, err := store.GetAbstractMemory("amber", "instant-old")
+	if err != nil || !ok {
+		t.Fatalf("get instant memory: ok=%v err=%v", ok, err)
+	}
+	if deleted.Status != StatusDeleted {
+		t.Fatalf("expected instant memory deleted, got %#v", deleted.Record)
+	}
+	decayed, ok, err := store.GetAbstractMemory("amber", "short-old")
+	if err != nil || !ok {
+		t.Fatalf("get short memory: ok=%v err=%v", ok, err)
+	}
+	if decayed.Status != StatusDecaying || decayed.Layer != LayerInstant {
+		t.Fatalf("expected short memory decayed to instant, got %#v", decayed.Record)
+	}
+}
+
 func TestAbstractMemoryEffectiveSummaryFallbacks(t *testing.T) {
 	record := AbstractMemory{
 		ResidentText: "resident-facing note",
