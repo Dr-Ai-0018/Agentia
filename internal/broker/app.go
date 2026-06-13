@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ai-arena/internal/brokerstate"
+	"ai-arena/internal/memory"
 	"ai-arena/internal/recovery"
 	"ai-arena/internal/runtimecore"
 	"ai-arena/internal/runtimeguard"
@@ -56,6 +57,7 @@ type HostInspectOutput struct {
 	Capacity      HostCapacityReport          `json:"capacity"`
 	Inventory     InventorySnapshot           `json:"inventory"`
 	ResidentFacts []ResidentRuntimeFact       `json:"resident_facts"`
+	Memory        []memory.LifecycleReport    `json:"memory_lifecycle,omitempty"`
 	Inbox         worldstate.HostInboxSummary `json:"inbox"`
 	Followups     []worldstate.HostFollowup   `json:"followups"`
 	Path          string                      `json:"inventory_path,omitempty"`
@@ -72,6 +74,8 @@ type HostInspectSummary struct {
 	PendingChatResidents      int                       `json:"pending_chat_residents"`
 	OpenTicketResidents       int                       `json:"open_ticket_residents"`
 	OpenTicketCount           int                       `json:"open_ticket_count"`
+	MemoryResidentsAttention  int                       `json:"memory_residents_attention"`
+	MemoryItemsAttention      int                       `json:"memory_items_attention"`
 	FollowupCount             int                       `json:"followup_count"`
 	InterventionCount         int                       `json:"intervention_count"`
 	TopFollowups              []worldstate.HostFollowup `json:"top_followups"`
@@ -85,6 +89,7 @@ type ResidentInspectRisk struct {
 	HasPendingChat  bool     `json:"has_pending_chat"`
 	HasOpenTicket   bool     `json:"has_open_ticket"`
 	HasIntervention bool     `json:"has_intervention"`
+	MemoryAttention int      `json:"memory_attention,omitempty"`
 	NeedsAttention  bool     `json:"needs_attention"`
 }
 
@@ -260,6 +265,7 @@ func (a *App) RunHostInspect(limit int) (HostInspectOutput, error) {
 		Capacity:      capacity,
 		Inventory:     snapshot,
 		ResidentFacts: BuildResidentRuntimeFacts(a.cfg, snapshot),
+		Memory:        a.buildMemoryLifecycleReports(),
 		Inbox:         inbox,
 		Followups:     followups,
 		Path:          path,
@@ -321,6 +327,7 @@ func (a *App) RunHostInspectFromSnapshot(limit int) (HostInspectOutput, error) {
 		Capacity:      capacity,
 		Inventory:     snapshot,
 		ResidentFacts: BuildResidentRuntimeFacts(a.cfg, snapshot),
+		Memory:        a.buildMemoryLifecycleReports(),
 		Inbox:         inbox,
 		Followups:     followups,
 		Path:          path,

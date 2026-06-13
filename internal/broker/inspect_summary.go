@@ -22,6 +22,15 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	pendingChat := map[string]struct{}{}
 	openTicket := map[string]struct{}{}
 	openIntervention := map[string]struct{}{}
+	memoryAttention := map[string]int{}
+	for _, item := range out.Memory {
+		if item.NeedsAttention <= 0 {
+			continue
+		}
+		memoryAttention[item.Resident] = item.NeedsAttention
+		summary.MemoryItemsAttention += item.NeedsAttention
+	}
+	summary.MemoryResidentsAttention = len(memoryAttention)
 	for _, item := range out.Followups {
 		switch strings.TrimSpace(item.Kind) {
 		case "chat_reply":
@@ -52,6 +61,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			HasPendingChat:  hasResident(pendingChat, item.ResidentID),
 			HasOpenTicket:   hasResident(openTicket, item.ResidentID),
 			HasIntervention: hasResident(openIntervention, item.ResidentID),
+			MemoryAttention: memoryAttention[item.ResidentID],
 		}
 		if strings.EqualFold(strings.TrimSpace(item.Status), "running") {
 			summary.ResidentsRunning++
@@ -62,7 +72,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 		if strings.TrimSpace(item.Status) == "" {
 			summary.ResidentsMissingInventory++
 		}
-		risk.NeedsAttention = len(risk.DriftFields) > 0 || risk.HasPendingChat || risk.HasOpenTicket || risk.HasIntervention || strings.TrimSpace(item.Status) == ""
+		risk.NeedsAttention = len(risk.DriftFields) > 0 || risk.HasPendingChat || risk.HasOpenTicket || risk.HasIntervention || risk.MemoryAttention > 0 || strings.TrimSpace(item.Status) == ""
 		risks = append(risks, risk)
 	}
 	summary.ResidentRisk = risks

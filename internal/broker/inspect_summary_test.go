@@ -3,6 +3,7 @@ package broker
 import (
 	"testing"
 
+	"ai-arena/internal/memory"
 	"ai-arena/internal/worldstate"
 )
 
@@ -17,6 +18,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 			{ResidentID: "jade", Status: "Running"},
 			{ResidentID: "amber", Status: "Running", DriftFields: []string{"memory"}},
 			{ResidentID: "onyx", Status: ""},
+		},
+		Memory: []memory.LifecycleReport{
+			{Resident: "amber", NeedsAttention: 2},
 		},
 		Followups: []worldstate.HostFollowup{
 			{Kind: "chat_reply", Resident: "jade"},
@@ -46,5 +50,18 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if len(summary.Capacity.Pools) != 1 || summary.Capacity.Pools[0].Resource != "cpu" {
 		t.Fatalf("expected capacity to be carried into summary: %#v", summary.Capacity)
+	}
+	if summary.MemoryResidentsAttention != 1 || summary.MemoryItemsAttention != 2 {
+		t.Fatalf("unexpected memory attention summary: %#v", summary)
+	}
+	var amber ResidentInspectRisk
+	for _, item := range summary.ResidentRisk {
+		if item.ResidentID == "amber" {
+			amber = item
+			break
+		}
+	}
+	if amber.MemoryAttention != 2 {
+		t.Fatalf("expected amber memory attention, got %#v", amber)
 	}
 }

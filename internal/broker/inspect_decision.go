@@ -81,6 +81,15 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 			Summary:  "Check active host interventions and confirm whether any maintenance or notice chain still needs closure.",
 		})
 	}
+	if summary.MemoryItemsAttention > 0 {
+		raiseSeverity(&out, "medium")
+		out.Reasons = append(out.Reasons, fmt.Sprintf("%d memory items across %d residents need lifecycle attention", summary.MemoryItemsAttention, summary.MemoryResidentsAttention))
+		out.Actions = append(out.Actions, HostSuggestedAction{
+			Kind:     "memory_lifecycle_review",
+			Priority: "medium",
+			Summary:  "Review memory lifecycle reports before enabling automatic decay or deletion.",
+		})
+	}
 
 	for _, item := range summary.ResidentRisk {
 		if !item.NeedsAttention {
@@ -104,6 +113,9 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		}
 		if item.HasIntervention {
 			focus.Reasons = append(focus.Reasons, "active host intervention needs follow-up")
+		}
+		if item.MemoryAttention > 0 {
+			focus.Reasons = append(focus.Reasons, fmt.Sprintf("%d memory items need lifecycle attention", item.MemoryAttention))
 		}
 		out.ResidentFocus = append(out.ResidentFocus, focus)
 	}

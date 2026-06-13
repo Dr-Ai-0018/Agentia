@@ -12,8 +12,10 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 		PendingChatResidents:      1,
 		OpenTicketResidents:       1,
 		InterventionCount:         1,
+		MemoryResidentsAttention:  1,
+		MemoryItemsAttention:      2,
 		ResidentRisk: []ResidentInspectRisk{
-			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, NeedsAttention: true, Status: "Running"},
+			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, MemoryAttention: 2, NeedsAttention: true, Status: "Running"},
 			{ResidentID: "onyx", NeedsAttention: true, Status: ""},
 		},
 	})
@@ -28,5 +30,15 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	}
 	if len(out.Capacity.Pools) != 1 {
 		t.Fatalf("expected capacity to be carried into decision assist: %#v", out)
+	}
+	foundMemoryAction := false
+	for _, action := range out.Actions {
+		if action.Kind == "memory_lifecycle_review" {
+			foundMemoryAction = true
+			break
+		}
+	}
+	if !foundMemoryAction {
+		t.Fatalf("expected memory lifecycle action, got %#v", out.Actions)
 	}
 }
