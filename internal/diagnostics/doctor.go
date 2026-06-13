@@ -30,14 +30,16 @@ type Finding struct {
 }
 
 type ResidentHealth struct {
-	Resident            string `json:"resident"`
-	HasBrokerSnapshot   bool   `json:"has_broker_snapshot"`
-	SnapshotRevision    uint64 `json:"snapshot_revision,omitempty"`
-	HasMemoryBundle     bool   `json:"has_memory_bundle"`
-	HistoryGroupCount   int    `json:"history_group_count"`
-	AbstractMemoryCount int    `json:"abstract_memory_count"`
-	PendingChatCount    int    `json:"pending_chat_count"`
-	OpenTicketCount     int    `json:"open_ticket_count"`
+	Resident                   string `json:"resident"`
+	HasBrokerSnapshot          bool   `json:"has_broker_snapshot"`
+	SnapshotRevision           uint64 `json:"snapshot_revision,omitempty"`
+	HasMemoryBundle            bool   `json:"has_memory_bundle"`
+	HistoryGroupCount          int    `json:"history_group_count"`
+	AbstractMemoryCount        int    `json:"abstract_memory_count"`
+	DuplicateHistoryGroupCount int    `json:"duplicate_history_group_count,omitempty"`
+	MemoryLifecycleAttention   int    `json:"memory_lifecycle_attention,omitempty"`
+	PendingChatCount           int    `json:"pending_chat_count"`
+	OpenTicketCount            int    `json:"open_ticket_count"`
 }
 
 type CountSummary struct {
@@ -206,7 +208,8 @@ func scanMemoryBundles(root string, addResident func(string) *ResidentHealth, co
 		item.HistoryGroupCount = len(bundle.HistoryGroups)
 		item.AbstractMemoryCount = len(bundle.AbstractMemories)
 		if duplicates := countDuplicateHistoryGroupSignatures(bundle.HistoryGroups); duplicates > 0 {
-			addFinding(SeverityWarn, "memory", path, "memory bundle has duplicate history groups; run memory-compact for resident: "+resident)
+			item.DuplicateHistoryGroupCount = duplicates
+			addFinding(SeverityWarn, "memory", path, "memory bundle has "+itoa(duplicates)+" duplicate history group(s); run memory-compact for resident: "+resident)
 		}
 		lifecycle := memory.NewFileStore(filepath.Join(root, "memory"))
 		report, err := lifecycle.LifecycleReport(resident, time.Now().UTC(), memory.DefaultPolicy())
@@ -215,7 +218,8 @@ func scanMemoryBundles(root string, addResident func(string) *ResidentHealth, co
 			continue
 		}
 		if report.NeedsAttention > 0 {
-			addFinding(SeverityWarn, "memory", path, "memory lifecycle needs attention; run memory-lifecycle for resident: "+resident)
+			item.MemoryLifecycleAttention = report.NeedsAttention
+			addFinding(SeverityWarn, "memory", path, "memory lifecycle has "+itoa(report.NeedsAttention)+" item(s) needing attention; run memory-lifecycle for resident: "+resident)
 		}
 	}
 	return nil

@@ -109,6 +109,9 @@ func TestRunDoctorSummarizesResidentHealth(t *testing.T) {
 	if amber.HistoryGroupCount != 1 || amber.AbstractMemoryCount != 1 {
 		t.Fatalf("unexpected amber memory counts: %#v", amber)
 	}
+	if amber.DuplicateHistoryGroupCount != 0 || amber.MemoryLifecycleAttention != 0 {
+		t.Fatalf("expected no amber memory maintenance attention: %#v", amber)
+	}
 	if amber.OpenTicketCount != 1 {
 		t.Fatalf("expected amber open ticket count 1, got %#v", amber)
 	}
@@ -189,9 +192,19 @@ func TestRunDoctorFlagsDuplicateMemoryHistoryGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run doctor: %v", err)
 	}
+	var amber ResidentHealth
+	for _, resident := range report.Residents {
+		if resident.Resident == "amber" {
+			amber = resident
+			break
+		}
+	}
+	if amber.DuplicateHistoryGroupCount != 1 {
+		t.Fatalf("expected duplicate history group count 1, got %#v", amber)
+	}
 	found := false
 	for _, finding := range report.Findings {
-		if finding.Scope == "memory" && finding.Severity == SeverityWarn && finding.Message == "memory bundle has duplicate history groups; run memory-compact for resident: amber" {
+		if finding.Scope == "memory" && finding.Severity == SeverityWarn && finding.Message == "memory bundle has 1 duplicate history group(s); run memory-compact for resident: amber" {
 			found = true
 			break
 		}
@@ -226,9 +239,19 @@ func TestRunDoctorFlagsMemoryLifecycleAttention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run doctor: %v", err)
 	}
+	var amber ResidentHealth
+	for _, resident := range report.Residents {
+		if resident.Resident == "amber" {
+			amber = resident
+			break
+		}
+	}
+	if amber.MemoryLifecycleAttention != 1 {
+		t.Fatalf("expected memory lifecycle attention count 1, got %#v", amber)
+	}
 	found := false
 	for _, finding := range report.Findings {
-		if finding.Scope == "memory" && finding.Severity == SeverityWarn && finding.Message == "memory lifecycle needs attention; run memory-lifecycle for resident: amber" {
+		if finding.Scope == "memory" && finding.Severity == SeverityWarn && finding.Message == "memory lifecycle has 1 item(s) needing attention; run memory-lifecycle for resident: amber" {
 			found = true
 			break
 		}
