@@ -42,6 +42,17 @@ type ResidentRunStatus struct {
 	Error     string `json:"error,omitempty"`
 }
 
+type RunEvent struct {
+	Type      string `json:"type"`
+	At        string `json:"at"`
+	Resident  string `json:"resident,omitempty"`
+	Message   string `json:"message,omitempty"`
+	RetryOf   string `json:"retry_of,omitempty"`
+	RetryRun  string `json:"retry_run,omitempty"`
+	FromState string `json:"from_state,omitempty"`
+	ToState   string `json:"to_state,omitempty"`
+}
+
 type RunContract struct {
 	RunID         string        `json:"run_id"`
 	RetryOf       string        `json:"retry_of,omitempty"`
@@ -98,7 +109,10 @@ type RunStatus struct {
 	Residents  []ResidentRunStatus `json:"residents"`
 	StartedAt  string              `json:"started_at"`
 	UpdatedAt  string              `json:"updated_at"`
+	PausedAt   string              `json:"paused_at,omitempty"`
+	ResumedAt  string              `json:"resumed_at,omitempty"`
 	FinishedAt string              `json:"finished_at,omitempty"`
+	Events     []RunEvent          `json:"events,omitempty"`
 }
 
 type RunRecord struct {
@@ -109,6 +123,8 @@ type RunRecord struct {
 	Residents  []string `json:"residents"`
 	StartedAt  string   `json:"started_at"`
 	UpdatedAt  string   `json:"updated_at,omitempty"`
+	PausedAt   string   `json:"paused_at,omitempty"`
+	ResumedAt  string   `json:"resumed_at,omitempty"`
 	FinishedAt string   `json:"finished_at,omitempty"`
 }
 
@@ -203,6 +219,12 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 		StartedAt: started.Format(time.RFC3339),
 		UpdatedAt: started.Format(time.RFC3339),
 		Residents: make([]ResidentRunStatus, 0, len(input.Residents)),
+		Events: []RunEvent{{
+			Type:    "started",
+			At:      started.Format(time.RFC3339),
+			Message: "orchestrator run started",
+			RetryOf: contract.RetryOf,
+		}},
 	}
 	for _, resident := range input.Residents {
 		runStatus.Residents = append(runStatus.Residents, ResidentRunStatus{
@@ -263,6 +285,18 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 	if hasRunErrors(runs) {
 		runStatus.Status = "finished_with_errors"
 	}
+	if current, err := s.ReadRunStatus(contract.RunID); err == nil {
+		runStatus.PausedAt = current.PausedAt
+		runStatus.ResumedAt = current.ResumedAt
+		runStatus.Events = append([]RunEvent(nil), current.Events...)
+	}
+	runStatus.Events = append(runStatus.Events, RunEvent{
+		Type:      "finished",
+		At:        runStatus.UpdatedAt,
+		Message:   "orchestrator run finished",
+		FromState: "running",
+		ToState:   runStatus.Status,
+	})
 	if err := s.writeStatus(runStatus); err != nil {
 		return RunSummary{}, err
 	}
@@ -304,8 +338,21 @@ func (s *Service) PauseRun(runID string) (RunStatus, error) {
 	if status.Status == "finished" || status.Status == "finished_with_errors" {
 		return RunStatus{}, fmt.Errorf("run %s is already finished", runID)
 	}
+	if status.Status == "paused" {
+		return status, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	previous := status.Status
 	status.Status = "paused"
-	status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	status.UpdatedAt = now
+	status.PausedAt = now
+	status.Events = append(status.Events, RunEvent{
+		Type:      "paused",
+		At:        now,
+		Message:   "orchestrator run paused; sequential mode observes this between residents",
+		FromState: previous,
+		ToState:   "paused",
+	})
 	if err := s.writeStatus(status); err != nil {
 		return RunStatus{}, err
 	}
@@ -320,8 +367,17 @@ func (s *Service) ResumeRun(runID string) (RunStatus, error) {
 	if status.Status != "paused" {
 		return RunStatus{}, fmt.Errorf("run %s is not paused", runID)
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
 	status.Status = "running"
-	status.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	status.UpdatedAt = now
+	status.ResumedAt = now
+	status.Events = append(status.Events, RunEvent{
+		Type:      "resumed",
+		At:        now,
+		Message:   "orchestrator run resumed",
+		FromState: "paused",
+		ToState:   "running",
+	})
 	if err := s.writeStatus(status); err != nil {
 		return RunStatus{}, err
 	}
@@ -413,16 +469,28 @@ func (s *Service) updateResidentStatus(runStatus *RunStatus, statusMu *sync.Mute
 	latestStatus := runStatus.Status
 	if current, err := s.ReadRunStatus(runStatus.RunID); err == nil && strings.TrimSpace(current.Status) != "" {
 		latestStatus = current.Status
+		runStatus.PausedAt = current.PausedAt
+		runStatus.ResumedAt = current.ResumedAt
+		runStatus.Events = append([]RunEvent(nil), current.Events...)
 	}
 	for i := range runStatus.Residents {
 		if runStatus.Residents[i].Resident != resident {
 			continue
 		}
+		previousResidentStatus := runStatus.Residents[i].Status
 		runStatus.Residents[i].Status = state
 		runStatus.Residents[i].Error = errText
 		runStatus.Residents[i].UpdatedAt = now
 		runStatus.UpdatedAt = now
 		runStatus.Status = latestStatus
+		runStatus.Events = append(runStatus.Events, RunEvent{
+			Type:      "resident_status",
+			At:        now,
+			Resident:  resident,
+			Message:   errText,
+			FromState: previousResidentStatus,
+			ToState:   state,
+		})
 		_ = s.writeStatus(*runStatus)
 		return
 	}
@@ -515,6 +583,8 @@ func (s *Service) ListRuns(limit int) ([]RunRecord, error) {
 			Mode:       status.Mode,
 			StartedAt:  status.StartedAt,
 			UpdatedAt:  status.UpdatedAt,
+			PausedAt:   status.PausedAt,
+			ResumedAt:  status.ResumedAt,
 			FinishedAt: status.FinishedAt,
 			Residents:  make([]string, 0, len(status.Residents)),
 		}

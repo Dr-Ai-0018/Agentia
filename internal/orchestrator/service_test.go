@@ -324,6 +324,12 @@ func TestPauseAndResumeRunStatus(t *testing.T) {
 	if status.Status != "paused" {
 		t.Fatalf("expected paused status, got %#v", status)
 	}
+	if status.PausedAt == "" {
+		t.Fatalf("expected paused_at in status: %#v", status)
+	}
+	if !hasRunEvent(status.Events, "paused") {
+		t.Fatalf("expected paused event, got %#v", status.Events)
+	}
 
 	close(release)
 	time.Sleep(150 * time.Millisecond)
@@ -340,6 +346,18 @@ func TestPauseAndResumeRunStatus(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for resumed run to finish")
+	}
+	finalStatus, err := service.ReadRunStatus(runID)
+	if err != nil {
+		t.Fatalf("read final status: %v", err)
+	}
+	if finalStatus.PausedAt == "" || finalStatus.ResumedAt == "" {
+		t.Fatalf("expected pause/resume timestamps in final status: %#v", finalStatus)
+	}
+	for _, eventType := range []string{"started", "paused", "resumed", "finished"} {
+		if !hasRunEvent(finalStatus.Events, eventType) {
+			t.Fatalf("expected %s event in final status, got %#v", eventType, finalStatus.Events)
+		}
 	}
 }
 
@@ -384,6 +402,13 @@ func TestRetryFailedRun(t *testing.T) {
 	if retried.Contract.RetryOf != first.RunID {
 		t.Fatalf("expected retry_of %q, got %#v", first.RunID, retried.Contract)
 	}
+	retriedStatus, err := service.ReadRunStatus(retried.RunID)
+	if err != nil {
+		t.Fatalf("read retried status: %v", err)
+	}
+	if len(retriedStatus.Events) == 0 || retriedStatus.Events[0].RetryOf != first.RunID {
+		t.Fatalf("expected retry lineage in status events, got %#v", retriedStatus.Events)
+	}
 	if len(retried.Runs) != 1 || retried.Runs[0].Resident != "amber" || retried.Runs[0].Status != "ok" {
 		t.Fatalf("unexpected retried runs: %#v", retried.Runs)
 	}
@@ -401,6 +426,15 @@ func TestRetryFailedRun(t *testing.T) {
 	if !foundRetry {
 		t.Fatalf("expected retry lineage in list output, got %#v", items)
 	}
+}
+
+func hasRunEvent(events []RunEvent, eventType string) bool {
+	for _, event := range events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 type RunnerFunc func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error)
