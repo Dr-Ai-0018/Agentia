@@ -200,3 +200,40 @@ func TestRunDoctorFlagsDuplicateMemoryHistoryGroups(t *testing.T) {
 		t.Fatalf("expected duplicate memory warning, got %#v", report.Findings)
 	}
 }
+
+func TestRunDoctorFlagsMemoryLifecycleAttention(t *testing.T) {
+	root := t.TempDir()
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC().Add(-8 * time.Hour)
+
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "instant-old",
+			Layer:          memory.LayerInstant,
+			Status:         memory.StatusActive,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "temporary note",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	report, err := RunDoctor(root)
+	if err != nil {
+		t.Fatalf("run doctor: %v", err)
+	}
+	found := false
+	for _, finding := range report.Findings {
+		if finding.Scope == "memory" && finding.Severity == SeverityWarn && finding.Message == "memory lifecycle needs attention; run memory-lifecycle for resident: amber" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lifecycle warning, got %#v", report.Findings)
+	}
+}

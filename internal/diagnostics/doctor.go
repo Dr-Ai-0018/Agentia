@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"ai-arena/internal/memory"
 	"ai-arena/internal/runtimecore"
@@ -206,6 +207,15 @@ func scanMemoryBundles(root string, addResident func(string) *ResidentHealth, co
 		item.AbstractMemoryCount = len(bundle.AbstractMemories)
 		if duplicates := countDuplicateHistoryGroupSignatures(bundle.HistoryGroups); duplicates > 0 {
 			addFinding(SeverityWarn, "memory", path, "memory bundle has duplicate history groups; run memory-compact for resident: "+resident)
+		}
+		lifecycle := memory.NewFileStore(filepath.Join(root, "memory"))
+		report, err := lifecycle.LifecycleReport(resident, time.Now().UTC(), memory.DefaultPolicy())
+		if err != nil {
+			addFinding(SeverityError, "memory", path, "cannot evaluate memory lifecycle: "+err.Error())
+			continue
+		}
+		if report.NeedsAttention > 0 {
+			addFinding(SeverityWarn, "memory", path, "memory lifecycle needs attention; run memory-lifecycle for resident: "+resident)
 		}
 	}
 	return nil
