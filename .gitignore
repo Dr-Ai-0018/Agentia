@@ -15,6 +15,11 @@ dist/
 coverage.out
 experiments/*/logs/
 experiments/*/output/
+experiments/*/logs-real/
+experiments/*/output-real/
+experiments/ticket-roundtrip/
+runs/
+tmp/
 
 # Local env / secrets
 .env
