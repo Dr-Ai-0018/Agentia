@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"ai-arena/internal/broker"
+	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/runtimeguard"
 )
 
@@ -40,5 +41,52 @@ func TestRunAdmitRejectsInvalidCachedTokens(t *testing.T) {
 	_, err := runAdmit(app, "amber", runtimeguard.CallKindWork, true, now, args)
 	if err == nil {
 		t.Fatalf("expected invalid cached token combination to fail")
+	}
+}
+
+func TestRunAdmitAllowsOneWorkOverrunThenLocks(t *testing.T) {
+	app := broker.New(t.TempDir())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	if _, err := app.RunReset("onyx", now); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	args := defaultAdmitArgs()
+	args.model = "gpt-5.4"
+	args.inputTokens = 100
+	args.cachedTokens = 0
+	args.outputTokens = 3_000_000
+	args.totalTokens = 3_000_100
+	args.toolCalls = 0
+	args.responseID = "resp_work_overrun"
+
+	raw, err := runAdmit(app, "onyx", runtimeguard.CallKindWork, true, now.Add(time.Minute), args)
+	if err != nil {
+		t.Fatalf("run admit: %v", err)
+	}
+	resp, ok := raw.(brokerstate.AdmitResponse)
+	if !ok {
+		t.Fatalf("unexpected response type %T", raw)
+	}
+	if resp.Denied || !resp.Applied {
+		t.Fatalf("expected overrun work call to apply: %#v", resp)
+	}
+	if resp.AfterStatus == nil || !resp.AfterStatus.DebtActive {
+		t.Fatalf("expected overrun work call to create debt")
+	}
+	if !resp.Prepared.Decision.WouldEnterDebt || !resp.Prepared.Decision.WouldExceedQuota {
+		t.Fatalf("expected overrun decision flags: %#v", resp.Prepared.Decision)
+	}
+
+	next, err := app.RunAdmit("onyx", runtimeguard.CallKindWork, false, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("next admit: %v", err)
+	}
+	if !next.Denied {
+		t.Fatalf("expected debt to deny next ordinary work")
+	}
+	if len(next.DeniedReason) == 0 || next.DeniedReason[0] != "spark_debt_active" {
+		t.Fatalf("unexpected next denied reason: %#v", next.DeniedReason)
 	}
 }
