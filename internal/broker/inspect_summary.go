@@ -20,10 +20,19 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	}
 	if out.LatestOrchestrator != nil {
 		latest := *out.LatestOrchestrator
-		latest.Residents = append([]LatestOrchestratorResidentInspection(nil), out.LatestOrchestrator.Residents...)
+		latest.Residents = append([]OrchestratorResidentInspectionDigest(nil), out.LatestOrchestrator.Residents...)
 		latest.ResidentsPlanned = append([]string(nil), out.LatestOrchestrator.ResidentsPlanned...)
 		summary.LatestOrchestrator = &latest
 		summary.LatestRunNeedsAttention = latest.ResidentsErrored > 0 || latest.BudgetBlockedRuns > 0
+	}
+	for _, item := range out.RecentOrchestrators {
+		copyItem := item
+		copyItem.Residents = append([]OrchestratorResidentInspectionDigest(nil), item.Residents...)
+		copyItem.ResidentsPlanned = append([]string(nil), item.ResidentsPlanned...)
+		summary.RecentOrchestrators = append(summary.RecentOrchestrators, copyItem)
+		if copyItem.ResidentsErrored > 0 || copyItem.BudgetBlockedRuns > 0 {
+			summary.RecentRunsNeedingAttention++
+		}
 	}
 
 	pendingChat := map[string]struct{}{}
@@ -31,7 +40,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	openIntervention := map[string]struct{}{}
 	memoryAttention := map[string]int{}
 	memoryDuplicateGroups := map[string]int{}
-	orchestratorByResident := map[string]LatestOrchestratorResidentInspection{}
+	orchestratorByResident := map[string]OrchestratorResidentInspectionDigest{}
 	if out.LatestOrchestrator != nil {
 		for _, item := range out.LatestOrchestrator.Residents {
 			if strings.TrimSpace(item.Resident) != "" {

@@ -16,11 +16,12 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 		MemoryItemsAttention:         2,
 		MemoryMaintenanceResidents:   1,
 		MemoryDuplicateHistoryGroups: 3,
-		LatestOrchestrator: &LatestOrchestratorInspection{
+		LatestOrchestrator: &OrchestratorInspectionDigest{
 			RunID:             "orchestrator-20260616T082449.311075354Z",
 			ResidentsErrored:  1,
 			BudgetBlockedRuns: 1,
 		},
+		RecentRunsNeedingAttention: 2,
 		ResidentRisk: []ResidentInspectRisk{
 			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, MemoryAttention: 2, MemoryDuplicateHistoryGroups: 3, OrchestratorBudgetBlocked: true, OrchestratorStoppedReason: "broker_preflight_denied: effective_window_exhausted", NeedsAttention: true, Status: "Running"},
 			{ResidentID: "onyx", NeedsAttention: true, Status: ""},

@@ -166,6 +166,9 @@ func TestRunHostInspectAggregatesWorldState(t *testing.T) {
 	if out.LatestOrchestrator == nil || out.LatestOrchestrator.BudgetBlockedRuns != 1 {
 		t.Fatalf("expected latest orchestrator report, got %#v", out.LatestOrchestrator)
 	}
+	if len(out.RecentOrchestrators) != 1 {
+		t.Fatalf("expected recent orchestrator report, got %#v", out.RecentOrchestrators)
+	}
 	var amber ResidentRuntimeFact
 	for _, item := range out.ResidentFacts {
 		if item.ResidentID == "amber" {
@@ -235,6 +238,9 @@ func TestRunHostInspectSummaryFromSnapshot(t *testing.T) {
 	}
 	if out.LatestOrchestrator == nil || !out.LatestRunNeedsAttention {
 		t.Fatalf("expected latest orchestrator attention in summary: %#v", out)
+	}
+	if len(out.RecentOrchestrators) != 1 || out.RecentRunsNeedingAttention != 1 {
+		t.Fatalf("expected recent orchestrator attention in summary: %#v", out)
 	}
 }
 

@@ -120,6 +120,10 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 			})
 		}
 	}
+	if summary.RecentRunsNeedingAttention > 1 {
+		raiseSeverity(&out, "medium")
+		out.Reasons = append(out.Reasons, fmt.Sprintf("%d recent orchestrator runs need host review", summary.RecentRunsNeedingAttention))
+	}
 
 	for _, item := range summary.ResidentRisk {
 		if !item.NeedsAttention {

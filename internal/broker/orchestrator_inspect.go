@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-type LatestOrchestratorInspection struct {
+type OrchestratorInspectionDigest struct {
 	RunID             string                                 `json:"run_id"`
 	RetryOf           string                                 `json:"retry_of,omitempty"`
 	Mode              string                                 `json:"mode,omitempty"`
@@ -20,10 +20,10 @@ type LatestOrchestratorInspection struct {
 	ResidentsErrored  int                                    `json:"residents_errored"`
 	UsefulRuns        int                                    `json:"useful_runs"`
 	BudgetBlockedRuns int                                    `json:"budget_blocked_runs"`
-	Residents         []LatestOrchestratorResidentInspection `json:"residents,omitempty"`
+	Residents         []OrchestratorResidentInspectionDigest `json:"residents,omitempty"`
 }
 
-type LatestOrchestratorResidentInspection struct {
+type OrchestratorResidentInspectionDigest struct {
 	Resident        string `json:"resident"`
 	Status          string `json:"status"`
 	Rounds          int    `json:"rounds,omitempty"`
@@ -33,7 +33,15 @@ type LatestOrchestratorResidentInspection struct {
 	Error           string `json:"error,omitempty"`
 }
 
-func LoadLatestOrchestratorInspection(root string) (*LatestOrchestratorInspection, error) {
+func LoadLatestOrchestratorInspection(root string) (*OrchestratorInspectionDigest, error) {
+	recent, err := LoadRecentOrchestratorInspections(root, 1)
+	if err != nil || len(recent) == 0 {
+		return nil, err
+	}
+	return &recent[0], nil
+}
+
+func LoadRecentOrchestratorInspections(root string, limit int) ([]OrchestratorInspectionDigest, error) {
 	runRoot := filepath.Join(root, "orchestrator-runs")
 	entries, err := os.ReadDir(runRoot)
 	if err != nil {
@@ -49,20 +57,31 @@ func LoadLatestOrchestratorInspection(root string) (*LatestOrchestratorInspectio
 		}
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(runIDs)))
+	out := make([]OrchestratorInspectionDigest, 0, minPositive(limit, len(runIDs)))
 	for _, runID := range runIDs {
 		path := filepath.Join(runRoot, runID, "inspection-report.json")
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
-		var out LatestOrchestratorInspection
-		if err := json.Unmarshal(raw, &out); err != nil {
+		var item OrchestratorInspectionDigest
+		if err := json.Unmarshal(raw, &item); err != nil {
 			continue
 		}
-		if out.RunID == "" {
-			out.RunID = runID
+		if item.RunID == "" {
+			item.RunID = runID
 		}
-		return &out, nil
+		out = append(out, item)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
 	}
-	return nil, nil
+	return out, nil
+}
+
+func minPositive(a, b int) int {
+	if a <= 0 || b < a {
+		return b
+	}
+	return a
 }

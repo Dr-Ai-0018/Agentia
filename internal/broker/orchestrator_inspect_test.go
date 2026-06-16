@@ -49,6 +49,34 @@ func TestLoadLatestOrchestratorInspection(t *testing.T) {
 	}
 }
 
+func TestLoadRecentOrchestratorInspections(t *testing.T) {
+	root := t.TempDir()
+	for _, runID := range []string{
+		"orchestrator-20260616T070000.000000000Z",
+		"orchestrator-20260616T080000.000000000Z",
+		"orchestrator-20260616T090000.000000000Z",
+	} {
+		runDir := filepath.Join(root, "orchestrator-runs", runID)
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			t.Fatalf("mkdir run: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(runDir, "inspection-report.json"), []byte(`{"run_id":"`+runID+`"}`), 0o644); err != nil {
+			t.Fatalf("write report: %v", err)
+		}
+	}
+
+	out, err := LoadRecentOrchestratorInspections(root, 2)
+	if err != nil {
+		t.Fatalf("load recent: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("expected two recent reports, got %#v", out)
+	}
+	if !strings.Contains(out[0].RunID, "090000") || !strings.Contains(out[1].RunID, "080000") {
+		t.Fatalf("expected newest-first reports, got %#v", out)
+	}
+}
+
 func TestLoadLatestOrchestratorInspectionSkipsBadNewestReport(t *testing.T) {
 	root := t.TempDir()
 	badDir := filepath.Join(root, "orchestrator-runs", "orchestrator-20260616T090000.000000000Z")

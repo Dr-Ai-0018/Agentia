@@ -25,14 +25,18 @@ func TestSummarizeHostInspect(t *testing.T) {
 		MemoryMaintenance: []ResidentMemoryMaintenance{
 			{ResidentID: "amber", LifecycleAttention: 2, DuplicateHistoryGroups: 3, NeedsAttention: true},
 		},
-		LatestOrchestrator: &LatestOrchestratorInspection{
+		LatestOrchestrator: &OrchestratorInspectionDigest{
 			RunID:             "orchestrator-20260616T082449.311075354Z",
 			ResidentsErrored:  1,
 			BudgetBlockedRuns: 1,
-			Residents: []LatestOrchestratorResidentInspection{
+			Residents: []OrchestratorResidentInspectionDigest{
 				{Resident: "amber", Status: "ok", StoppedReason: "broker_preflight_denied: effective_window_exhausted", BudgetBlocked: true},
 				{Resident: "onyx", Status: "error", Error: "model parse failure"},
 			},
+		},
+		RecentOrchestrators: []OrchestratorInspectionDigest{
+			{RunID: "orchestrator-20260616T082449.311075354Z", BudgetBlockedRuns: 1},
+			{RunID: "orchestrator-20260616T074926.897967380Z"},
 		},
 		Followups: []worldstate.HostFollowup{
 			{Kind: "chat_reply", Resident: "jade"},
@@ -74,6 +78,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if !summary.LatestRunNeedsAttention {
 		t.Fatalf("expected latest run to need attention: %#v", summary)
+	}
+	if len(summary.RecentOrchestrators) != 2 || summary.RecentRunsNeedingAttention != 1 {
+		t.Fatalf("unexpected recent orchestrator summary: %#v", summary)
 	}
 	var amber ResidentInspectRisk
 	var onyx ResidentInspectRisk
