@@ -142,6 +142,8 @@ type RoundLog struct {
 	Decision     AgentDecision   `json:"decision"`
 	Observation  string          `json:"observation"`
 	ResponseID   string          `json:"response_id"`
+	ParseError   string          `json:"parse_error,omitempty"`
+	FallbackUsed bool            `json:"fallback_used,omitempty"`
 	InputTokens  int             `json:"input_tokens"`
 	CachedTokens int             `json:"cached_tokens"`
 	OutputTokens int             `json:"output_tokens"`

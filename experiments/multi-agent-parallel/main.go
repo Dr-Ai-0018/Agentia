@@ -21,18 +21,18 @@ import (
 const defaultBaseURL = "https://api.openai.com/v1"
 
 type residentRun struct {
-	Resident string                     `json:"resident"`
+	Resident string                      `json:"resident"`
 	Status   *brokerstate.ResidentStatus `json:"status,omitempty"`
-	Report   *newborn.FinalReport       `json:"report,omitempty"`
-	Error    string                     `json:"error,omitempty"`
+	Report   *newborn.FinalReport        `json:"report,omitempty"`
+	Error    string                      `json:"error,omitempty"`
 }
 
 type parallelSummary struct {
-	StartedAt  string                          `json:"started_at"`
-	EndedAt    string                          `json:"ended_at"`
-	Duration   string                          `json:"duration"`
-	Runs       []residentRun                   `json:"runs"`
-	Assessment newborn.ParallelRunSummary      `json:"assessment"`
+	StartedAt  string                     `json:"started_at"`
+	EndedAt    string                     `json:"ended_at"`
+	Duration   string                     `json:"duration"`
+	Runs       []residentRun              `json:"runs"`
+	Assessment newborn.ParallelRunSummary `json:"assessment"`
 }
 
 func main() {
@@ -60,7 +60,7 @@ func main() {
 	if err != nil {
 		exitf("build probe profile: %v", err)
 	}
-	if err := openai.ProbeResponses(client, *baseURL, apiKey, newborn.BuildDecisionProbePayload(probeProfile)); err != nil {
+	if _, err := openai.ProbeStructuredTool(client, *baseURL, apiKey, newborn.BuildDecisionProbePayload(probeProfile), "decide_next_action"); err != nil {
 		exitf("openai health probe failed: %v", err)
 	}
 

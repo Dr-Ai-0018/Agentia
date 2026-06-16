@@ -107,6 +107,26 @@ func ProbeResponses(client *http.Client, baseURL, apiKey string, payload Request
 	return nil
 }
 
+func ProbeStructuredTool(client *http.Client, baseURL, apiKey string, payload RequestPayload, toolName string) (StreamResult, error) {
+	result, err := PostStream(client, baseURL, apiKey, payload, false)
+	if err != nil {
+		return StreamResult{}, fmt.Errorf("streaming structured tool probe failed: %w", err)
+	}
+	if strings.TrimSpace(result.ResponseID) == "" {
+		return StreamResult{}, errors.New("structured tool probe missing response id")
+	}
+	for _, item := range result.FunctionCalls {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			name = strings.TrimSpace(item.CallName)
+		}
+		if item.Type == "function_call" && name == toolName && strings.TrimSpace(item.Arguments) != "" {
+			return result, nil
+		}
+	}
+	return result, fmt.Errorf("structured tool probe missing %s function call; output_text=%q calls=%d", toolName, result.OutputText, len(result.FunctionCalls))
+}
+
 func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayload, verbose bool) (StreamResult, error) {
 	payload.Stream = true
 	body, err := json.Marshal(payload)

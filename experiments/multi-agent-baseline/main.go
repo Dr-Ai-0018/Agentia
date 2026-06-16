@@ -44,7 +44,7 @@ func main() {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Minute}
-	if err := openai.ProbeResponses(client, *baseURL, apiKey, newborn.BuildDecisionProbePayload(profile)); err != nil {
+	if _, err := openai.ProbeStructuredTool(client, *baseURL, apiKey, newborn.BuildDecisionProbePayload(profile), "decide_next_action"); err != nil {
 		exitf("openai health probe failed: %v", err)
 	}
 	runner := newborn.NewRunner(client, *baseURL, apiKey)

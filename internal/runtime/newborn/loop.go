@@ -126,7 +126,11 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 
 		decision, err := parseDecisionResult(result)
+		parseError := ""
+		fallbackUsed := false
 		if err != nil {
+			parseError = err.Error()
+			fallbackUsed = true
 			decision = AgentDecision{
 				Situation:  "failed to parse structured decision",
 				NextAction: "guest_exec",
@@ -177,6 +181,8 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			Decision:     decision,
 			Observation:  observation,
 			ResponseID:   result.ResponseID,
+			ParseError:   parseError,
+			FallbackUsed: fallbackUsed,
 			InputTokens:  result.InputTokens,
 			CachedTokens: result.CachedTokens,
 			OutputTokens: result.OutputTokens,
