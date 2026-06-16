@@ -12,10 +12,10 @@ type ParallelRunAssessment struct {
 }
 
 type ParallelRunSummary struct {
-	Residents            int                     `json:"residents"`
-	UsefulRuns           int                     `json:"useful_runs"`
-	BudgetBlockedRuns    int                     `json:"budget_blocked_runs"`
-	Assessments          []ParallelRunAssessment `json:"assessments"`
+	Residents         int                     `json:"residents"`
+	UsefulRuns        int                     `json:"useful_runs"`
+	BudgetBlockedRuns int                     `json:"budget_blocked_runs"`
+	Assessments       []ParallelRunAssessment `json:"assessments"`
 }
 
 func SummarizeParallelReports(reports []FinalReport) ParallelRunSummary {
@@ -48,5 +48,8 @@ func hasBudgetBlock(reason string) bool {
 		return false
 	}
 	return strings.Contains(reason, "spark_reserved_for_final_notice") ||
-		strings.Contains(reason, "quota_reserved_for_final_notice")
+		strings.Contains(reason, "quota_reserved_for_final_notice") ||
+		strings.Contains(reason, "spark_exhausted") ||
+		strings.Contains(reason, "effective_window_exhausted") ||
+		strings.Contains(reason, "spark_debt_active")
 }

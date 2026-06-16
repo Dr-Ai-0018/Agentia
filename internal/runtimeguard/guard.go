@@ -10,15 +10,15 @@ const (
 )
 
 type State struct {
-	SparkBalance       float64
-	Quota              tokenledger.QuotaState
-	Fatigue            int
-	SleepDebt          int
-	ReserveSpark       float64
-	ReserveStrain      int
-	DebtActive         bool
-	DebtAmount         float64
-	FinalNoticeUsed    bool
+	SparkBalance    float64
+	Quota           tokenledger.QuotaState
+	Fatigue         int
+	SleepDebt       int
+	ReserveSpark    float64
+	ReserveStrain   int
+	DebtActive      bool
+	DebtAmount      float64
+	FinalNoticeUsed bool
 }
 
 type Request struct {
@@ -28,15 +28,15 @@ type Request struct {
 }
 
 type Decision struct {
-	Allowed            bool     `json:"allowed"`
-	AllowDebt          bool     `json:"allow_debt"`
-	ConsumesReserve    bool     `json:"consumes_reserve"`
-	Reasons            []string `json:"reasons,omitempty"`
-	RemainingSpark     float64  `json:"remaining_spark"`
-	Remaining6H        int      `json:"remaining_6h"`
-	WouldExceedQuota   bool     `json:"would_exceed_quota"`
-	WouldEnterDebt     bool     `json:"would_enter_debt"`
-	LockAfterThisCall  bool     `json:"lock_after_this_call"`
+	Allowed           bool     `json:"allowed"`
+	AllowDebt         bool     `json:"allow_debt"`
+	ConsumesReserve   bool     `json:"consumes_reserve"`
+	Reasons           []string `json:"reasons,omitempty"`
+	RemainingSpark    float64  `json:"remaining_spark"`
+	Remaining6H       int      `json:"remaining_6h"`
+	WouldExceedQuota  bool     `json:"would_exceed_quota"`
+	WouldEnterDebt    bool     `json:"would_enter_debt"`
+	LockAfterThisCall bool     `json:"lock_after_this_call"`
 }
 
 func Evaluate(state State, req Request) Decision {
@@ -63,17 +63,27 @@ func Evaluate(state State, req Request) Decision {
 	}
 
 	if req.Kind == CallKindWork {
-		if state.SparkBalance-req.SparkCost < state.ReserveSpark {
-			decision.Reasons = append(decision.Reasons, "spark_reserved_for_final_notice")
+		if state.SparkBalance <= 0 {
+			decision.Reasons = append(decision.Reasons, "spark_exhausted")
 			return decision
 		}
-		if remaining6H-req.StrainCost < state.ReserveStrain {
-			decision.Reasons = append(decision.Reasons, "quota_reserved_for_final_notice")
+		if remaining6H <= 0 {
+			decision.Reasons = append(decision.Reasons, "effective_window_exhausted")
 			return decision
 		}
 		decision.Allowed = true
 		decision.RemainingSpark = state.SparkBalance - req.SparkCost
 		decision.Remaining6H = remaining6H - req.StrainCost
+		decision.WouldEnterDebt = decision.RemainingSpark < 0
+		decision.WouldExceedQuota = decision.Remaining6H < 0
+		decision.AllowDebt = decision.WouldEnterDebt
+		decision.LockAfterThisCall = decision.WouldEnterDebt || decision.WouldExceedQuota
+		if decision.WouldEnterDebt {
+			decision.Reasons = append(decision.Reasons, "work_allowed_to_enter_debt")
+		}
+		if decision.WouldExceedQuota {
+			decision.Reasons = append(decision.Reasons, "work_allowed_to_exceed_quota")
+		}
 		return decision
 	}
 

@@ -76,8 +76,8 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare work: %v", err)
 	}
-	if workPrepared.Decision.Allowed {
-		t.Fatalf("work should still be blocked after only 2h recovery")
+	if !workPrepared.Decision.Allowed {
+		t.Fatalf("work should be allowed after debt is cleared")
 	}
 
 	engine.TickRecovery(start.Add(3 * time.Hour))
@@ -93,6 +93,67 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 	}
 	if !workPrepared.Decision.Allowed {
 		t.Fatalf("work should be allowed after sufficient recovery")
+	}
+}
+
+func TestWorkCallCanEnterDebtAndLocksFurtherWork(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{
+		TokenPolicy: tokenledger.DefaultConfig(),
+		RecoveryPolicy: recovery.Policy{
+			SparkRecoveryPerHour:  0.2,
+			StrainRecoveryPerHour: 100,
+		},
+		ReserveSpark:  0.08,
+		ReserveStrain: 300,
+	}, "amber", tokenledger.QuotaState{
+		Window6HCap:  1000,
+		Window6HUsed: 990,
+		DayCap:       5000,
+		WeekCap:      20000,
+	}, start)
+
+	_, err := engine.SparkLedger().Credit("grant", 0.001, "tight allowance", start)
+	if err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+
+	prepared, err := engine.PrepareCall(runtimeguard.CallKindWork, tokenledger.Usage{
+		InputTokens:  2000,
+		CachedTokens: 0,
+		OutputTokens: 2000,
+		Model:        "gpt-5.4",
+		FinishedAt:   start.Add(time.Minute),
+	}, tokenledger.Penalties{ToolCallCount: 1})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if !prepared.Decision.Allowed || !prepared.Decision.AllowDebt || !prepared.Decision.LockAfterThisCall {
+		t.Fatalf("expected work to be allowed into debt and then lock: %#v", prepared.Decision)
+	}
+
+	applied, err := engine.ApplyCall(prepared, tokenledger.ActivityNormalWork)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !applied.State.DebtActive {
+		t.Fatalf("expected debt after over-budget work call")
+	}
+	if applied.State.DebtAmount <= 0 {
+		t.Fatalf("expected positive debt amount")
+	}
+
+	nextPrepared, err := engine.PrepareCall(runtimeguard.CallKindWork, tokenledger.Usage{
+		InputTokens:  100,
+		OutputTokens: 50,
+		Model:        "gpt-5.4-mini",
+		FinishedAt:   start.Add(2 * time.Minute),
+	}, tokenledger.Penalties{})
+	if err != nil {
+		t.Fatalf("prepare next work: %v", err)
+	}
+	if nextPrepared.Decision.Allowed {
+		t.Fatalf("expected debt to block ordinary work")
 	}
 }
 

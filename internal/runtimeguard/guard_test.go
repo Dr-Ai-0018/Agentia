@@ -6,12 +6,12 @@ import (
 	"ai-arena/internal/tokenledger"
 )
 
-func TestBlocksWorkToPreserveFinalNoticeReserve(t *testing.T) {
+func TestAllowsWorkToConsumeReserveAndEnterDebt(t *testing.T) {
 	state := State{
-		SparkBalance: 1.0,
+		SparkBalance: 0.05,
 		Quota: tokenledger.QuotaState{
 			Window6HCap:  1000,
-			Window6HUsed: 850,
+			Window6HUsed: 990,
 		},
 		ReserveSpark:  0.2,
 		ReserveStrain: 120,
@@ -19,12 +19,15 @@ func TestBlocksWorkToPreserveFinalNoticeReserve(t *testing.T) {
 
 	got := Evaluate(state, Request{
 		Kind:       CallKindWork,
-		SparkCost:  0.9,
-		StrainCost: 50,
+		SparkCost:  0.2,
+		StrainCost: 120,
 	})
 
-	if got.Allowed {
-		t.Fatalf("expected work call to be blocked")
+	if !got.Allowed || !got.AllowDebt || !got.LockAfterThisCall {
+		t.Fatalf("expected work call to be allowed into debt and lock after call: %#v", got)
+	}
+	if !got.WouldEnterDebt || !got.WouldExceedQuota {
+		t.Fatalf("expected work call to report debt and quota overrun risk: %#v", got)
 	}
 }
 
@@ -73,6 +76,52 @@ func TestDebtBlocksFurtherWork(t *testing.T) {
 	}
 }
 
+func TestExhaustedBalanceBlocksWork(t *testing.T) {
+	state := State{
+		SparkBalance: 0,
+		Quota: tokenledger.QuotaState{
+			Window6HCap:  1000,
+			Window6HUsed: 100,
+		},
+	}
+
+	got := Evaluate(state, Request{
+		Kind:       CallKindWork,
+		SparkCost:  0.1,
+		StrainCost: 10,
+	})
+
+	if got.Allowed {
+		t.Fatalf("expected exhausted spark to block work")
+	}
+	if len(got.Reasons) != 1 || got.Reasons[0] != "spark_exhausted" {
+		t.Fatalf("unexpected reasons: %#v", got.Reasons)
+	}
+}
+
+func TestExhaustedEffectiveQuotaBlocksWork(t *testing.T) {
+	state := State{
+		SparkBalance: 1.0,
+		Quota: tokenledger.QuotaState{
+			Window6HCap:  1000,
+			Window6HUsed: 1000,
+		},
+	}
+
+	got := Evaluate(state, Request{
+		Kind:       CallKindWork,
+		SparkCost:  0.1,
+		StrainCost: 10,
+	})
+
+	if got.Allowed {
+		t.Fatalf("expected exhausted effective quota to block work")
+	}
+	if len(got.Reasons) != 1 || got.Reasons[0] != "effective_window_exhausted" {
+		t.Fatalf("unexpected reasons: %#v", got.Reasons)
+	}
+}
+
 func TestFatigueAndSleepDebtShrinkEffectiveQuota(t *testing.T) {
 	state := State{
 		SparkBalance: 5.0,
@@ -80,7 +129,7 @@ func TestFatigueAndSleepDebtShrinkEffectiveQuota(t *testing.T) {
 		SleepDebt:    12,
 		Quota: tokenledger.QuotaState{
 			Window6HCap:  10000,
-			Window6HUsed: 6200,
+			Window6HUsed: 5400,
 		},
 		ReserveSpark:  0.2,
 		ReserveStrain: 300,
@@ -96,7 +145,7 @@ func TestFatigueAndSleepDebtShrinkEffectiveQuota(t *testing.T) {
 		SparkCost:  0.2,
 		StrainCost: 900,
 	})
-	if got.Allowed {
-		t.Fatalf("expected work call to be blocked by reduced effective quota")
+	if !got.Allowed || !got.WouldExceedQuota || !got.LockAfterThisCall {
+		t.Fatalf("expected reduced effective quota to allow one overrun and then lock: %#v", got)
 	}
 }

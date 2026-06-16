@@ -116,14 +116,20 @@ func (e *Engine) ApplyCall(prepared PreparedCall, activity tokenledger.ActivityT
 	}
 
 	var entry sparkledger.Entry
-	if prepared.Kind == runtimeguard.CallKindFinalNotice {
+	if prepared.Kind == runtimeguard.CallKindFinalNotice || prepared.Decision.AllowDebt {
+		reason := fmt.Sprintf("work call via %s", prepared.Usage.Model)
+		if prepared.Kind == runtimeguard.CallKindFinalNotice {
+			reason = fmt.Sprintf("final notice via %s", prepared.Usage.Model)
+		}
 		entry, err = e.spark.DebitAllowDebt(
 			sparkledger.EntryCharge,
 			prepared.Cost.SparkCost,
-			fmt.Sprintf("final notice via %s", prepared.Usage.Model),
+			reason,
 			prepared.Usage.FinishedAt,
 		)
-		e.state.FinalNoticeUsed = true
+		if prepared.Kind == runtimeguard.CallKindFinalNotice {
+			e.state.FinalNoticeUsed = true
+		}
 	} else {
 		entry, err = e.spark.Debit(
 			sparkledger.EntryCharge,
