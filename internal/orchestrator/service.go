@@ -26,7 +26,15 @@ type Runner interface {
 	Run(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error)
 }
 
-type RunnerFactory func(client *http.Client, baseURL, apiKey string) Runner
+type errorRunner struct {
+	err error
+}
+
+func (r errorRunner) Run(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+	return newborn.FinalReport{}, r.err
+}
+
+type RunnerFactory func(client *http.Client, baseURL, apiKey, resident string) Runner
 
 type ResidentRun struct {
 	Resident string               `json:"resident"`
@@ -153,7 +161,10 @@ func New(app *broker.App, client *http.Client, baseURL, apiKey string) *Service 
 		baseURL:   strings.TrimSpace(baseURL),
 		apiKey:    strings.TrimSpace(apiKey),
 		stateRoot: ".agents/orchestrator-runs",
-		runnerFactory: func(client *http.Client, baseURL, apiKey string) Runner {
+		runnerFactory: func(client *http.Client, baseURL, apiKey, resident string) Runner {
+			if strings.TrimSpace(apiKey) == "" {
+				return errorRunner{err: fmt.Errorf("missing api key for resident: %s", strings.TrimSpace(resident))}
+			}
 			return newborn.NewRunner(client, baseURL, apiKey)
 		},
 	}
@@ -182,6 +193,17 @@ func EnvOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func ResidentAPIKey(resident, fallback string) string {
+	resident = strings.ToUpper(strings.TrimSpace(resident))
+	resident = strings.NewReplacer("-", "_", " ", "_").Replace(resident)
+	if resident != "" {
+		if value := strings.TrimSpace(os.Getenv(resident + "_OPENAI_API_KEY")); value != "" {
+			return value
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func (s *Service) Run(input RunInput) (RunSummary, error) {
@@ -400,7 +422,8 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 		s.updateResidentStatus(runStatus, statusMu, resident, "error", run.Error)
 		return run
 	}
-	runner := s.runnerFactory(s.client, s.baseURL, s.apiKey)
+	apiKey := ResidentAPIKey(profile.Name, s.apiKey)
+	runner := s.runnerFactory(s.client, s.baseURL, apiKey, profile.Name)
 	report, err := runner.Run(profile, input.Duration, input.OutDir, input.Verbose, input.ResetResident)
 	if err != nil {
 		run.Status = "error"

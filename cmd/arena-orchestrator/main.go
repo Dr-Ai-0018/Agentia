@@ -38,8 +38,8 @@ func main() {
 	modeValue := strings.ToLower(strings.TrimSpace(*mode))
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if modeValue == "run" || modeValue == "retry-failed" {
-		if apiKey == "" {
-			exitf("OPENAI_API_KEY is required")
+		if apiKey == "" && noResidentAPIKeys(orchestrator.ParseResidentRoster(*residents)) {
+			exitf("OPENAI_API_KEY or resident-specific *_OPENAI_API_KEY is required")
 		}
 		if err := os.MkdirAll(*outDir, 0o755); err != nil {
 			exitf("create out dir: %v", err)
@@ -161,4 +161,13 @@ func loadDotEnvIfPresent(path string) {
 func exitf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+func noResidentAPIKeys(residents []string) bool {
+	for _, resident := range residents {
+		if orchestrator.ResidentAPIKey(resident, "") != "" {
+			return false
+		}
+	}
+	return true
 }

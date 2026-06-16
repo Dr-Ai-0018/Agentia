@@ -15,7 +15,7 @@ func TestEndToEndControlSurfaceWithoutOpenAI(t *testing.T) {
 	app := broker.New(root)
 	service := New(app, &http.Client{}, "http://example.invalid", "")
 	service.stateRoot = filepath.Join(root, "orchestrator-runs")
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
 			return newborn.FinalReport{
 				Resident:        profile.Name,

@@ -46,7 +46,7 @@ func TestServiceRunSequential(t *testing.T) {
 	app := broker.New(t.TempDir())
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
 	runner := &fakeRunner{report: newborn.FinalReport{Rounds: 2}}
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return runner
 	}
 
@@ -78,7 +78,7 @@ func TestServiceRunParallelKeepsAllResidentStatuses(t *testing.T) {
 	app := broker.New(root)
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
 	service.stateRoot = filepath.Join(root, "orchestrator-runs")
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
 			time.Sleep(10 * time.Millisecond)
 			return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, Rounds: 1}, nil
@@ -108,11 +108,39 @@ func TestServiceRunParallelKeepsAllResidentStatuses(t *testing.T) {
 	}
 }
 
+func TestServiceUsesResidentSpecificAPIKeys(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("JADE_OPENAI_API_KEY", "jade-key")
+	t.Setenv("AMBER_OPENAI_API_KEY", "amber-key")
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "fallback-key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	seen := map[string]string{}
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
+		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+			seen[profile.Name] = apiKey
+			return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, Rounds: 1}, nil
+		})
+	}
+
+	if _, err := service.Run(RunInput{
+		Residents: []string{"jade", "amber", "onyx"},
+		Duration:  30 * time.Second,
+		OutDir:    filepath.Join(root, "out"),
+		Mode:      RunModeSequential,
+	}); err != nil {
+		t.Fatalf("run orchestrator: %v", err)
+	}
+	if seen["jade"] != "jade-key" || seen["amber"] != "amber-key" || seen["onyx"] != "fallback-key" {
+		t.Fatalf("unexpected resident api keys: %#v", seen)
+	}
+}
+
 func TestServiceRunRejectsUnknownResident(t *testing.T) {
 	app := broker.New(t.TempDir())
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
 	runner := &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return runner
 	}
 
@@ -136,7 +164,7 @@ func TestServiceRunWritesSummaryFile(t *testing.T) {
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
 	service.stateRoot = filepath.Join(root, "orchestrator-runs")
 	runner := &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return runner
 	}
 
@@ -169,7 +197,7 @@ func TestServiceReadRunStatusAndSummary(t *testing.T) {
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
 	service.stateRoot = filepath.Join(root, "orchestrator-runs")
 	runner := &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return runner
 	}
 
@@ -211,7 +239,7 @@ func TestServiceListRuns(t *testing.T) {
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
 	service.stateRoot = filepath.Join(root, "orchestrator-runs")
 	runner := &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return runner
 	}
 
@@ -245,7 +273,7 @@ func TestServiceRunIDsDoNotCollideWithinSameSecond(t *testing.T) {
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
 	service.stateRoot = filepath.Join(root, "orchestrator-runs")
 	runner := &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return runner
 	}
 
@@ -281,7 +309,7 @@ func TestPauseAndResumeRunStatus(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var calls atomic.Int32
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
 			if calls.Add(1) == 1 {
 				started <- struct{}{}
@@ -367,7 +395,7 @@ func TestRetryFailedRun(t *testing.T) {
 	service := New(app, &http.Client{}, "http://example.invalid", "key")
 	service.stateRoot = filepath.Join(root, "orchestrator-runs")
 
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
 			if profile.Name == "amber" {
 				return newborn.FinalReport{}, os.ErrInvalid
@@ -389,7 +417,7 @@ func TestRetryFailedRun(t *testing.T) {
 		t.Fatalf("expected first run id")
 	}
 
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey string) Runner {
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
 		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
 			return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, Rounds: 2}, nil
 		})
