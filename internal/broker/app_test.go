@@ -184,6 +184,42 @@ func TestAppRunQuota(t *testing.T) {
 	}
 }
 
+func TestAppRunQuotaGrant(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	if _, err := app.RunReset("jade", now); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	out, err := app.RunQuotaGrant("jade", 5000, 10000, 20000, "test long run grant")
+	if err != nil {
+		t.Fatalf("quota grant: %v", err)
+	}
+	if out.BeforeStatus.Window6HCap != 12000 {
+		t.Fatalf("unexpected before quota: %#v", out.BeforeStatus)
+	}
+	if out.AfterStatus.Window6HCap != 17000 {
+		t.Fatalf("unexpected after 6h cap: %#v", out.AfterStatus)
+	}
+	if out.AfterStatus.DayCap != out.BeforeStatus.DayCap+10000 {
+		t.Fatalf("unexpected after day cap: %#v", out.AfterStatus)
+	}
+	if out.AfterStatus.WeekCap != out.BeforeStatus.WeekCap+20000 {
+		t.Fatalf("unexpected after week cap: %#v", out.AfterStatus)
+	}
+	if out.Reason != "test long run grant" {
+		t.Fatalf("expected reason to be carried, got %q", out.Reason)
+	}
+}
+
+func TestAppRunQuotaGrantRejectsNoop(t *testing.T) {
+	app := New(t.TempDir())
+	if _, err := app.RunQuotaGrant("jade", 0, 0, 0, "noop"); err == nil {
+		t.Fatalf("expected no-op grant to fail")
+	}
+}
+
 func TestAppRunRecoverToNow(t *testing.T) {
 	app := New(t.TempDir())
 	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)

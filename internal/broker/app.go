@@ -468,6 +468,16 @@ func (a *App) RunRecoverToNowWithMode(residentID string, now time.Time, mode str
 	}, nil
 }
 
+func (a *App) RunQuotaGrant(residentID string, window6HDelta, dayDelta, weekDelta int, reason string) (brokerstate.QuotaGrantResponse, error) {
+	return a.service(false).GrantQuota(brokerstate.QuotaGrantRequest{
+		ResidentID:    residentID,
+		Window6HDelta: window6HDelta,
+		DayDelta:      dayDelta,
+		WeekDelta:     weekDelta,
+		Reason:        reason,
+	})
+}
+
 func (a *App) RunReset(residentID string, now time.Time) (ResetOutput, error) {
 	status, path, err := a.service(false).ResetResident(residentID, now)
 	if err != nil {

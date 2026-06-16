@@ -45,6 +45,26 @@ type AdmitResponse struct {
 	DeniedReason []string                 `json:"denied_reason,omitempty"`
 }
 
+type QuotaGrantRequest struct {
+	ResidentID    string `json:"resident_id"`
+	Window6HDelta int    `json:"window_6h_delta,omitempty"`
+	DayDelta      int    `json:"day_delta,omitempty"`
+	WeekDelta     int    `json:"week_delta,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+}
+
+type QuotaGrantResponse struct {
+	ResidentID       string         `json:"resident_id"`
+	Reason           string         `json:"reason,omitempty"`
+	Window6HDelta    int            `json:"window_6h_delta,omitempty"`
+	DayDelta         int            `json:"day_delta,omitempty"`
+	WeekDelta        int            `json:"week_delta,omitempty"`
+	BeforeStatus     ResidentStatus `json:"before_status"`
+	AfterStatus      ResidentStatus `json:"after_status"`
+	SnapshotPath     string         `json:"snapshot_path"`
+	SnapshotRevision uint64         `json:"snapshot_revision"`
+}
+
 func NewBrokerService(sessions *SessionManager) *BrokerService {
 	return &BrokerService{sessions: sessions}
 }
@@ -103,6 +123,36 @@ func (s *BrokerService) ResetResident(residentID string, now time.Time) (Residen
 	}
 	status := BuildResidentStatus(engine, false, path)
 	return status, path, nil
+}
+
+func (s *BrokerService) GrantQuota(req QuotaGrantRequest) (QuotaGrantResponse, error) {
+	if req.ResidentID == "" {
+		return QuotaGrantResponse{}, fmt.Errorf("resident id is required")
+	}
+	if req.Window6HDelta == 0 && req.DayDelta == 0 && req.WeekDelta == 0 {
+		return QuotaGrantResponse{}, fmt.Errorf("at least one quota delta is required")
+	}
+	engine, before, revision, err := s.sessions.LoadResidentWithRevision(req.ResidentID)
+	if err != nil {
+		return QuotaGrantResponse{}, err
+	}
+	engine.AdjustQuotaCaps(req.Window6HDelta, req.DayDelta, req.WeekDelta)
+	path, err := s.sessions.SaveResidentExpected(engine, revision, true)
+	if err != nil {
+		return QuotaGrantResponse{}, err
+	}
+	after := BuildResidentStatus(engine, true, path)
+	return QuotaGrantResponse{
+		ResidentID:       req.ResidentID,
+		Reason:           req.Reason,
+		Window6HDelta:    req.Window6HDelta,
+		DayDelta:         req.DayDelta,
+		WeekDelta:        req.WeekDelta,
+		BeforeStatus:     before,
+		AfterStatus:      after,
+		SnapshotPath:     path,
+		SnapshotRevision: revision + 1,
+	}, nil
 }
 
 func (s *BrokerService) AdmitCall(req AdmitRequest) (AdmitResponse, error) {

@@ -214,3 +214,24 @@ func TestTickRecoveryPersistsMode(t *testing.T) {
 		t.Fatalf("restored recovery mode = %s", restored.State().RecoveryMode)
 	}
 }
+
+func TestAdjustQuotaCaps(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{}, "jade", tokenledger.QuotaState{
+		Window6HCap: 4000,
+		DayCap:      20000,
+		WeekCap:     150000,
+	}, start)
+
+	engine.AdjustQuotaCaps(1000, 2000, -50000)
+	state := engine.State()
+	if state.Quota.Window6HCap != 5000 || state.Quota.DayCap != 22000 || state.Quota.WeekCap != 100000 {
+		t.Fatalf("unexpected adjusted quota: %#v", state.Quota)
+	}
+
+	engine.AdjustQuotaCaps(-10000, -100000, -100000)
+	state = engine.State()
+	if state.Quota.Window6HCap != 0 || state.Quota.DayCap != 0 || state.Quota.WeekCap != 0 {
+		t.Fatalf("quota caps should not go below zero: %#v", state.Quota)
+	}
+}

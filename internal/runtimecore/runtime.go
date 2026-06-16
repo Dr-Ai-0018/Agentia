@@ -197,6 +197,12 @@ func (e *Engine) SetRecoveryMode(mode string) {
 	e.state.RecoveryMode = normalizeRecoveryMode(mode)
 }
 
+func (e *Engine) AdjustQuotaCaps(window6HDelta, dayDelta, weekDelta int) {
+	e.state.Quota.Window6HCap = maxInt(0, e.state.Quota.Window6HCap+window6HDelta)
+	e.state.Quota.DayCap = maxInt(0, e.state.Quota.DayCap+dayDelta)
+	e.state.Quota.WeekCap = maxInt(0, e.state.Quota.WeekCap+weekDelta)
+}
+
 func normalizeRecoveryMode(mode string) string {
 	switch mode {
 	case "rest", "idle", "normal", "deep":
