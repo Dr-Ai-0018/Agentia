@@ -1,21 +1,25 @@
 package broker
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuildHostDecisionAssist(t *testing.T) {
 	out := BuildHostDecisionAssist(HostInspectSummary{
-		CollectedAt:                  "2026-06-12T03:00:00Z",
-		InventoryPath:                ".agents/inventory/incus-inventory.json",
-		Capacity:                     HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "memory", AllocatableTotal: 8192, AllocatableFree: 0, Unit: "MiB"}}},
-		ResidentsWithDrift:           1,
-		ResidentsMissingInventory:    1,
-		PendingChatResidents:         1,
-		OpenTicketResidents:          1,
-		InterventionCount:            1,
-		MemoryResidentsAttention:     1,
-		MemoryItemsAttention:         2,
-		MemoryMaintenanceResidents:   1,
-		MemoryDuplicateHistoryGroups: 3,
+		CollectedAt:                       "2026-06-12T03:00:00Z",
+		InventoryPath:                     ".agents/inventory/incus-inventory.json",
+		Capacity:                          HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "memory", AllocatableTotal: 8192, AllocatableFree: 0, Unit: "MiB"}}},
+		ResidentsWithDrift:                1,
+		ResidentsMissingInventory:         1,
+		PendingChatResidents:              1,
+		OpenTicketResidents:               1,
+		InterventionCount:                 1,
+		MemoryResidentsAttention:          1,
+		MemoryItemsAttention:              2,
+		MemoryMaintenanceResidents:        1,
+		MemoryDuplicateHistoryGroups:      3,
+		RuntimeMemoryObservationResidents: 1,
 		LatestOrchestrator: &OrchestratorInspectionDigest{
 			RunID:             "orchestrator-20260616T082449.311075354Z",
 			ResidentsErrored:  1,
@@ -24,7 +28,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 		RecentRunsNeedingAttention: 2,
 		ResidentRisk: []ResidentInspectRisk{
 			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, MemoryAttention: 2, MemoryDuplicateHistoryGroups: 3, MemoryRecommendedAction: "lifecycle_then_compaction_dry_run", OrchestratorBudgetBlocked: true, OrchestratorStoppedReason: "broker_preflight_denied: effective_window_exhausted", NeedsAttention: true, Status: "Running"},
-			{ResidentID: "onyx", NeedsAttention: true, Status: ""},
+			{ResidentID: "onyx", NeedsAttention: true, Status: "", HostRSSHighGuestUsageLow: true, HostQEMURSSMiB: 2225, IncusMemoryCurrentMiB: 134, GuestMemAvailableMiB: 1806},
 		},
 	})
 	if out.Severity != "high" {
@@ -43,6 +47,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	foundMemoryCompactionAction := false
 	foundOrchestratorBudgetAction := false
 	foundOrchestratorFailureAction := false
+	foundRuntimeMemoryAction := false
 	for _, action := range out.Actions {
 		if action.Kind == "memory_lifecycle_review" {
 			foundMemoryLifecycleAction = true
@@ -56,6 +61,9 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 		if action.Kind == "orchestrator_failure_review" {
 			foundOrchestratorFailureAction = true
 		}
+		if action.Kind == "runtime_memory_observation" {
+			foundRuntimeMemoryAction = true
+		}
 	}
 	if !foundMemoryLifecycleAction {
 		t.Fatalf("expected memory lifecycle action, got %#v", out.Actions)
@@ -68,5 +76,24 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	}
 	if !foundOrchestratorFailureAction {
 		t.Fatalf("expected orchestrator failure action, got %#v", out.Actions)
+	}
+	if !foundRuntimeMemoryAction {
+		t.Fatalf("expected runtime memory observation action, got %#v", out.Actions)
+	}
+	var onyx ResidentDecisionFocus
+	for _, focus := range out.ResidentFocus {
+		if focus.ResidentID == "onyx" {
+			onyx = focus
+			break
+		}
+	}
+	foundOnyxRuntimeReason := false
+	for _, reason := range onyx.Reasons {
+		if strings.Contains(reason, "host QEMU RSS") {
+			foundOnyxRuntimeReason = true
+		}
+	}
+	if !foundOnyxRuntimeReason {
+		t.Fatalf("expected onyx runtime memory reason, got %#v", onyx)
 	}
 }

@@ -106,11 +106,21 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			ResidentID:                   item.ResidentID,
 			Status:                       item.Status,
 			DriftFields:                  append([]string(nil), item.DriftFields...),
+			HostRSSHighGuestUsageLow:     item.HostRSSHighGuestUsageLow,
+			HostQEMURSSMiB:               item.HostQEMURSSMiB,
+			IncusMemoryCurrentMiB:        item.IncusMemoryCurrentMiB,
+			GuestMemAvailableMiB:         item.GuestMemAvailableMiB,
+			GuestBuffCacheMiB:            item.GuestBuffCacheMiB,
+			GuestTopMemoryProcess:        item.GuestTopMemoryProcess,
+			LiveMetricsError:             item.LiveMetricsError,
 			HasPendingChat:               hasResident(pendingChat, item.ResidentID),
 			HasOpenTicket:                hasResident(openTicket, item.ResidentID),
 			HasIntervention:              hasResident(openIntervention, item.ResidentID),
 			MemoryAttention:              memoryAttention[item.ResidentID],
 			MemoryDuplicateHistoryGroups: memoryDuplicateGroups[item.ResidentID],
+		}
+		if item.HostRSSHighGuestUsageLow {
+			summary.RuntimeMemoryObservationResidents++
 		}
 		if recommendation, ok := memoryRecommendation[item.ResidentID]; ok {
 			risk.MemoryRecommendedAction = recommendation.RecommendedAction
@@ -137,6 +147,8 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			risk.HasIntervention ||
 			risk.MemoryAttention > 0 ||
 			risk.MemoryDuplicateHistoryGroups > 0 ||
+			risk.HostRSSHighGuestUsageLow ||
+			strings.TrimSpace(risk.LiveMetricsError) != "" ||
 			risk.OrchestratorBudgetBlocked ||
 			strings.TrimSpace(risk.OrchestratorError) != "" ||
 			strings.EqualFold(strings.TrimSpace(risk.OrchestratorStatus), "error") ||

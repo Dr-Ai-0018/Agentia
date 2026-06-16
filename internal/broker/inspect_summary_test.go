@@ -17,7 +17,7 @@ func TestSummarizeHostInspect(t *testing.T) {
 		ResidentFacts: []ResidentRuntimeFact{
 			{ResidentID: "jade", Status: "Running"},
 			{ResidentID: "amber", Status: "Running", DriftFields: []string{"memory"}},
-			{ResidentID: "onyx", Status: ""},
+			{ResidentID: "onyx", Status: "", HostRSSHighGuestUsageLow: true, HostQEMURSSMiB: 2225, IncusMemoryCurrentMiB: 134, GuestMemAvailableMiB: 1806, GuestBuffCacheMiB: 52, GuestTopMemoryProcess: "608 incus-agent 21784"},
 		},
 		Memory: []memory.LifecycleReport{
 			{Resident: "amber", NeedsAttention: 2},
@@ -57,6 +57,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if summary.ResidentsMissingInventory != 1 {
 		t.Fatalf("unexpected missing inventory count: %#v", summary)
+	}
+	if summary.RuntimeMemoryObservationResidents != 1 {
+		t.Fatalf("expected one runtime memory observation, got %#v", summary)
 	}
 	if summary.PendingChatResidents != 1 || summary.OpenTicketResidents != 1 || summary.InterventionCount != 1 {
 		t.Fatalf("unexpected followup aggregation: %#v", summary)
@@ -106,5 +109,8 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if onyx.OrchestratorError == "" {
 		t.Fatalf("expected onyx orchestrator error, got %#v", onyx)
+	}
+	if !onyx.HostRSSHighGuestUsageLow || onyx.HostQEMURSSMiB != 2225 || onyx.GuestTopMemoryProcess == "" {
+		t.Fatalf("expected onyx runtime memory observation, got %#v", onyx)
 	}
 }

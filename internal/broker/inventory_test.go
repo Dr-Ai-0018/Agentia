@@ -273,7 +273,7 @@ func TestBuildResidentRuntimeFactsMarksDrift(t *testing.T) {
 				UpdatedAt:      now.Format(time.RFC3339),
 			},
 		},
-	})
+	}, nil)
 	var amber ResidentRuntimeFact
 	for _, item := range facts {
 		if item.ResidentID == "amber" {
@@ -286,6 +286,64 @@ func TestBuildResidentRuntimeFactsMarksDrift(t *testing.T) {
 	}
 	if !slices.Equal(amber.DriftFields, []string{"vcpu", "memory", "disk"}) {
 		t.Fatalf("expected full drift markers, got %#v", amber.DriftFields)
+	}
+}
+
+func TestBuildResidentRuntimeFactsMergesLiveMemoryMetrics(t *testing.T) {
+	cfg := DefaultConfig(t.TempDir())
+	now := time.Date(2026, 6, 12, 3, 0, 0, 0, time.UTC)
+	facts := BuildResidentRuntimeFacts(cfg, InventorySnapshot{
+		CollectedAt: now.Format(time.RFC3339),
+		Residents: []ResidentInventoryFact{
+			{
+				ResidentID:     "onyx",
+				InstanceName:   "onyx",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           1,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        12,
+				UpdatedAt:      now.Format(time.RFC3339),
+			},
+		},
+	}, map[string]ResidentLiveRuntimeFact{
+		"onyx": {
+			ResidentID:            "onyx",
+			InstanceName:          "onyx",
+			HostQEMUPID:           4046624,
+			HostQEMURSSMiB:        2225,
+			IncusMemoryCurrentMiB: 134,
+			GuestMemAvailableMiB:  1806,
+			GuestMemFreeMiB:       1863,
+			GuestBuffCacheMiB:     52,
+			GuestTopMemoryProcess: "608 incus-agent 21784",
+		},
+	})
+
+	var onyx ResidentRuntimeFact
+	for _, item := range facts {
+		if item.ResidentID == "onyx" {
+			onyx = item
+			break
+		}
+	}
+	if !onyx.HostRSSHighGuestUsageLow {
+		t.Fatalf("expected host RSS high / guest usage low classification, got %#v", onyx)
+	}
+	if onyx.HostQEMURSSMiB != 2225 || onyx.IncusMemoryCurrentMiB != 134 || onyx.GuestMemAvailableMiB != 1806 {
+		t.Fatalf("expected live memory metrics to merge, got %#v", onyx)
+	}
+}
+
+func TestParseGuestMeminfo(t *testing.T) {
+	got := parseGuestMeminfo(`MemTotal:        2000684 kB
+MemFree:         1863408 kB
+MemAvailable:    1806096 kB
+Buffers:            2556 kB
+Cached:            45564 kB
+`)
+	if got.MemAvailableMiB != 1763 || got.MemFreeMiB != 1819 || got.BuffCacheMiB != 46 {
+		t.Fatalf("unexpected parsed meminfo: %#v", got)
 	}
 }
 
@@ -334,5 +392,53 @@ func TestRefreshInventorySnapshotUsesInjectedCollectorAndSaver(t *testing.T) {
 	}
 	if path == "" || snapshot.CollectedAt != now.Format(time.RFC3339) {
 		t.Fatalf("unexpected refresh result: path=%q snapshot=%#v", path, snapshot)
+	}
+}
+
+func TestRunHostInspectUsesInjectedLiveRuntimeCollector(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	now := time.Date(2026, 6, 12, 6, 0, 0, 0, time.UTC)
+	app.inventoryCollector = func(cfg Config, got time.Time) (InventorySnapshot, error) {
+		return InventorySnapshot{
+			CollectedAt: now.Format(time.RFC3339),
+			Residents: []ResidentInventoryFact{{
+				ResidentID:     "onyx",
+				InstanceName:   "onyx",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           1,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        12,
+				UpdatedAt:      now.Format(time.RFC3339),
+			}},
+		}, nil
+	}
+	app.liveRuntimeCollector = func(cfg Config) map[string]ResidentLiveRuntimeFact {
+		return map[string]ResidentLiveRuntimeFact{
+			"onyx": {
+				ResidentID:            "onyx",
+				InstanceName:          "onyx",
+				HostQEMUPID:           4046624,
+				HostQEMURSSMiB:        2225,
+				IncusMemoryCurrentMiB: 134,
+				GuestMemAvailableMiB:  1806,
+			},
+		}
+	}
+
+	out, err := app.RunHostInspect(5)
+	if err != nil {
+		t.Fatalf("run host inspect: %v", err)
+	}
+	var onyx ResidentRuntimeFact
+	for _, item := range out.ResidentFacts {
+		if item.ResidentID == "onyx" {
+			onyx = item
+			break
+		}
+	}
+	if !onyx.HostRSSHighGuestUsageLow {
+		t.Fatalf("expected live runtime metrics on onyx fact, got %#v", onyx)
 	}
 }

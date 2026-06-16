@@ -99,6 +99,15 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 			Summary:  "Run memory compaction dry-runs and apply only when the before/after report is acceptable.",
 		})
 	}
+	if summary.RuntimeMemoryObservationResidents > 0 {
+		raiseSeverity(&out, "medium")
+		out.Reasons = append(out.Reasons, fmt.Sprintf("%d residents have high host QEMU RSS while guest memory usage appears low", summary.RuntimeMemoryObservationResidents))
+		out.Actions = append(out.Actions, HostSuggestedAction{
+			Kind:     "runtime_memory_observation",
+			Priority: "medium",
+			Summary:  "Do not treat host QEMU RSS alone as guest pressure; compare Incus state and guest memory before planning any maintenance restart.",
+		})
+	}
 	if summary.LatestOrchestrator != nil {
 		latest := summary.LatestOrchestrator
 		if latest.ResidentsErrored > 0 {
@@ -157,6 +166,12 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		if item.MemoryRecommendedAction != "" {
 			focus.Reasons = append(focus.Reasons, fmt.Sprintf("memory recommendation: %s", item.MemoryRecommendedAction))
 		}
+		if item.HostRSSHighGuestUsageLow {
+			focus.Reasons = append(focus.Reasons, fmt.Sprintf("host QEMU RSS %dMiB is high while Incus guest memory is %dMiB and guest available memory is %dMiB; observe unless host memory pressure rises or plan maintenance restart", item.HostQEMURSSMiB, item.IncusMemoryCurrentMiB, item.GuestMemAvailableMiB))
+		}
+		if item.LiveMetricsError != "" {
+			focus.Reasons = append(focus.Reasons, fmt.Sprintf("live runtime metrics incomplete: %s", item.LiveMetricsError))
+		}
 		if item.OrchestratorBudgetBlocked {
 			focus.Reasons = append(focus.Reasons, "latest orchestrator run was budget-blocked")
 		}
@@ -196,6 +211,9 @@ func residentPriority(item ResidentInspectRisk) string {
 		return "medium"
 	}
 	if item.OrchestratorBudgetBlocked || item.OrchestratorError != "" {
+		return "medium"
+	}
+	if item.HostRSSHighGuestUsageLow || item.LiveMetricsError != "" {
 		return "medium"
 	}
 	return "normal"

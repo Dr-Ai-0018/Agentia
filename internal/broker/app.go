@@ -76,34 +76,42 @@ type ResidentMemoryMaintenance struct {
 }
 
 type HostInspectSummary struct {
-	CollectedAt                  string                         `json:"collected_at"`
-	InventoryPath                string                         `json:"inventory_path,omitempty"`
-	Capacity                     HostCapacityReport             `json:"capacity"`
-	ResidentCount                int                            `json:"resident_count"`
-	ResidentsRunning             int                            `json:"residents_running"`
-	ResidentsWithDrift           int                            `json:"residents_with_drift"`
-	ResidentsMissingInventory    int                            `json:"residents_missing_inventory"`
-	PendingChatResidents         int                            `json:"pending_chat_residents"`
-	OpenTicketResidents          int                            `json:"open_ticket_residents"`
-	OpenTicketCount              int                            `json:"open_ticket_count"`
-	MemoryResidentsAttention     int                            `json:"memory_residents_attention"`
-	MemoryItemsAttention         int                            `json:"memory_items_attention"`
-	MemoryMaintenanceResidents   int                            `json:"memory_maintenance_residents,omitempty"`
-	MemoryDuplicateHistoryGroups int                            `json:"memory_duplicate_history_groups,omitempty"`
-	LatestOrchestrator           *OrchestratorInspectionDigest  `json:"latest_orchestrator,omitempty"`
-	RecentOrchestrators          []OrchestratorInspectionDigest `json:"recent_orchestrators,omitempty"`
-	RecentRunsNeedingAttention   int                            `json:"recent_runs_needing_attention,omitempty"`
-	LatestRunNeedsAttention      bool                           `json:"latest_run_needs_attention,omitempty"`
-	FollowupCount                int                            `json:"followup_count"`
-	InterventionCount            int                            `json:"intervention_count"`
-	TopFollowups                 []worldstate.HostFollowup      `json:"top_followups"`
-	ResidentRisk                 []ResidentInspectRisk          `json:"resident_risk"`
+	CollectedAt                       string                         `json:"collected_at"`
+	InventoryPath                     string                         `json:"inventory_path,omitempty"`
+	Capacity                          HostCapacityReport             `json:"capacity"`
+	ResidentCount                     int                            `json:"resident_count"`
+	ResidentsRunning                  int                            `json:"residents_running"`
+	ResidentsWithDrift                int                            `json:"residents_with_drift"`
+	ResidentsMissingInventory         int                            `json:"residents_missing_inventory"`
+	RuntimeMemoryObservationResidents int                            `json:"runtime_memory_observation_residents,omitempty"`
+	PendingChatResidents              int                            `json:"pending_chat_residents"`
+	OpenTicketResidents               int                            `json:"open_ticket_residents"`
+	OpenTicketCount                   int                            `json:"open_ticket_count"`
+	MemoryResidentsAttention          int                            `json:"memory_residents_attention"`
+	MemoryItemsAttention              int                            `json:"memory_items_attention"`
+	MemoryMaintenanceResidents        int                            `json:"memory_maintenance_residents,omitempty"`
+	MemoryDuplicateHistoryGroups      int                            `json:"memory_duplicate_history_groups,omitempty"`
+	LatestOrchestrator                *OrchestratorInspectionDigest  `json:"latest_orchestrator,omitempty"`
+	RecentOrchestrators               []OrchestratorInspectionDigest `json:"recent_orchestrators,omitempty"`
+	RecentRunsNeedingAttention        int                            `json:"recent_runs_needing_attention,omitempty"`
+	LatestRunNeedsAttention           bool                           `json:"latest_run_needs_attention,omitempty"`
+	FollowupCount                     int                            `json:"followup_count"`
+	InterventionCount                 int                            `json:"intervention_count"`
+	TopFollowups                      []worldstate.HostFollowup      `json:"top_followups"`
+	ResidentRisk                      []ResidentInspectRisk          `json:"resident_risk"`
 }
 
 type ResidentInspectRisk struct {
 	ResidentID                   string   `json:"resident_id"`
 	Status                       string   `json:"status,omitempty"`
 	DriftFields                  []string `json:"drift_fields,omitempty"`
+	HostRSSHighGuestUsageLow     bool     `json:"host_rss_high_guest_usage_low,omitempty"`
+	HostQEMURSSMiB               int64    `json:"host_qemu_rss_mib,omitempty"`
+	IncusMemoryCurrentMiB        int64    `json:"incus_memory_current_mib,omitempty"`
+	GuestMemAvailableMiB         int64    `json:"guest_mem_available_mib,omitempty"`
+	GuestBuffCacheMiB            int64    `json:"guest_buff_cache_mib,omitempty"`
+	GuestTopMemoryProcess        string   `json:"guest_top_memory_process,omitempty"`
+	LiveMetricsError             string   `json:"live_metrics_error,omitempty"`
 	HasPendingChat               bool     `json:"has_pending_chat"`
 	HasOpenTicket                bool     `json:"has_open_ticket"`
 	HasIntervention              bool     `json:"has_intervention"`
@@ -150,21 +158,23 @@ type CallSpec struct {
 }
 
 type App struct {
-	root               string
-	cfg                Config
-	registry           *ResidentRegistry
-	inventoryCollector func(Config, time.Time) (InventorySnapshot, error)
-	inventorySaver     func(string, InventorySnapshot) (string, error)
+	root                 string
+	cfg                  Config
+	registry             *ResidentRegistry
+	inventoryCollector   func(Config, time.Time) (InventorySnapshot, error)
+	inventorySaver       func(string, InventorySnapshot) (string, error)
+	liveRuntimeCollector func(Config) map[string]ResidentLiveRuntimeFact
 }
 
 func New(root string) *App {
 	cfg := DefaultConfig(root)
 	return &App{
-		root:               root,
-		cfg:                cfg,
-		registry:           NewResidentRegistry(cfg.Residents),
-		inventoryCollector: CollectInventorySnapshot,
-		inventorySaver:     SaveInventorySnapshot,
+		root:                 root,
+		cfg:                  cfg,
+		registry:             NewResidentRegistry(cfg.Residents),
+		inventoryCollector:   CollectInventorySnapshot,
+		inventorySaver:       SaveInventorySnapshot,
+		liveRuntimeCollector: CollectResidentLiveRuntimeFacts,
 	}
 }
 
@@ -291,10 +301,14 @@ func (a *App) RunHostInspect(limit int) (HostInspectOutput, error) {
 		return HostInspectOutput{}, err
 	}
 	latestRun := latestOrchestrator(recentRuns)
+	liveFacts := map[string]ResidentLiveRuntimeFact{}
+	if a.liveRuntimeCollector != nil {
+		liveFacts = a.liveRuntimeCollector(a.cfg)
+	}
 	return HostInspectOutput{
 		Capacity:            capacity,
 		Inventory:           snapshot,
-		ResidentFacts:       BuildResidentRuntimeFacts(a.cfg, snapshot),
+		ResidentFacts:       BuildResidentRuntimeFacts(a.cfg, snapshot, liveFacts),
 		LatestOrchestrator:  latestRun,
 		RecentOrchestrators: recentRuns,
 		Memory:              a.buildMemoryLifecycleReports(),
@@ -364,7 +378,7 @@ func (a *App) RunHostInspectFromSnapshot(limit int) (HostInspectOutput, error) {
 	return HostInspectOutput{
 		Capacity:            capacity,
 		Inventory:           snapshot,
-		ResidentFacts:       BuildResidentRuntimeFacts(a.cfg, snapshot),
+		ResidentFacts:       BuildResidentRuntimeFacts(a.cfg, snapshot, nil),
 		LatestOrchestrator:  latestRun,
 		RecentOrchestrators: recentRuns,
 		Memory:              a.buildMemoryLifecycleReports(),
