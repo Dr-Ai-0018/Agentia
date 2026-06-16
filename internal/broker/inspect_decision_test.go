@@ -16,8 +16,13 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 		MemoryItemsAttention:         2,
 		MemoryMaintenanceResidents:   1,
 		MemoryDuplicateHistoryGroups: 3,
+		LatestOrchestrator: &LatestOrchestratorInspection{
+			RunID:             "orchestrator-20260616T082449.311075354Z",
+			ResidentsErrored:  1,
+			BudgetBlockedRuns: 1,
+		},
 		ResidentRisk: []ResidentInspectRisk{
-			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, MemoryAttention: 2, MemoryDuplicateHistoryGroups: 3, NeedsAttention: true, Status: "Running"},
+			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, MemoryAttention: 2, MemoryDuplicateHistoryGroups: 3, OrchestratorBudgetBlocked: true, OrchestratorStoppedReason: "broker_preflight_denied: effective_window_exhausted", NeedsAttention: true, Status: "Running"},
 			{ResidentID: "onyx", NeedsAttention: true, Status: ""},
 		},
 	})
@@ -35,6 +40,8 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	}
 	foundMemoryLifecycleAction := false
 	foundMemoryCompactionAction := false
+	foundOrchestratorBudgetAction := false
+	foundOrchestratorFailureAction := false
 	for _, action := range out.Actions {
 		if action.Kind == "memory_lifecycle_review" {
 			foundMemoryLifecycleAction = true
@@ -42,11 +49,23 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 		if action.Kind == "memory_compaction_review" {
 			foundMemoryCompactionAction = true
 		}
+		if action.Kind == "runtime_budget_review" {
+			foundOrchestratorBudgetAction = true
+		}
+		if action.Kind == "orchestrator_failure_review" {
+			foundOrchestratorFailureAction = true
+		}
 	}
 	if !foundMemoryLifecycleAction {
 		t.Fatalf("expected memory lifecycle action, got %#v", out.Actions)
 	}
 	if !foundMemoryCompactionAction {
 		t.Fatalf("expected memory compaction action, got %#v", out.Actions)
+	}
+	if !foundOrchestratorBudgetAction {
+		t.Fatalf("expected orchestrator budget action, got %#v", out.Actions)
+	}
+	if !foundOrchestratorFailureAction {
+		t.Fatalf("expected orchestrator failure action, got %#v", out.Actions)
 	}
 }

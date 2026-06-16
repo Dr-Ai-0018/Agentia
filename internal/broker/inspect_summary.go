@@ -18,12 +18,27 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	if len(summary.TopFollowups) > 5 {
 		summary.TopFollowups = summary.TopFollowups[:5]
 	}
+	if out.LatestOrchestrator != nil {
+		latest := *out.LatestOrchestrator
+		latest.Residents = append([]LatestOrchestratorResidentInspection(nil), out.LatestOrchestrator.Residents...)
+		latest.ResidentsPlanned = append([]string(nil), out.LatestOrchestrator.ResidentsPlanned...)
+		summary.LatestOrchestrator = &latest
+		summary.LatestRunNeedsAttention = latest.ResidentsErrored > 0 || latest.BudgetBlockedRuns > 0
+	}
 
 	pendingChat := map[string]struct{}{}
 	openTicket := map[string]struct{}{}
 	openIntervention := map[string]struct{}{}
 	memoryAttention := map[string]int{}
 	memoryDuplicateGroups := map[string]int{}
+	orchestratorByResident := map[string]LatestOrchestratorResidentInspection{}
+	if out.LatestOrchestrator != nil {
+		for _, item := range out.LatestOrchestrator.Residents {
+			if strings.TrimSpace(item.Resident) != "" {
+				orchestratorByResident[item.Resident] = item
+			}
+		}
+	}
 	for _, item := range out.Memory {
 		if item.NeedsAttention <= 0 {
 			continue
@@ -84,6 +99,12 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			MemoryAttention:              memoryAttention[item.ResidentID],
 			MemoryDuplicateHistoryGroups: memoryDuplicateGroups[item.ResidentID],
 		}
+		if run, ok := orchestratorByResident[item.ResidentID]; ok {
+			risk.OrchestratorStatus = run.Status
+			risk.OrchestratorStoppedReason = run.StoppedReason
+			risk.OrchestratorBudgetBlocked = run.BudgetBlocked
+			risk.OrchestratorError = run.Error
+		}
 		if strings.EqualFold(strings.TrimSpace(item.Status), "running") {
 			summary.ResidentsRunning++
 		}
@@ -93,7 +114,16 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 		if strings.TrimSpace(item.Status) == "" {
 			summary.ResidentsMissingInventory++
 		}
-		risk.NeedsAttention = len(risk.DriftFields) > 0 || risk.HasPendingChat || risk.HasOpenTicket || risk.HasIntervention || risk.MemoryAttention > 0 || risk.MemoryDuplicateHistoryGroups > 0 || strings.TrimSpace(item.Status) == ""
+		risk.NeedsAttention = len(risk.DriftFields) > 0 ||
+			risk.HasPendingChat ||
+			risk.HasOpenTicket ||
+			risk.HasIntervention ||
+			risk.MemoryAttention > 0 ||
+			risk.MemoryDuplicateHistoryGroups > 0 ||
+			risk.OrchestratorBudgetBlocked ||
+			strings.TrimSpace(risk.OrchestratorError) != "" ||
+			strings.EqualFold(strings.TrimSpace(risk.OrchestratorStatus), "error") ||
+			strings.TrimSpace(item.Status) == ""
 		risks = append(risks, risk)
 	}
 	summary.ResidentRisk = risks

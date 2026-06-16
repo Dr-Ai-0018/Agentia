@@ -99,6 +99,27 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 			Summary:  "Run memory compaction dry-runs and apply only when the before/after report is acceptable.",
 		})
 	}
+	if summary.LatestOrchestrator != nil {
+		latest := summary.LatestOrchestrator
+		if latest.ResidentsErrored > 0 {
+			raiseSeverity(&out, "medium")
+			out.Reasons = append(out.Reasons, fmt.Sprintf("latest orchestrator run %s has %d errored residents", latest.RunID, latest.ResidentsErrored))
+			out.Actions = append(out.Actions, HostSuggestedAction{
+				Kind:     "orchestrator_failure_review",
+				Priority: "medium",
+				Summary:  "Review latest orchestrator errors and use retry-failed only after the failure cause is understood.",
+			})
+		}
+		if latest.BudgetBlockedRuns > 0 {
+			raiseSeverity(&out, "medium")
+			out.Reasons = append(out.Reasons, fmt.Sprintf("latest orchestrator run %s ended with %d budget-blocked residents", latest.RunID, latest.BudgetBlockedRuns))
+			out.Actions = append(out.Actions, HostSuggestedAction{
+				Kind:     "runtime_budget_review",
+				Priority: "medium",
+				Summary:  "Review resident quota, spark, debt, and recovery state before starting another long run.",
+			})
+		}
+	}
 
 	for _, item := range summary.ResidentRisk {
 		if !item.NeedsAttention {
@@ -129,6 +150,15 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		if item.MemoryDuplicateHistoryGroups > 0 {
 			focus.Reasons = append(focus.Reasons, fmt.Sprintf("%d duplicate memory history groups can be compacted", item.MemoryDuplicateHistoryGroups))
 		}
+		if item.OrchestratorBudgetBlocked {
+			focus.Reasons = append(focus.Reasons, "latest orchestrator run was budget-blocked")
+		}
+		if item.OrchestratorStoppedReason != "" {
+			focus.Reasons = append(focus.Reasons, fmt.Sprintf("latest orchestrator stopped: %s", item.OrchestratorStoppedReason))
+		}
+		if item.OrchestratorError != "" {
+			focus.Reasons = append(focus.Reasons, fmt.Sprintf("latest orchestrator error: %s", item.OrchestratorError))
+		}
 		out.ResidentFocus = append(out.ResidentFocus, focus)
 	}
 
@@ -156,6 +186,9 @@ func residentPriority(item ResidentInspectRisk) string {
 		return "high"
 	}
 	if len(item.DriftFields) > 0 || item.HasIntervention {
+		return "medium"
+	}
+	if item.OrchestratorBudgetBlocked || item.OrchestratorError != "" {
 		return "medium"
 	}
 	return "normal"

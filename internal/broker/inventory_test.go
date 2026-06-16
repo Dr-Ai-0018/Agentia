@@ -135,6 +135,17 @@ func TestRunHostInspectAggregatesWorldState(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save inventory snapshot: %v", err)
 	}
+	writeTestOrchestratorInspection(t, root, `{
+		"run_id": "orchestrator-20260616T082449.311075354Z",
+		"mode": "parallel",
+		"residents_finished": 3,
+		"residents_errored": 0,
+		"useful_runs": 3,
+		"budget_blocked_runs": 1,
+		"residents": [
+			{"resident":"amber","status":"ok","rounds":2,"stopped_reason":"broker_preflight_denied: effective_window_exhausted","budget_blocked":true}
+		]
+	}`)
 
 	out, err := app.RunHostInspectFromSnapshot(10)
 	if err != nil {
@@ -151,6 +162,9 @@ func TestRunHostInspectAggregatesWorldState(t *testing.T) {
 	}
 	if len(out.ResidentFacts) != 3 {
 		t.Fatalf("expected runtime facts for default residents, got %d", len(out.ResidentFacts))
+	}
+	if out.LatestOrchestrator == nil || out.LatestOrchestrator.BudgetBlockedRuns != 1 {
+		t.Fatalf("expected latest orchestrator report, got %#v", out.LatestOrchestrator)
 	}
 	var amber ResidentRuntimeFact
 	for _, item := range out.ResidentFacts {
@@ -197,6 +211,14 @@ func TestRunHostInspectSummaryFromSnapshot(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save inventory snapshot: %v", err)
 	}
+	writeTestOrchestratorInspection(t, root, `{
+		"run_id": "orchestrator-20260616T082449.311075354Z",
+		"residents_errored": 1,
+		"budget_blocked_runs": 1,
+		"residents": [
+			{"resident":"amber","status":"error","error":"runner failed","budget_blocked":true}
+		]
+	}`)
 
 	out, err := app.RunHostInspectSummaryFromSnapshot(10)
 	if err != nil {
@@ -210,6 +232,20 @@ func TestRunHostInspectSummaryFromSnapshot(t *testing.T) {
 	}
 	if out.ResidentsWithDrift == 0 {
 		t.Fatalf("expected drift to be detected from snapshot: %#v", out)
+	}
+	if out.LatestOrchestrator == nil || !out.LatestRunNeedsAttention {
+		t.Fatalf("expected latest orchestrator attention in summary: %#v", out)
+	}
+}
+
+func writeTestOrchestratorInspection(t *testing.T, root, report string) {
+	t.Helper()
+	dir := filepath.Join(root, "orchestrator-runs", "orchestrator-20260616T082449.311075354Z")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir orchestrator report dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "inspection-report.json"), []byte(report), 0o644); err != nil {
+		t.Fatalf("write orchestrator report: %v", err)
 	}
 }
 

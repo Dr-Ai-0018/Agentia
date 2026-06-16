@@ -25,6 +25,15 @@ func TestSummarizeHostInspect(t *testing.T) {
 		MemoryMaintenance: []ResidentMemoryMaintenance{
 			{ResidentID: "amber", LifecycleAttention: 2, DuplicateHistoryGroups: 3, NeedsAttention: true},
 		},
+		LatestOrchestrator: &LatestOrchestratorInspection{
+			RunID:             "orchestrator-20260616T082449.311075354Z",
+			ResidentsErrored:  1,
+			BudgetBlockedRuns: 1,
+			Residents: []LatestOrchestratorResidentInspection{
+				{Resident: "amber", Status: "ok", StoppedReason: "broker_preflight_denied: effective_window_exhausted", BudgetBlocked: true},
+				{Resident: "onyx", Status: "error", Error: "model parse failure"},
+			},
+		},
 		Followups: []worldstate.HostFollowup{
 			{Kind: "chat_reply", Resident: "jade"},
 			{Kind: "ticket_reply", Resident: "amber"},
@@ -60,11 +69,20 @@ func TestSummarizeHostInspect(t *testing.T) {
 	if summary.MemoryMaintenanceResidents != 1 || summary.MemoryDuplicateHistoryGroups != 3 {
 		t.Fatalf("unexpected memory maintenance summary: %#v", summary)
 	}
+	if summary.LatestOrchestrator == nil || summary.LatestOrchestrator.RunID == "" {
+		t.Fatalf("expected latest orchestrator report in summary: %#v", summary)
+	}
+	if !summary.LatestRunNeedsAttention {
+		t.Fatalf("expected latest run to need attention: %#v", summary)
+	}
 	var amber ResidentInspectRisk
+	var onyx ResidentInspectRisk
 	for _, item := range summary.ResidentRisk {
 		if item.ResidentID == "amber" {
 			amber = item
-			break
+		}
+		if item.ResidentID == "onyx" {
+			onyx = item
 		}
 	}
 	if amber.MemoryAttention != 2 {
@@ -72,5 +90,11 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if amber.MemoryDuplicateHistoryGroups != 3 {
 		t.Fatalf("expected amber duplicate history groups, got %#v", amber)
+	}
+	if !amber.OrchestratorBudgetBlocked {
+		t.Fatalf("expected amber orchestrator budget block, got %#v", amber)
+	}
+	if onyx.OrchestratorError == "" {
+		t.Fatalf("expected onyx orchestrator error, got %#v", onyx)
 	}
 }
