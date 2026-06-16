@@ -2,7 +2,6 @@ package broker
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"ai-arena/internal/auth"
@@ -53,7 +52,7 @@ func (s *SelfService) RequestSnapshot(claim auth.ResidentClaim, snapshotName str
 	if err != nil {
 		return MachineActionResult{}, err
 	}
-	name := strings.TrimSpace(snapshotName)
+	name := NormalizeResidentSelfSnapshotName(claim.ResidentID, snapshotName)
 	if name == "" {
 		return MachineActionResult{}, fmt.Errorf("snapshot name is required")
 	}
@@ -87,7 +86,7 @@ func (s *SelfService) RequestRestore(claim auth.ResidentClaim, snapshotName stri
 	if err != nil {
 		return MachineActionResult{}, err
 	}
-	name := strings.TrimSpace(snapshotName)
+	name := NormalizeResidentSelfSnapshotName(claim.ResidentID, snapshotName)
 	if name == "" {
 		return MachineActionResult{}, fmt.Errorf("snapshot name is required")
 	}

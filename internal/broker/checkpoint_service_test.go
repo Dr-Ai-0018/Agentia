@@ -52,6 +52,9 @@ func TestCleanupResidentCheckpointsDryRunKeepsNewestHostCheckpoints(t *testing.T
 	if len(out.Deleted) != 2 {
 		t.Fatalf("expected 2 deletions, got %d", len(out.Deleted))
 	}
+	if out.Deletable != 2 || out.Policy == "" {
+		t.Fatalf("expected cleanup policy and deletable count, got %#v", out)
+	}
 	if out.Deleted[0].Name != "checkpoint-amber-20260612T020000Z" || out.Deleted[1].Name != "checkpoint-amber-20260612T010000Z" {
 		t.Fatalf("unexpected deleted checkpoints: %#v", out.Deleted)
 	}

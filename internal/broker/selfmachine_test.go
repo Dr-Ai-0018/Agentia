@@ -79,19 +79,19 @@ func TestSelfServiceRequestSnapshotAndRestore(t *testing.T) {
 	fake := &fakeMachineControl{}
 	service.machine = fake
 
-	snapshot, err := service.RequestSnapshot(auth.ResidentClaim{ResidentID: "jade"}, "before-upgrade")
+	snapshot, err := service.RequestSnapshot(auth.ResidentClaim{ResidentID: "jade"}, "before upgrade")
 	if err != nil {
 		t.Fatalf("request snapshot: %v", err)
 	}
-	if snapshot.Action != "snapshot" || fake.snapshotInstance != "jade" || fake.snapshotName != "before-upgrade" {
+	if snapshot.Action != "snapshot" || fake.snapshotInstance != "jade" || fake.snapshotName != "self-jade-before-upgrade" {
 		t.Fatalf("unexpected snapshot result: %#v fake=%#v", snapshot, fake)
 	}
 
-	restore, err := service.RequestRestore(auth.ResidentClaim{ResidentID: "jade"}, "before-upgrade")
+	restore, err := service.RequestRestore(auth.ResidentClaim{ResidentID: "jade"}, "before upgrade")
 	if err != nil {
 		t.Fatalf("request restore: %v", err)
 	}
-	if restore.Action != "restore" || fake.restoreInstance != "jade" || fake.restoreName != "before-upgrade" {
+	if restore.Action != "restore" || fake.restoreInstance != "jade" || fake.restoreName != "self-jade-before-upgrade" {
 		t.Fatalf("unexpected restore result: %#v fake=%#v", restore, fake)
 	}
 }

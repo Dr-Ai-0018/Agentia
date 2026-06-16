@@ -37,6 +37,8 @@ type CheckpointCleanupOutput struct {
 	InstanceName string               `json:"instance_name"`
 	Keep         int                  `json:"keep"`
 	Apply        bool                 `json:"apply"`
+	Policy       string               `json:"policy"`
+	Deletable    int                  `json:"deletable"`
 	Deleted      []ResidentCheckpoint `json:"deleted"`
 	Retained     []ResidentCheckpoint `json:"retained"`
 }
@@ -179,6 +181,8 @@ func (s *HostActionService) CleanupResidentCheckpoints(input CheckpointCleanupIn
 		InstanceName: list.InstanceName,
 		Keep:         input.Keep,
 		Apply:        input.Apply,
+		Policy:       fmt.Sprintf("retain newest %d host checkpoint(s); never delete baseline, resident self snapshots, or unknown snapshots", input.Keep),
+		Deletable:    len(deleted),
 		Deleted:      deleted,
 		Retained:     retained,
 	}, nil

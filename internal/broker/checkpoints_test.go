@@ -16,4 +16,13 @@ func TestCheckpointNamingHelpers(t *testing.T) {
 	if got := ResidentSelfSnapshotName("amber", "Before Upgrade"); got != "self-amber-before-upgrade" {
 		t.Fatalf("unexpected resident self snapshot name: %s", got)
 	}
+	if got := ResidentSelfSnapshotName("Amber", " Before: Upgrade!!! "); got != "self-amber-before-upgrade" {
+		t.Fatalf("unexpected sanitized resident self snapshot name: %s", got)
+	}
+	if got := NormalizeResidentSelfSnapshotName("amber", "before upgrade"); got != "self-amber-before-upgrade" {
+		t.Fatalf("unexpected normalized self snapshot name: %s", got)
+	}
+	if got := NormalizeResidentSelfSnapshotName("amber", "checkpoint-amber-20260612T033000Z"); got != "checkpoint-amber-20260612T033000Z" {
+		t.Fatalf("host checkpoint name should pass through, got %s", got)
+	}
 }
