@@ -154,6 +154,9 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		if item.MemoryDuplicateHistoryGroups > 0 {
 			focus.Reasons = append(focus.Reasons, fmt.Sprintf("%d duplicate memory history groups can be compacted", item.MemoryDuplicateHistoryGroups))
 		}
+		if item.MemoryRecommendedAction != "" {
+			focus.Reasons = append(focus.Reasons, fmt.Sprintf("memory recommendation: %s", item.MemoryRecommendedAction))
+		}
 		if item.OrchestratorBudgetBlocked {
 			focus.Reasons = append(focus.Reasons, "latest orchestrator run was budget-blocked")
 		}

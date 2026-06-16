@@ -40,6 +40,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	openIntervention := map[string]struct{}{}
 	memoryAttention := map[string]int{}
 	memoryDuplicateGroups := map[string]int{}
+	memoryRecommendation := map[string]ResidentMemoryMaintenance{}
 	orchestratorByResident := map[string]OrchestratorResidentInspectionDigest{}
 	if out.LatestOrchestrator != nil {
 		for _, item := range out.LatestOrchestrator.Residents {
@@ -61,6 +62,9 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 		if item.DuplicateHistoryGroups > 0 {
 			memoryDuplicateGroups[item.ResidentID] = item.DuplicateHistoryGroups
 			summary.MemoryDuplicateHistoryGroups += item.DuplicateHistoryGroups
+		}
+		if item.RecommendedAction != "" || item.Summary != "" {
+			memoryRecommendation[item.ResidentID] = item
 		}
 	}
 	for _, count := range memoryAttention {
@@ -107,6 +111,10 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			HasIntervention:              hasResident(openIntervention, item.ResidentID),
 			MemoryAttention:              memoryAttention[item.ResidentID],
 			MemoryDuplicateHistoryGroups: memoryDuplicateGroups[item.ResidentID],
+		}
+		if recommendation, ok := memoryRecommendation[item.ResidentID]; ok {
+			risk.MemoryRecommendedAction = recommendation.RecommendedAction
+			risk.MemorySummary = recommendation.Summary
 		}
 		if run, ok := orchestratorByResident[item.ResidentID]; ok {
 			risk.OrchestratorStatus = run.Status

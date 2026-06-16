@@ -70,6 +70,8 @@ type ResidentMemoryMaintenance struct {
 	ResidentID             string `json:"resident_id"`
 	LifecycleAttention     int    `json:"lifecycle_attention,omitempty"`
 	DuplicateHistoryGroups int    `json:"duplicate_history_groups,omitempty"`
+	RecommendedAction      string `json:"recommended_action,omitempty"`
+	Summary                string `json:"summary,omitempty"`
 	NeedsAttention         bool   `json:"needs_attention"`
 }
 
@@ -107,6 +109,8 @@ type ResidentInspectRisk struct {
 	HasIntervention              bool     `json:"has_intervention"`
 	MemoryAttention              int      `json:"memory_attention,omitempty"`
 	MemoryDuplicateHistoryGroups int      `json:"memory_duplicate_history_groups,omitempty"`
+	MemoryRecommendedAction      string   `json:"memory_recommended_action,omitempty"`
+	MemorySummary                string   `json:"memory_summary,omitempty"`
 	OrchestratorStatus           string   `json:"orchestrator_status,omitempty"`
 	OrchestratorStoppedReason    string   `json:"orchestrator_stopped_reason,omitempty"`
 	OrchestratorBudgetBlocked    bool     `json:"orchestrator_budget_blocked,omitempty"`

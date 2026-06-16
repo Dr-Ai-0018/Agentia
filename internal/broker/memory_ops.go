@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,9 +46,23 @@ func (a *App) buildMemoryMaintenanceReports() []ResidentMemoryMaintenance {
 			item.DuplicateHistoryGroups = report.BeforeHistoryGroups - report.AfterHistoryGroups
 		}
 		item.NeedsAttention = item.LifecycleAttention > 0 || item.DuplicateHistoryGroups > 0
+		item.RecommendedAction, item.Summary = memoryMaintenanceRecommendation(item)
 		if item.NeedsAttention {
 			out = append(out, item)
 		}
 	}
 	return out
+}
+
+func memoryMaintenanceRecommendation(item ResidentMemoryMaintenance) (string, string) {
+	switch {
+	case item.LifecycleAttention > 0 && item.DuplicateHistoryGroups > 0:
+		return "lifecycle_then_compaction_dry_run", fmt.Sprintf("%d lifecycle items need review and %d duplicate history groups can be compacted; inspect lifecycle first, then compact after confirming summaries.", item.LifecycleAttention, item.DuplicateHistoryGroups)
+	case item.LifecycleAttention > 0:
+		return "lifecycle_dry_run", fmt.Sprintf("%d memory lifecycle items need review before any automatic decay/deletion is enabled.", item.LifecycleAttention)
+	case item.DuplicateHistoryGroups > 0:
+		return "compaction_dry_run", fmt.Sprintf("%d duplicate history groups can be compacted after reviewing the before/after report.", item.DuplicateHistoryGroups)
+	default:
+		return "", ""
+	}
 }

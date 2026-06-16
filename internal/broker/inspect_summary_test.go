@@ -23,7 +23,7 @@ func TestSummarizeHostInspect(t *testing.T) {
 			{Resident: "amber", NeedsAttention: 2},
 		},
 		MemoryMaintenance: []ResidentMemoryMaintenance{
-			{ResidentID: "amber", LifecycleAttention: 2, DuplicateHistoryGroups: 3, NeedsAttention: true},
+			{ResidentID: "amber", LifecycleAttention: 2, DuplicateHistoryGroups: 3, RecommendedAction: "lifecycle_then_compaction_dry_run", Summary: "inspect lifecycle first", NeedsAttention: true},
 		},
 		LatestOrchestrator: &OrchestratorInspectionDigest{
 			RunID:             "orchestrator-20260616T082449.311075354Z",
@@ -100,6 +100,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if !amber.OrchestratorBudgetBlocked {
 		t.Fatalf("expected amber orchestrator budget block, got %#v", amber)
+	}
+	if amber.MemoryRecommendedAction != "lifecycle_then_compaction_dry_run" || amber.MemorySummary == "" {
+		t.Fatalf("expected amber memory recommendation, got %#v", amber)
 	}
 	if onyx.OrchestratorError == "" {
 		t.Fatalf("expected onyx orchestrator error, got %#v", onyx)

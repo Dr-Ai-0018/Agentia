@@ -67,3 +67,23 @@ func TestRunMemoryLifecycleReportsStoredMemory(t *testing.T) {
 		t.Fatalf("unexpected lifecycle report: %#v", report)
 	}
 }
+
+func TestMemoryMaintenanceRecommendation(t *testing.T) {
+	action, summary := memoryMaintenanceRecommendation(ResidentMemoryMaintenance{
+		LifecycleAttention:     2,
+		DuplicateHistoryGroups: 3,
+	})
+	if action != "lifecycle_then_compaction_dry_run" || summary == "" {
+		t.Fatalf("unexpected combined recommendation: %q %q", action, summary)
+	}
+
+	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{LifecycleAttention: 1})
+	if action != "lifecycle_dry_run" {
+		t.Fatalf("unexpected lifecycle recommendation: %q", action)
+	}
+
+	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{DuplicateHistoryGroups: 1})
+	if action != "compaction_dry_run" {
+		t.Fatalf("unexpected compaction recommendation: %q", action)
+	}
+}
