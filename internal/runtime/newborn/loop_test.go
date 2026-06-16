@@ -1,6 +1,10 @@
 package newborn
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,14 +21,28 @@ import (
 	"ai-arena/internal/worldstate"
 )
 
+type fakeActionExecutor struct {
+	result ActionResult
+}
+
+func (f fakeActionExecutor) Execute(ResidentProfile, AgentDecision) ActionResult {
+	return f.result
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestRenderQuotaObservationIsCompact(t *testing.T) {
 	out := broker.QuotaOutput{
 		Status: brokerstate.ResidentStatus{
-			ResidentID:    "jade",
-			SparkBalance:  2.625,
-			DebtActive:    false,
-			DebtAmount:    0,
-			RecoveryMode:  "idle",
+			ResidentID:     "jade",
+			SparkBalance:   2.625,
+			DebtActive:     false,
+			DebtAmount:     0,
+			RecoveryMode:   "idle",
 			LastRecoveryAt: time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC),
 		},
 		Quota: brokerstate.QuotaSnapshot{
@@ -162,6 +180,35 @@ func TestClassifyGuestExecActivityNarrowProbe(t *testing.T) {
 	}
 }
 
+func TestExecuteWriteNoteRejectsCommandOnlyDecisionWithRawOutput(t *testing.T) {
+	executor := &IncusActionExecutor{}
+	result := executor.Execute(ResidentProfile{Name: "onyx", Instance: "onyx"}, AgentDecision{
+		NextAction: "write_note",
+		Command:    "cat >> /root/arena-notes/boot-notes.md <<'EOF'\nunsafe\nEOF",
+		Reason:     "old malformed note style",
+	})
+	if !result.Error {
+		t.Fatalf("expected action error")
+	}
+	if result.ErrorKind != "validation_error" {
+		t.Fatalf("unexpected error kind: %s", result.ErrorKind)
+	}
+	if !strings.Contains(result.RawOutput, "cat >> /root/arena-notes/boot-notes.md") {
+		t.Fatalf("expected raw malformed command in raw output, got %q", result.RawOutput)
+	}
+}
+
+func TestLimitRawOutputAddsTruncationMarker(t *testing.T) {
+	raw := strings.Repeat("x", actionRawOutputMax+10)
+	got := limitRawOutput(raw)
+	if !strings.HasPrefix(got, strings.Repeat("x", actionRawOutputMax)) {
+		t.Fatalf("expected raw output prefix to be preserved")
+	}
+	if !strings.Contains(got, "raw_output_truncated bytes_omitted=10") {
+		t.Fatalf("expected truncation marker, got suffix %q", got[len(got)-80:])
+	}
+}
+
 func TestFallbackAcceptance(t *testing.T) {
 	got := fallbackAcceptance(nil, "broker_preflight_denied")
 	if got == "" {
@@ -247,6 +294,55 @@ func TestParseDecisionResultSupportsSelfQuota(t *testing.T) {
 	}
 	if decision.Command != "" {
 		t.Fatalf("expected self_quota command to be cleared, got %q", decision.Command)
+	}
+}
+
+func TestParseDecisionResultSupportsWriteNoteMemoryText(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				Name:      "decide_next_action",
+				Arguments: `{"situation":"I want to preserve a local continuity fact.","next_action":"write_note","reason":"Plain note text is enough.","command":"cat >> /root/arena-notes/boot-notes.md <<'EOF'\nunsafe\nEOF","message":"","ticket_title":"","ticket_body":"","ticket_priority":"","memory_id":"","memory_action":"","memory_summary":"","memory_text":"I confirmed the note surface exists.","memory_layer":"","memory_reason":""}`,
+			},
+		},
+	}
+
+	decision, err := parseDecisionResult(result)
+	if err != nil {
+		t.Fatalf("parse decision result: %v", err)
+	}
+	if decision.NextAction != "write_note" {
+		t.Fatalf("unexpected next action: %s", decision.NextAction)
+	}
+	if decision.Command != "" {
+		t.Fatalf("expected write_note command to be cleared, got %q", decision.Command)
+	}
+	if decision.MemoryText != "I confirmed the note surface exists." {
+		t.Fatalf("expected memory_text to survive normalization, got %q", decision.MemoryText)
+	}
+}
+
+func TestParseDecisionResultRejectsWriteNoteWithoutMemoryTextAndRecordsRawArguments(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				Name:      "decide_next_action",
+				Arguments: `{"situation":"I want to write a note.","next_action":"write_note","reason":"Malformed old-style note command.","command":"cat >> /root/arena-notes/boot-notes.md <<'EOF'\nthis should not be accepted\nEOF","message":"","ticket_title":"","ticket_body":"","ticket_priority":"","memory_id":"","memory_action":"","memory_summary":"","memory_text":"","memory_layer":"","memory_reason":""}`,
+			},
+		},
+	}
+
+	_, err := parseDecisionResult(result)
+	if err == nil {
+		t.Fatalf("expected write_note without memory_text to fail validation")
+	}
+	if !strings.Contains(err.Error(), "raw_arguments=") {
+		t.Fatalf("expected raw arguments in error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "cat >> /root/arena-notes/boot-notes.md") {
+		t.Fatalf("expected original malformed command in error, got %v", err)
 	}
 }
 
@@ -463,6 +559,107 @@ func TestRecordRoundMemoryWritesHistoryGroupAndShortReflection(t *testing.T) {
 	if len(records[0].SourceGroupIDs) != 1 || records[0].SourceGroupIDs[0] != state.RunGroupID {
 		t.Fatalf("expected source group id %q, got %#v", state.RunGroupID, records[0].SourceGroupIDs)
 	}
+}
+
+func TestRunnerReportRecordsActionFailureRawOutput(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		header := http.Header{}
+		header.Set("Content-Type", "text/event-stream")
+		header.Set("x-request-id", fmt.Sprintf("req-%d", requests))
+		var body string
+		switch requests {
+		case 1:
+			time.Sleep(2 * time.Second)
+			body = renderSSECompleted(t, map[string]any{
+				"id": "resp-decision",
+				"usage": map[string]any{
+					"input_tokens":  100,
+					"output_tokens": 40,
+				},
+				"output": []map[string]any{
+					{
+						"type":      "function_call",
+						"name":      "decide_next_action",
+						"arguments": `{"situation":"Need a small probe.","next_action":"guest_exec","reason":"Check identity.","command":"whoami","message":"","ticket_title":"","ticket_body":"","ticket_priority":"","memory_id":"","memory_action":"","memory_summary":"","memory_text":"","memory_layer":"","memory_reason":""}`,
+					},
+				},
+			})
+		default:
+			body = renderSSECompleted(t, map[string]any{
+				"id":          "resp-acceptance",
+				"output_text": "I attempted one probe and saw the failure clearly.",
+				"usage": map[string]any{
+					"input_tokens":  80,
+					"output_tokens": 20,
+				},
+			})
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})}
+
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = fakeActionExecutor{result: ActionResult{
+		Observation: "guest command failed:\ncat: write error: No space left on device",
+		Activity:    tokenledger.ActivityLightWork,
+		Error:       true,
+		ErrorKind:   "guest_command_failed",
+		RawOutput:   "cat: write error: No space left on device",
+	}}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4-mini", Instance: "jade"}, 27*time.Second, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(report.RoundLogs) != 1 {
+		t.Fatalf("expected one round, got %d", len(report.RoundLogs))
+	}
+	round := report.RoundLogs[0]
+	if !round.ActionError {
+		t.Fatalf("expected action_error to be recorded")
+	}
+	if round.ErrorKind != "guest_command_failed" {
+		t.Fatalf("unexpected error kind: %s", round.ErrorKind)
+	}
+	if !strings.Contains(round.RawOutput, "No space left on device") {
+		t.Fatalf("expected raw output in report, got %q", round.RawOutput)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "runs", "jade-*", "report.json"))
+	if err != nil {
+		t.Fatalf("glob report: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one report file, got %#v", matches)
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	if !strings.Contains(string(raw), `"action_error": true`) || !strings.Contains(string(raw), `"raw_output": "cat: write error: No space left on device"`) {
+		t.Fatalf("expected action error and raw output in report json: %s", raw)
+	}
+}
+
+func renderSSECompleted(t *testing.T, response map[string]any) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"type":     "response.completed",
+		"response": response,
+	})
+	if err != nil {
+		t.Fatalf("marshal sse: %v", err)
+	}
+	return fmt.Sprintf("data: %s\n\n", raw)
 }
 
 func TestBudgetControllerPreflightAutoRecoversToNow(t *testing.T) {

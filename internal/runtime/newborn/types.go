@@ -63,9 +63,13 @@ func (d AgentDecision) CompactForHistory() string {
 		parts = append(parts, "reason="+v)
 	}
 	switch d.NextAction {
-	case "guest_exec", "write_note":
+	case "guest_exec":
 		if v := truncateForModel(strings.TrimSpace(d.Command), 200); v != "" {
 			parts = append(parts, "command="+v)
+		}
+	case "write_note":
+		if v := truncateForModel(strings.TrimSpace(d.MemoryText), 200); v != "" {
+			parts = append(parts, "note="+v)
 		}
 	case "talk_to_chenglin":
 		if v := truncateForModel(strings.TrimSpace(d.Message), 180); v != "" {
@@ -141,6 +145,9 @@ type RoundLog struct {
 	RemainingSec int             `json:"remaining_sec"`
 	Decision     AgentDecision   `json:"decision"`
 	Observation  string          `json:"observation"`
+	ActionError  bool            `json:"action_error,omitempty"`
+	ErrorKind    string          `json:"error_kind,omitempty"`
+	RawOutput    string          `json:"raw_output,omitempty"`
 	ResponseID   string          `json:"response_id"`
 	ParseError   string          `json:"parse_error,omitempty"`
 	FallbackUsed bool            `json:"fallback_used,omitempty"`

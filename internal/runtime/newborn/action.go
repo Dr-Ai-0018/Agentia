@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +22,16 @@ type ActionExecutor interface {
 type ActionResult struct {
 	Observation string
 	Activity    tokenledger.ActivityType
+	Error       bool
+	ErrorKind   string
+	RawOutput   string
 }
+
+const (
+	writeNoteMaxChars     = 2000
+	writeNoteMaxFileBytes = 256 * 1024
+	actionRawOutputMax    = 12000
+)
 
 type IncusActionExecutor struct {
 	world    *WorldBridge
@@ -43,15 +53,12 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 	}
 	switch decision.NextAction {
 	case "write_note":
-		if strings.TrimSpace(decision.Command) == "" {
-			return ActionResult{Observation: "write_note denied: command is required and must contain the actual note-writing command", Activity: tokenledger.ActivityStatusCheck}
-		}
-		return ActionResult{Observation: guestCommand(profile.Instance, decision.Command), Activity: tokenledger.ActivityLightWork}
+		return e.executeWriteNote(profile, decision)
 	case "guest_exec":
 		if strings.TrimSpace(decision.Command) == "" {
-			return ActionResult{Observation: "guest_exec denied: command is required", Activity: tokenledger.ActivityStatusCheck}
+			return actionError("guest_exec denied: command is required", "validation_error", "")
 		}
-		return ActionResult{Observation: guestCommand(profile.Instance, decision.Command), Activity: classifyGuestExecActivity(decision.Command)}
+		return guestCommand(profile.Instance, decision.Command, classifyGuestExecActivity(decision.Command))
 	case "self_status":
 		return ActionResult{Observation: e.executeSelfStatus(profile), Activity: tokenledger.ActivityStatusCheck}
 	case "self_quota":
@@ -76,6 +83,24 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 	default:
 		return ActionResult{Observation: "no operation executed", Activity: tokenledger.ActivityStatusCheck}
 	}
+}
+
+func (e *IncusActionExecutor) executeWriteNote(profile ResidentProfile, decision AgentDecision) ActionResult {
+	text := strings.TrimSpace(decision.MemoryText)
+	if text == "" {
+		text = strings.TrimSpace(decision.Message)
+	}
+	if text == "" {
+		return actionError("write_note denied: provide note text in memory_text; shell commands are not executed for write_note", "validation_error", decision.Command)
+	}
+	if len(text) > writeNoteMaxChars {
+		return actionError(fmt.Sprintf("write_note denied: note text exceeds %d characters", writeNoteMaxChars), "validation_error", text)
+	}
+	result := writeGuestNote(profile.Instance, text)
+	if result.Error {
+		result.ErrorKind = "write_note_failed"
+	}
+	return result
 }
 
 func (e *IncusActionExecutor) executeSelfStatus(profile ResidentProfile) string {
@@ -204,6 +229,8 @@ func suppressDuplicateAction(profile ResidentProfile, decision AgentDecision) (b
 func classifyCommandIntent(decision AgentDecision) string {
 	command := normalizeDuplicateText(decision.Command)
 	switch {
+	case decision.NextAction == "write_note":
+		return "note"
 	case decision.NextAction == "self_status":
 		return "self_status"
 	case decision.NextAction == "self_quota":
@@ -272,13 +299,65 @@ func isNarrowProbeCommand(command string) bool {
 	return false
 }
 
-func guestCommand(instance, script string) string {
+func guestCommand(instance, script string, activity tokenledger.ActivityType) ActionResult {
 	cmd := exec.Command("incus", "exec", instance, "--", "bash", "-lc", script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Sprintf("guest command failed:\n%s", strings.TrimSpace(string(out)))
+		raw := limitRawOutput(strings.TrimSpace(string(out)))
+		return ActionResult{
+			Observation: fmt.Sprintf("guest command failed:\n%s", raw),
+			Activity:    activity,
+			Error:       true,
+			ErrorKind:   "guest_command_failed",
+			RawOutput:   raw,
+		}
 	}
-	return string(out)
+	return ActionResult{Observation: string(out), Activity: activity}
+}
+
+func writeGuestNote(instance, text string) ActionResult {
+	script := strings.Join([]string{
+		"set -euo pipefail",
+		"note_dir=/root/arena-notes",
+		"note_file=$note_dir/boot-notes.md",
+		"mkdir -p \"$note_dir\"",
+		"current_bytes=0",
+		"if [ -f \"$note_file\" ]; then current_bytes=$(wc -c < \"$note_file\"); fi",
+		fmt.Sprintf("if [ \"$current_bytes\" -gt %d ]; then echo \"write_note denied: note file exceeds %d bytes\" >&2; exit 42; fi", writeNoteMaxFileBytes, writeNoteMaxFileBytes),
+		"printf '%s\n' \"$1\" >> \"$note_file\"",
+		"wc -c \"$note_file\"",
+	}, "\n")
+	cmd := exec.Command("incus", "exec", instance, "--", "bash", "-lc", script, "write_note", text)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		raw := limitRawOutput(strings.TrimSpace(string(out)))
+		return ActionResult{
+			Observation: fmt.Sprintf("write_note failed:\n%s", raw),
+			Activity:    tokenledger.ActivityLightWork,
+			Error:       true,
+			ErrorKind:   "write_note_failed",
+			RawOutput:   raw,
+		}
+	}
+	return ActionResult{Observation: "write_note appended plain text to /root/arena-notes/boot-notes.md\n" + string(out), Activity: tokenledger.ActivityLightWork}
+}
+
+func limitRawOutput(raw string) string {
+	if len(raw) <= actionRawOutputMax {
+		return raw
+	}
+	omitted := len(raw) - actionRawOutputMax
+	return raw[:actionRawOutputMax] + "\n[raw_output_truncated bytes_omitted=" + strconv.Itoa(omitted) + "]"
+}
+
+func actionError(observation, kind, raw string) ActionResult {
+	return ActionResult{
+		Observation: observation,
+		Activity:    tokenledger.ActivityStatusCheck,
+		Error:       true,
+		ErrorKind:   kind,
+		RawOutput:   limitRawOutput(raw),
+	}
 }
 
 func decisionSignature(decision AgentDecision) string {
@@ -291,8 +370,10 @@ func decisionSignature(decision AgentDecision) string {
 		return s
 	}
 	switch decision.NextAction {
-	case "write_note", "guest_exec":
+	case "guest_exec":
 		return decision.NextAction + ":" + normalize(decision.Command)
+	case "write_note":
+		return decision.NextAction + ":" + normalize(decision.MemoryText)
 	case "self_status", "self_quota":
 		return decision.NextAction
 	case "talk_to_chenglin":

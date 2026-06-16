@@ -10,10 +10,10 @@ import (
 
 func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, promptCacheKey string) openai.RequestPayload {
 	return openai.RequestPayload{
-		Model:           profile.Model,
-		Instructions:    makeInstructions(),
-		PromptCacheKey:  promptCacheKey,
-		Input:           append([]openai.Message(nil), input...),
+		Model:          profile.Model,
+		Instructions:   makeInstructions(),
+		PromptCacheKey: promptCacheKey,
+		Input:          append([]openai.Message(nil), input...),
 		Tools: []openai.ResponseTool{
 			{
 				Type:        "function",
@@ -22,10 +22,10 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 				Strict:      true,
 				Parameters: map[string]any{
 					"type": "object",
-						"properties": map[string]any{
-							"situation": map[string]any{
-								"type": "string",
-							},
+					"properties": map[string]any{
+						"situation": map[string]any{
+							"type": "string",
+						},
 						"next_action": map[string]any{
 							"type": "string",
 							"enum": []string{"guest_exec", "self_status", "self_quota", "write_note", "talk_to_chenglin", "submit_ticket", "memory_review", "noop"},
@@ -33,65 +33,65 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 						"reason": map[string]any{
 							"type": "string",
 						},
-							"command": map[string]any{
-								"type": "string",
-							},
-							"message": map[string]any{
-								"type": "string",
-							},
-							"ticket_title": map[string]any{
-								"type": "string",
-							},
-							"ticket_body": map[string]any{
-								"type": "string",
-							},
-							"ticket_priority": map[string]any{
-								"type": "string",
-								"enum": []string{"", "low", "medium", "high", "urgent"},
-							},
-							"memory_id": map[string]any{
-								"type": "string",
-							},
-							"memory_action": map[string]any{
-								"type": "string",
-								"enum": []string{"", "keep", "rewrite", "compress", "demote", "delete"},
-							},
-							"memory_summary": map[string]any{
-								"type": "string",
-							},
-							"memory_text": map[string]any{
-								"type": "string",
-							},
-							"memory_layer": map[string]any{
-								"type": "string",
-								"enum": []string{"", "instant", "short", "long", "permanent"},
-							},
-							"memory_reason": map[string]any{
-								"type": "string",
-							},
+						"command": map[string]any{
+							"type": "string",
 						},
-						"required": []string{
-							"situation",
-							"next_action",
-							"reason",
-							"command",
-							"message",
-							"ticket_title",
-							"ticket_body",
-							"ticket_priority",
-							"memory_id",
-							"memory_action",
-							"memory_summary",
-							"memory_text",
-							"memory_layer",
-							"memory_reason",
+						"message": map[string]any{
+							"type": "string",
 						},
-						"additionalProperties": false,
+						"ticket_title": map[string]any{
+							"type": "string",
+						},
+						"ticket_body": map[string]any{
+							"type": "string",
+						},
+						"ticket_priority": map[string]any{
+							"type": "string",
+							"enum": []string{"", "low", "medium", "high", "urgent"},
+						},
+						"memory_id": map[string]any{
+							"type": "string",
+						},
+						"memory_action": map[string]any{
+							"type": "string",
+							"enum": []string{"", "keep", "rewrite", "compress", "demote", "delete"},
+						},
+						"memory_summary": map[string]any{
+							"type": "string",
+						},
+						"memory_text": map[string]any{
+							"type": "string",
+						},
+						"memory_layer": map[string]any{
+							"type": "string",
+							"enum": []string{"", "instant", "short", "long", "permanent"},
+						},
+						"memory_reason": map[string]any{
+							"type": "string",
+						},
 					},
+					"required": []string{
+						"situation",
+						"next_action",
+						"reason",
+						"command",
+						"message",
+						"ticket_title",
+						"ticket_body",
+						"ticket_priority",
+						"memory_id",
+						"memory_action",
+						"memory_summary",
+						"memory_text",
+						"memory_layer",
+						"memory_reason",
+					},
+					"additionalProperties": false,
 				},
+			},
 		},
-		Stream:            true,
-		Store:             false,
+		Stream: true,
+		Store:  false,
 	}
 }
 
@@ -129,15 +129,30 @@ func parseDecisionResult(result openai.StreamResult) (AgentDecision, error) {
 		}
 		var decision AgentDecision
 		if err := json.Unmarshal([]byte(item.Arguments), &decision); err != nil {
-			return AgentDecision{}, fmt.Errorf("decode decide_next_action: %w", err)
+			return AgentDecision{}, fmt.Errorf("decode decide_next_action: %w; raw_arguments=%q", err, limitRawOutput(item.Arguments))
 		}
 		decision = compactDecision(decision)
 		if err := validateDecision(decision); err != nil {
-			return AgentDecision{}, err
+			return AgentDecision{}, fmt.Errorf("validate decide_next_action: %w; raw_arguments=%q", err, limitRawOutput(item.Arguments))
 		}
 		return decision, nil
 	}
-	return AgentDecision{}, fmt.Errorf("no decide_next_action function call returned; output_text=%q", result.OutputText)
+	return AgentDecision{}, fmt.Errorf("no decide_next_action function call returned; output_text=%q function_calls=%q", limitRawOutput(result.OutputText), summarizeFunctionCalls(result.FunctionCalls))
+}
+
+func summarizeFunctionCalls(items []openai.ResponseItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			name = strings.TrimSpace(item.CallName)
+		}
+		parts = append(parts, fmt.Sprintf("type=%s name=%s arguments=%s", item.Type, name, limitRawOutput(item.Arguments)))
+	}
+	return strings.Join(parts, " | ")
 }
 
 func validateDecision(decision AgentDecision) error {
@@ -150,9 +165,13 @@ func validateDecision(decision AgentDecision) error {
 		return fmt.Errorf("unsupported next_action %q", decision.NextAction)
 	}
 	switch decision.NextAction {
-	case "guest_exec", "write_note":
+	case "guest_exec":
 		if strings.TrimSpace(decision.Command) == "" {
 			return fmt.Errorf("%s requires a non-empty command", decision.NextAction)
+		}
+	case "write_note":
+		if strings.TrimSpace(decision.MemoryText) == "" && strings.TrimSpace(decision.Message) == "" {
+			return fmt.Errorf("write_note requires non-empty memory_text")
 		}
 	}
 	return nil
@@ -177,7 +196,7 @@ func compactDecision(decision AgentDecision) AgentDecision {
 
 func normalizeDecisionForAction(decision AgentDecision) AgentDecision {
 	switch decision.NextAction {
-	case "guest_exec", "write_note":
+	case "guest_exec":
 		decision.Message = ""
 		decision.TicketTitle = ""
 		decision.TicketBody = ""
@@ -186,6 +205,17 @@ func normalizeDecisionForAction(decision AgentDecision) AgentDecision {
 		decision.MemoryAction = ""
 		decision.MemorySummary = ""
 		decision.MemoryText = ""
+		decision.MemoryLayer = ""
+		decision.MemoryReason = ""
+	case "write_note":
+		decision.Command = ""
+		decision.Message = ""
+		decision.TicketTitle = ""
+		decision.TicketBody = ""
+		decision.TicketPriority = ""
+		decision.MemoryID = ""
+		decision.MemoryAction = ""
+		decision.MemorySummary = ""
 		decision.MemoryLayer = ""
 		decision.MemoryReason = ""
 	case "self_status", "self_quota", "noop":
