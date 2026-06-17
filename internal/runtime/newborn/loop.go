@@ -276,6 +276,9 @@ func (r *Runner) buildResidentMemoryDigest(profile ResidentProfile) context.Memo
 		if record.Status == memory.StatusDeleted {
 			continue
 		}
+		if !memory.ResidentDigestVisible(record) {
+			continue
+		}
 		if needsGovernanceFlag(record) {
 			governance = append(governance, renderGovernanceLine(record))
 		}
@@ -305,6 +308,9 @@ func (r *Runner) reconcileReviewedMemoryArtifacts(profile ResidentProfile) error
 	}
 	now := time.Now().UTC()
 	for _, record := range records {
+		if !memory.ResidentDigestVisible(record) {
+			continue
+		}
 		if record.Governance.ReviewState != "resolved" {
 			continue
 		}
@@ -393,6 +399,9 @@ func (r *Runner) renderMemoryReviewQueue(profile ResidentProfile, state loopStat
 	}
 	lines := []string{}
 	for _, record := range records {
+		if !memory.ResidentDigestVisible(record) {
+			continue
+		}
 		if !needsGovernanceFlag(record) {
 			continue
 		}

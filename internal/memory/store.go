@@ -62,6 +62,7 @@ type AbstractMemory struct {
 	Resident        string         `json:"resident"`
 	Summary         string         `json:"summary"`
 	ResidentText    string         `json:"resident_text,omitempty"`
+	Visibility      Visibility     `json:"visibility,omitempty"`
 	Tags            []string       `json:"tags,omitempty"`
 	Governance      GovernanceMeta `json:"governance,omitempty"`
 	Semantic        SemanticMemory `json:"semantic,omitempty"`
@@ -94,17 +95,18 @@ type GovernanceMeta struct {
 }
 
 type SnapshotEntry struct {
-	ID              string `json:"id"`
-	Layer           Layer  `json:"layer"`
-	DecisionAction  Action `json:"decision_action"`
-	Summary         string `json:"summary"`
-	ResidentText    string `json:"resident_text,omitempty"`
-	MemoryKind      string `json:"memory_kind,omitempty"`
-	Salience        int    `json:"salience,omitempty"`
-	EmotionTone     string `json:"emotion_tone,omitempty"`
-	TimeScope       string `json:"time_scope,omitempty"`
-	RetentionIntent string `json:"retention_intent,omitempty"`
-	DropCondition   string `json:"drop_condition,omitempty"`
+	ID              string     `json:"id"`
+	Layer           Layer      `json:"layer"`
+	DecisionAction  Action     `json:"decision_action"`
+	Summary         string     `json:"summary"`
+	ResidentText    string     `json:"resident_text,omitempty"`
+	Visibility      Visibility `json:"visibility,omitempty"`
+	MemoryKind      string     `json:"memory_kind,omitempty"`
+	Salience        int        `json:"salience,omitempty"`
+	EmotionTone     string     `json:"emotion_tone,omitempty"`
+	TimeScope       string     `json:"time_scope,omitempty"`
+	RetentionIntent string     `json:"retention_intent,omitempty"`
+	DropCondition   string     `json:"drop_condition,omitempty"`
 }
 
 type ResidentMemoryBundle struct {
@@ -215,6 +217,7 @@ func (s *MemoryStore) ReviewAbstractMemory(resident, id string, now time.Time, r
 }
 
 func (s *MemoryStore) UpsertAbstractMemory(record AbstractMemory) error {
+	record = NormalizeAbstractMemory(record)
 	if strings.TrimSpace(record.Resident) == "" {
 		return errors.New("resident is required")
 	}
@@ -286,6 +289,7 @@ func BuildSnapshot(records []AbstractMemory, limit int) []SnapshotEntry {
 	}
 	entries := make([]SnapshotEntry, 0, limit)
 	for _, record := range records[:limit] {
+		record = NormalizeAbstractMemory(record)
 		if record.Status == StatusDeleted {
 			continue
 		}
@@ -295,6 +299,7 @@ func BuildSnapshot(records []AbstractMemory, limit int) []SnapshotEntry {
 			DecisionAction:  record.DecisionAction,
 			Summary:         record.EffectiveSummary(),
 			ResidentText:    record.ResidentText,
+			Visibility:      record.Visibility,
 			MemoryKind:      record.Semantic.MemoryKind,
 			Salience:        record.Semantic.Salience,
 			EmotionTone:     record.Semantic.EmotionTone,
@@ -304,6 +309,36 @@ func BuildSnapshot(records []AbstractMemory, limit int) []SnapshotEntry {
 		})
 	}
 	return entries
+}
+
+func NormalizeAbstractMemory(record AbstractMemory) AbstractMemory {
+	record.Visibility = NormalizeVisibility(record.Visibility)
+	return record
+}
+
+func NormalizeVisibility(visibility Visibility) Visibility {
+	switch visibility {
+	case VisibilityPublic,
+		VisibilityRelationship,
+		VisibilityResidentPrivate,
+		VisibilityPrivateJournal,
+		VisibilitySystemAudit,
+		VisibilityOperatorObservation:
+		return visibility
+	case "":
+		return VisibilityResidentPrivate
+	default:
+		return VisibilityResidentPrivate
+	}
+}
+
+func ResidentDigestVisible(record AbstractMemory) bool {
+	switch NormalizeVisibility(record.Visibility) {
+	case VisibilityPublic, VisibilityRelationship, VisibilityResidentPrivate:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m AbstractMemory) EffectiveSummary() string {
@@ -334,6 +369,9 @@ func (s *FileStore) ListAbstractMemories(resident string) ([]AbstractMemory, err
 		return nil, err
 	}
 	records := append([]AbstractMemory(nil), bundle.AbstractMemories...)
+	for i := range records {
+		records[i] = NormalizeAbstractMemory(records[i])
+	}
 	sortAbstractMemories(records)
 	return records, nil
 }
@@ -377,6 +415,7 @@ func (s *FileStore) ReviewAbstractMemory(resident, id string, now time.Time, rev
 }
 
 func (s *FileStore) UpsertAbstractMemory(record AbstractMemory) error {
+	record = NormalizeAbstractMemory(record)
 	if err := os.MkdirAll(s.root, 0o755); err != nil {
 		return err
 	}
@@ -589,6 +628,9 @@ func (s *FileStore) loadBundle(resident string) (ResidentMemoryBundle, error) {
 			return ResidentMemoryBundle{}, err
 		}
 		bundle.AbstractMemories = legacy
+	}
+	for i := range bundle.AbstractMemories {
+		bundle.AbstractMemories[i] = NormalizeAbstractMemory(bundle.AbstractMemories[i])
 	}
 	return bundle, nil
 }

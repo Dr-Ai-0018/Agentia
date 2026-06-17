@@ -718,6 +718,87 @@ func TestBuildResidentMemoryDigestReadsStoredMemories(t *testing.T) {
 	}
 }
 
+func TestBuildResidentMemoryDigestSkipsOperatorOnlyMemory(t *testing.T) {
+	dir := t.TempDir()
+	runner := NewRunner(nil, "", "")
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "memory"))
+	now := time.Date(2026, 6, 17, 7, 0, 0, 0, time.UTC)
+
+	records := []memory.AbstractMemory{
+		{
+			Record: memory.Record{
+				ID:        "jade-public-lesson",
+				Layer:     memory.LayerLong,
+				Domain:    memory.DomainLessons,
+				Status:    memory.StatusActive,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			Resident:   "jade",
+			Summary:    "Visible lesson: check local evidence before asking outward.",
+			Visibility: memory.VisibilityResidentPrivate,
+		},
+		{
+			Record: memory.Record{
+				ID:        "jade-operator-observation",
+				Layer:     memory.LayerLong,
+				Domain:    memory.DomainLessons,
+				Status:    memory.StatusActive,
+				CreatedAt: now.Add(time.Minute),
+				UpdatedAt: now.Add(time.Minute),
+			},
+			Resident:   "jade",
+			Summary:    "Hidden operator observation: host saw an audit-only detail.",
+			Visibility: memory.VisibilityOperatorObservation,
+			Governance: memory.GovernanceMeta{
+				ReviewState:  "needs_resident_review",
+				ReviewReason: "audit-only detail must not enter resident prompt",
+			},
+		},
+		{
+			Record: memory.Record{
+				ID:        "jade-private-journal",
+				Layer:     memory.LayerLong,
+				Domain:    memory.DomainRelationships,
+				Status:    memory.StatusActive,
+				CreatedAt: now.Add(2 * time.Minute),
+				UpdatedAt: now.Add(2 * time.Minute),
+			},
+			Resident:   "jade",
+			Summary:    "Hidden private journal: unshared feeling.",
+			Visibility: memory.VisibilityPrivateJournal,
+		},
+	}
+	for _, record := range records {
+		if err := runner.memories.UpsertAbstractMemory(record); err != nil {
+			t.Fatalf("upsert memory: %v", err)
+		}
+	}
+
+	digest := runner.buildResidentMemoryDigest(ResidentProfile{Name: "jade"})
+	joined := strings.Join([]string{digest.Lessons, digest.Relationship, strings.Join(digest.Governance, "\n")}, "\n")
+	if !strings.Contains(joined, "Visible lesson") {
+		t.Fatalf("expected visible memory in digest, got %q", joined)
+	}
+	if strings.Contains(joined, "Hidden operator observation") || strings.Contains(joined, "Hidden private journal") || strings.Contains(joined, "audit-only detail") {
+		t.Fatalf("expected hidden memory to stay out of resident digest, got %q", joined)
+	}
+
+	reviewState := loopState{
+		RecentActions: []RecentAction{
+			{Action: "guest_exec", Signature: "guest_exec: whoami hostname uname -a", Observation: "hostname kernel os-release"},
+			{Action: "guest_exec", Signature: "guest_exec: ls -la / find /root", Observation: "arena-notes"},
+			{Action: "guest_exec", Signature: "guest_exec: df -h free -h nproc", Observation: "memory disk cpu"},
+			{Action: "guest_exec", Signature: "guest_exec: ip addr ip route resolv.conf curl", Observation: "network"},
+		},
+		UsedActions: map[string]int{"guest_exec": 4, "self_quota": 1},
+	}
+	queue := strings.Join(runner.renderMemoryReviewQueue(ResidentProfile{Name: "jade"}, reviewState), "\n")
+	if strings.Contains(queue, "jade-operator-observation") || strings.Contains(queue, "audit-only detail") {
+		t.Fatalf("expected hidden memory to stay out of resident review queue, got %q", queue)
+	}
+}
+
 func TestShouldDelayMemoryReviewDuringNewbornOrientation(t *testing.T) {
 	if !shouldDelayMemoryReview(loopState{}) {
 		t.Fatalf("expected delay with no recent actions")

@@ -100,6 +100,34 @@ func TestMemoryStoreUpsertAbstractMemoryAndSnapshot(t *testing.T) {
 	if snapshot[0].ID != "a" {
 		t.Fatalf("unexpected snapshot id: %s", snapshot[0].ID)
 	}
+	if snapshot[0].Visibility != VisibilityResidentPrivate {
+		t.Fatalf("expected legacy memory to normalize to resident-private visibility, got %q", snapshot[0].Visibility)
+	}
+}
+
+func TestResidentDigestVisible(t *testing.T) {
+	visible := []Visibility{
+		"",
+		VisibilityPublic,
+		VisibilityRelationship,
+		VisibilityResidentPrivate,
+	}
+	for _, visibility := range visible {
+		if !ResidentDigestVisible(AbstractMemory{Visibility: visibility}) {
+			t.Fatalf("expected %q to be resident digest visible", visibility)
+		}
+	}
+
+	hidden := []Visibility{
+		VisibilityPrivateJournal,
+		VisibilitySystemAudit,
+		VisibilityOperatorObservation,
+	}
+	for _, visibility := range hidden {
+		if ResidentDigestVisible(AbstractMemory{Visibility: visibility}) {
+			t.Fatalf("expected %q to be hidden from resident digest", visibility)
+		}
+	}
 }
 
 func TestMemoryStoreUpsertHistoryGroup(t *testing.T) {

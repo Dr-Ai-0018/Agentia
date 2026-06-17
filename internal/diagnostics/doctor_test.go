@@ -50,10 +50,10 @@ func TestRunDoctorSummarizesResidentHealth(t *testing.T) {
 	if err := memStore.UpsertAbstractMemory(memory.AbstractMemory{
 		Record: memory.Record{
 			ID:        "mem-1",
-			Layer:     memory.LayerShort,
+			Layer:     memory.LayerLong,
 			Status:    memory.StatusActive,
-			CreatedAt: now,
-			UpdatedAt: now,
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
 		},
 		Resident: "amber",
 		Summary:  "remembered",

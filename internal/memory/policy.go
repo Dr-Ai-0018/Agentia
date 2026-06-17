@@ -24,6 +24,17 @@ const (
 	DomainWorking       Domain = "working"
 )
 
+type Visibility string
+
+const (
+	VisibilityPublic              Visibility = "public_memory"
+	VisibilityRelationship        Visibility = "relationship_memory"
+	VisibilityResidentPrivate     Visibility = "resident_private"
+	VisibilityPrivateJournal      Visibility = "private_journal"
+	VisibilitySystemAudit         Visibility = "system_audit_log"
+	VisibilityOperatorObservation Visibility = "operator_observation"
+)
+
 type Action string
 
 const (
