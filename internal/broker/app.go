@@ -205,6 +205,32 @@ type HostDecisionAssist struct {
 	ResidentFocus            []ResidentDecisionFocus `json:"resident_focus"`
 }
 
+type HostMaintenanceDraftOutput struct {
+	GeneratedAt    string                 `json:"generated_at"`
+	Apply          bool                   `json:"apply"`
+	Policy         string                 `json:"policy"`
+	SourceSeverity string                 `json:"source_severity"`
+	SourceHeadline string                 `json:"source_headline"`
+	Drafts         []HostMaintenanceDraft `json:"drafts"`
+}
+
+type HostMaintenanceDraft struct {
+	ID                        string   `json:"id"`
+	Kind                      string   `json:"kind"`
+	Priority                  string   `json:"priority"`
+	Visibility                string   `json:"visibility"`
+	ResidentIDs               []string `json:"resident_ids,omitempty"`
+	Title                     string   `json:"title"`
+	Reason                    string   `json:"reason"`
+	RecommendedOperatorAction string   `json:"recommended_operator_action"`
+	ManualOnly                bool     `json:"manual_only"`
+	RequiresMaintenanceWindow bool     `json:"requires_maintenance_window"`
+	RequiresStopStart         bool     `json:"requires_stop_start"`
+	RequiresTicketReview      bool     `json:"requires_ticket_review"`
+	SourceActionKind          string   `json:"source_action_kind"`
+	NextSteps                 []string `json:"next_steps"`
+}
+
 type HostSuggestedAction struct {
 	Kind       string `json:"kind"`
 	Priority   string `json:"priority"`
