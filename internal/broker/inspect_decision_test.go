@@ -3,6 +3,9 @@ package broker
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"ai-arena/internal/worldstate"
 )
 
 func TestBuildHostDecisionAssist(t *testing.T) {
@@ -195,6 +198,54 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	}
 	if !foundAmberResidentReviewOperatorOnly {
 		t.Fatalf("expected amber resident memory self-review to remain operator-only, got %#v", amber)
+	}
+}
+
+func TestBuildHostDecisionAssistCarriesCategorizedFollowupPreviews(t *testing.T) {
+	rawChat := strings.Repeat("resident private long pending chat body ", 8)
+	store := worldstate.New(t.TempDir())
+	now := time.Date(2026, 6, 17, 14, 0, 0, 0, time.UTC)
+	if _, err := store.AppendResidentToChenglin("jade", rawChat, now); err != nil {
+		t.Fatalf("append chat: %v", err)
+	}
+	if _, err := store.CreateResidentTicket("jade", "Need disk", strings.Repeat("ticket body ", 20), worldstate.TicketPriorityMedium, now.Add(time.Second)); err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	if _, err := store.CreateHostIntervention("jade", "maintenance", "Planned maintenance", strings.Repeat("maintenance body ", 20), "chenglin", now.Add(2*time.Second)); err != nil {
+		t.Fatalf("create intervention: %v", err)
+	}
+	inbox, err := store.ReadHostInboxSummary(10, 10)
+	if err != nil {
+		t.Fatalf("read inbox: %v", err)
+	}
+	followups, err := store.ReadHostFollowups(10)
+	if err != nil {
+		t.Fatalf("read followups: %v", err)
+	}
+	summary := SummarizeHostInspect(HostInspectOutput{
+		Inventory: InventorySnapshot{CollectedAt: "2026-06-17T14:00:00Z"},
+		ResidentFacts: []ResidentRuntimeFact{
+			{ResidentID: "jade", Status: "Running"},
+		},
+		Inbox:     inbox,
+		Followups: followups,
+	})
+
+	out := BuildHostDecisionAssist(summary)
+	if len(out.TopPendingChats) != 1 {
+		t.Fatalf("expected categorized pending chat preview in decision assist: %#v", out.TopPendingChats)
+	}
+	if len(out.TopOpenTickets) != 1 || out.TopOpenTickets[0].Title != "Need disk" {
+		t.Fatalf("expected categorized open ticket in decision assist: %#v", out.TopOpenTickets)
+	}
+	if len(out.TopHostInterventions) != 1 || out.TopHostInterventions[0].Title != "Planned maintenance" {
+		t.Fatalf("expected categorized host intervention in decision assist: %#v", out.TopHostInterventions)
+	}
+	if strings.Contains(strings.Join(out.WorldEventCandidates, "\n"), rawChat) {
+		t.Fatalf("world event candidates must not contain raw pending chat body: %#v", out.WorldEventCandidates)
+	}
+	if out.TopPendingChats[0].Preview == rawChat {
+		t.Fatalf("decision assist should carry preview, not raw pending chat body")
 	}
 }
 

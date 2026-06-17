@@ -3,6 +3,8 @@ package broker
 import (
 	"fmt"
 	"sort"
+
+	"ai-arena/internal/worldstate"
 )
 
 const (
@@ -12,11 +14,14 @@ const (
 
 func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 	out := HostDecisionAssist{
-		CollectedAt:   summary.CollectedAt,
-		InventoryPath: summary.InventoryPath,
-		Capacity:      summary.Capacity,
-		Severity:      "normal",
-		Headline:      "No immediate host action is suggested.",
+		CollectedAt:          summary.CollectedAt,
+		InventoryPath:        summary.InventoryPath,
+		Capacity:             summary.Capacity,
+		Severity:             "normal",
+		Headline:             "No immediate host action is suggested.",
+		TopPendingChats:      append([]worldstate.HostFollowup(nil), summary.TopPendingChats...),
+		TopOpenTickets:       append([]worldstate.ResidentTicketSummary(nil), summary.TopOpenTickets...),
+		TopHostInterventions: append([]worldstate.HostFollowup(nil), summary.TopHostInterventions...),
 	}
 
 	for _, pool := range summary.Capacity.Pools {

@@ -204,16 +204,19 @@ type ResidentInspectRisk struct {
 }
 
 type HostDecisionAssist struct {
-	CollectedAt              string                  `json:"collected_at"`
-	InventoryPath            string                  `json:"inventory_path,omitempty"`
-	Capacity                 HostCapacityReport      `json:"capacity"`
-	Severity                 string                  `json:"severity"`
-	Headline                 string                  `json:"headline"`
-	Reasons                  []string                `json:"reasons"`
-	Actions                  []HostSuggestedAction   `json:"actions"`
-	OperatorOnlyObservations []string                `json:"operator_only_observations,omitempty"`
-	WorldEventCandidates     []string                `json:"world_event_candidates,omitempty"`
-	ResidentFocus            []ResidentDecisionFocus `json:"resident_focus"`
+	CollectedAt              string                             `json:"collected_at"`
+	InventoryPath            string                             `json:"inventory_path,omitempty"`
+	Capacity                 HostCapacityReport                 `json:"capacity"`
+	Severity                 string                             `json:"severity"`
+	Headline                 string                             `json:"headline"`
+	Reasons                  []string                           `json:"reasons"`
+	Actions                  []HostSuggestedAction              `json:"actions"`
+	OperatorOnlyObservations []string                           `json:"operator_only_observations,omitempty"`
+	WorldEventCandidates     []string                           `json:"world_event_candidates,omitempty"`
+	TopPendingChats          []worldstate.HostFollowup          `json:"top_pending_chats,omitempty"`
+	TopOpenTickets           []worldstate.ResidentTicketSummary `json:"top_open_tickets,omitempty"`
+	TopHostInterventions     []worldstate.HostFollowup          `json:"top_host_interventions,omitempty"`
+	ResidentFocus            []ResidentDecisionFocus            `json:"resident_focus"`
 }
 
 type HostMaintenanceDraftOutput struct {
