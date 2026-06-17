@@ -46,7 +46,8 @@ func TestSummarizeHostInspect(t *testing.T) {
 		Followups: []worldstate.HostFollowup{
 			{Kind: "chat_reply", Resident: "jade", TargetID: "msg-1", Preview: "hello"},
 			{Kind: "ticket_reply", Resident: "amber"},
-			{Kind: "host_intervention", Resident: "amber"},
+			{Kind: "host_intervention", Resident: "amber", Title: "Planned memory maintenance", Status: "open"},
+			{Kind: "host_intervention", Resident: "onyx", Title: "Planned CPU maintenance", Status: "in_progress", Maintenance: map[string]string{"maintenance_state": "in_progress", "operator": "chenglin"}},
 		},
 	}
 
@@ -66,7 +67,7 @@ func TestSummarizeHostInspect(t *testing.T) {
 	if summary.RuntimeMemoryObservationResidents != 1 {
 		t.Fatalf("expected one runtime memory observation, got %#v", summary)
 	}
-	if summary.PendingChatResidents != 1 || summary.OpenTicketResidents != 1 || summary.InterventionCount != 1 {
+	if summary.PendingChatResidents != 1 || summary.OpenTicketResidents != 1 || summary.InterventionCount != 2 {
 		t.Fatalf("unexpected followup aggregation: %#v", summary)
 	}
 	if len(summary.TopPendingChats) != 1 || summary.TopPendingChats[0].TargetID != "msg-1" || summary.TopPendingChats[0].Preview != "hello" {
@@ -75,8 +76,14 @@ func TestSummarizeHostInspect(t *testing.T) {
 	if len(summary.TopOpenTickets) != 1 || summary.TopOpenTickets[0].Resident != "amber" {
 		t.Fatalf("expected top open ticket in summary: %#v", summary.TopOpenTickets)
 	}
-	if len(summary.TopHostInterventions) != 1 || summary.TopHostInterventions[0].Resident != "amber" {
+	if len(summary.TopHostInterventions) != 2 || summary.TopHostInterventions[0].Resident != "amber" {
 		t.Fatalf("expected top host intervention in summary: %#v", summary.TopHostInterventions)
+	}
+	if summary.MaintenanceInterventions == nil {
+		t.Fatalf("expected maintenance intervention summary")
+	}
+	if summary.MaintenanceInterventions.Total != 2 || summary.MaintenanceInterventions.Planned != 1 || summary.MaintenanceInterventions.InProgress != 1 {
+		t.Fatalf("unexpected maintenance intervention summary: %#v", summary.MaintenanceInterventions)
 	}
 	if len(summary.ResidentRisk) != 3 {
 		t.Fatalf("unexpected resident risk count: %#v", summary)

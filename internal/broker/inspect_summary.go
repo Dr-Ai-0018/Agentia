@@ -44,6 +44,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	pendingChat := map[string]struct{}{}
 	openTicket := map[string]struct{}{}
 	openIntervention := map[string]struct{}{}
+	maintenanceInterventions := MaintenanceInterventionSummary{}
 	memoryAttention := map[string]int{}
 	memoryDuplicateGroups := map[string]int{}
 	memoryMaintenanceByResident := map[string]ResidentMemoryMaintenance{}
@@ -114,10 +115,14 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			if item.Resident != "" {
 				openIntervention[item.Resident] = struct{}{}
 			}
+			addMaintenanceInterventionSummary(&maintenanceInterventions, item)
 			if len(summary.TopHostInterventions) < 5 {
 				summary.TopHostInterventions = append(summary.TopHostInterventions, item)
 			}
 		}
+	}
+	if maintenanceInterventions.Total > 0 {
+		summary.MaintenanceInterventions = &maintenanceInterventions
 	}
 	summary.PendingChatResidents = len(pendingChat)
 	summary.OpenTicketResidents = len(openTicket)
@@ -197,6 +202,37 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 func hasResident(set map[string]struct{}, resident string) bool {
 	_, ok := set[resident]
 	return ok
+}
+
+func addMaintenanceInterventionSummary(summary *MaintenanceInterventionSummary, item worldstate.HostFollowup) {
+	if summary == nil || strings.TrimSpace(item.Kind) != "host_intervention" {
+		return
+	}
+	if strings.TrimSpace(item.Title) == "" && len(item.Maintenance) == 0 {
+		return
+	}
+	if !strings.Contains(strings.ToLower(item.Title), "maintenance") && len(item.Maintenance) == 0 {
+		return
+	}
+	summary.Total++
+	state := strings.TrimSpace(item.Maintenance["maintenance_state"])
+	if state == "" {
+		state = strings.TrimSpace(item.Status)
+	}
+	switch strings.ToLower(state) {
+	case "planned", "open":
+		summary.Planned++
+	case "in_progress":
+		summary.InProgress++
+	case "completed":
+		summary.Completed++
+	case "failed":
+		summary.Failed++
+	case "rolled_back":
+		summary.RolledBack++
+	default:
+		summary.Unknown++
+	}
 }
 
 func memoryMaintenanceCount(items map[string]ResidentMemoryMaintenance, resident string, value func(ResidentMemoryMaintenance) int) int {

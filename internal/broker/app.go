@@ -157,11 +157,22 @@ type HostInspectSummary struct {
 	LatestRunNeedsAttention           bool                               `json:"latest_run_needs_attention,omitempty"`
 	FollowupCount                     int                                `json:"followup_count"`
 	InterventionCount                 int                                `json:"intervention_count"`
+	MaintenanceInterventions          *MaintenanceInterventionSummary    `json:"maintenance_interventions,omitempty"`
 	TopPendingChats                   []worldstate.HostFollowup          `json:"top_pending_chats,omitempty"`
 	TopOpenTickets                    []worldstate.ResidentTicketSummary `json:"top_open_tickets,omitempty"`
 	TopHostInterventions              []worldstate.HostFollowup          `json:"top_host_interventions,omitempty"`
 	TopFollowups                      []worldstate.HostFollowup          `json:"top_followups"`
 	ResidentRisk                      []ResidentInspectRisk              `json:"resident_risk"`
+}
+
+type MaintenanceInterventionSummary struct {
+	Total      int `json:"total,omitempty"`
+	Planned    int `json:"planned,omitempty"`
+	InProgress int `json:"in_progress,omitempty"`
+	Completed  int `json:"completed,omitempty"`
+	Failed     int `json:"failed,omitempty"`
+	RolledBack int `json:"rolled_back,omitempty"`
+	Unknown    int `json:"unknown,omitempty"`
 }
 
 type ResidentInspectRisk struct {
