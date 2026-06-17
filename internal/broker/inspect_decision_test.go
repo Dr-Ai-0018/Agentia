@@ -43,26 +43,54 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	if len(out.Capacity.Pools) != 1 {
 		t.Fatalf("expected capacity to be carried into decision assist: %#v", out)
 	}
+	if len(out.OperatorOnlyObservations) == 0 {
+		t.Fatalf("expected operator-only observations, got %#v", out)
+	}
+	if len(out.WorldEventCandidates) == 0 {
+		t.Fatalf("expected world event candidates, got %#v", out)
+	}
 	foundMemoryLifecycleAction := false
 	foundMemoryCompactionAction := false
 	foundOrchestratorBudgetAction := false
 	foundOrchestratorFailureAction := false
 	foundRuntimeMemoryAction := false
+	foundWorldVisibleChatAction := false
 	for _, action := range out.Actions {
 		if action.Kind == "memory_lifecycle_review" {
 			foundMemoryLifecycleAction = true
+			if action.Visibility != decisionVisibilityOperatorOnly {
+				t.Fatalf("expected memory lifecycle action to be operator-only, got %#v", action)
+			}
 		}
 		if action.Kind == "memory_compaction_review" {
 			foundMemoryCompactionAction = true
+			if action.Visibility != decisionVisibilityOperatorOnly {
+				t.Fatalf("expected memory compaction action to be operator-only, got %#v", action)
+			}
 		}
 		if action.Kind == "runtime_budget_review" {
 			foundOrchestratorBudgetAction = true
+			if action.Visibility != decisionVisibilityOperatorOnly {
+				t.Fatalf("expected runtime budget action to be operator-only, got %#v", action)
+			}
 		}
 		if action.Kind == "orchestrator_failure_review" {
 			foundOrchestratorFailureAction = true
+			if action.Visibility != decisionVisibilityOperatorOnly {
+				t.Fatalf("expected orchestrator failure action to be operator-only, got %#v", action)
+			}
 		}
 		if action.Kind == "runtime_memory_observation" {
 			foundRuntimeMemoryAction = true
+			if action.Visibility != decisionVisibilityOperatorOnly {
+				t.Fatalf("expected runtime memory action to be operator-only, got %#v", action)
+			}
+		}
+		if action.Kind == "chat_reply" {
+			foundWorldVisibleChatAction = true
+			if action.Visibility != decisionVisibilityWorldEventCandidate {
+				t.Fatalf("expected chat action to be a world event candidate, got %#v", action)
+			}
 		}
 	}
 	if !foundMemoryLifecycleAction {
@@ -80,20 +108,35 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	if !foundRuntimeMemoryAction {
 		t.Fatalf("expected runtime memory observation action, got %#v", out.Actions)
 	}
+	if !foundWorldVisibleChatAction {
+		t.Fatalf("expected world-visible chat action, got %#v", out.Actions)
+	}
 	var onyx ResidentDecisionFocus
+	var amber ResidentDecisionFocus
 	for _, focus := range out.ResidentFocus {
+		if focus.ResidentID == "amber" {
+			amber = focus
+		}
 		if focus.ResidentID == "onyx" {
 			onyx = focus
-			break
 		}
 	}
 	foundOnyxRuntimeReason := false
-	for _, reason := range onyx.Reasons {
+	for _, reason := range onyx.OperatorOnlyObservations {
 		if strings.Contains(reason, "host QEMU RSS") {
 			foundOnyxRuntimeReason = true
 		}
 	}
 	if !foundOnyxRuntimeReason {
 		t.Fatalf("expected onyx runtime memory reason, got %#v", onyx)
+	}
+	foundAmberTicketCandidate := false
+	for _, reason := range amber.WorldEventCandidates {
+		if strings.Contains(reason, "open ticket") {
+			foundAmberTicketCandidate = true
+		}
+	}
+	if !foundAmberTicketCandidate {
+		t.Fatalf("expected amber ticket follow-up to be a world event candidate, got %#v", amber)
 	}
 }

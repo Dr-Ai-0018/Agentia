@@ -127,27 +127,32 @@ type ResidentInspectRisk struct {
 }
 
 type HostDecisionAssist struct {
-	CollectedAt   string                  `json:"collected_at"`
-	InventoryPath string                  `json:"inventory_path,omitempty"`
-	Capacity      HostCapacityReport      `json:"capacity"`
-	Severity      string                  `json:"severity"`
-	Headline      string                  `json:"headline"`
-	Reasons       []string                `json:"reasons"`
-	Actions       []HostSuggestedAction   `json:"actions"`
-	ResidentFocus []ResidentDecisionFocus `json:"resident_focus"`
+	CollectedAt              string                  `json:"collected_at"`
+	InventoryPath            string                  `json:"inventory_path,omitempty"`
+	Capacity                 HostCapacityReport      `json:"capacity"`
+	Severity                 string                  `json:"severity"`
+	Headline                 string                  `json:"headline"`
+	Reasons                  []string                `json:"reasons"`
+	Actions                  []HostSuggestedAction   `json:"actions"`
+	OperatorOnlyObservations []string                `json:"operator_only_observations,omitempty"`
+	WorldEventCandidates     []string                `json:"world_event_candidates,omitempty"`
+	ResidentFocus            []ResidentDecisionFocus `json:"resident_focus"`
 }
 
 type HostSuggestedAction struct {
 	Kind       string `json:"kind"`
 	Priority   string `json:"priority"`
+	Visibility string `json:"visibility"`
 	ResidentID string `json:"resident_id,omitempty"`
 	Summary    string `json:"summary"`
 }
 
 type ResidentDecisionFocus struct {
-	ResidentID string   `json:"resident_id"`
-	Priority   string   `json:"priority"`
-	Reasons    []string `json:"reasons"`
+	ResidentID               string   `json:"resident_id"`
+	Priority                 string   `json:"priority"`
+	Reasons                  []string `json:"reasons"`
+	OperatorOnlyObservations []string `json:"operator_only_observations,omitempty"`
+	WorldEventCandidates     []string `json:"world_event_candidates,omitempty"`
 }
 
 type CallSpec struct {
