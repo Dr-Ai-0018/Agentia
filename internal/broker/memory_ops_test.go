@@ -218,6 +218,221 @@ func TestRunMemoryLifecycleSafeApplySettlesStaleDecayingReviewSchedule(t *testin
 	}
 }
 
+func TestRunMemoryReviewDryRunDoesNotMutate(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC()
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:        "amber-relationship-1",
+			Layer:     memory.LayerShort,
+			Status:    memory.StatusActive,
+			Domain:    memory.DomainRelationships,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "A world-facing thread was opened.",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	report, err := app.RunMemoryReview(MemoryReviewInput{
+		ResidentID: "amber",
+		MemoryID:   "amber-relationship-1",
+		Action:     "rewrite",
+		Summary:    "Amber has an open world-facing relationship thread with Chenglin.",
+		Layer:      string(memory.LayerLong),
+		Reason:     "operator rewrote a generic relationship placeholder into a useful continuity summary",
+	})
+	if err != nil {
+		t.Fatalf("run memory review dry-run: %v", err)
+	}
+	if report.Apply || report.After.Summary != "Amber has an open world-facing relationship thread with Chenglin." || report.After.Layer != memory.LayerLong {
+		t.Fatalf("unexpected dry-run report: %#v", report)
+	}
+	record, ok, err := store.GetAbstractMemory("amber", "amber-relationship-1")
+	if err != nil || !ok {
+		t.Fatalf("get memory after dry-run: ok=%v err=%v", ok, err)
+	}
+	if record.Summary != "A world-facing thread was opened." || record.Layer != memory.LayerShort {
+		t.Fatalf("dry-run mutated stored memory: %#v", record)
+	}
+}
+
+func TestRunMemoryReviewApplyRewritesMemory(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC()
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:        "amber-relationship-1",
+			Layer:     memory.LayerShort,
+			Status:    memory.StatusActive,
+			Domain:    memory.DomainRelationships,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "A world-facing thread was opened.",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	report, err := app.RunMemoryReview(MemoryReviewInput{
+		ResidentID: "amber",
+		MemoryID:   "amber-relationship-1",
+		Action:     "rewrite",
+		Summary:    "Amber has an open world-facing relationship thread with Chenglin.",
+		Layer:      string(memory.LayerLong),
+		Reason:     "operator rewrote a generic relationship placeholder into a useful continuity summary",
+		Apply:      true,
+	})
+	if err != nil {
+		t.Fatalf("run memory review apply: %v", err)
+	}
+	if !report.Apply || report.After.Summary != "Amber has an open world-facing relationship thread with Chenglin." || report.After.Layer != memory.LayerLong {
+		t.Fatalf("unexpected apply report: %#v", report)
+	}
+	record, ok, err := store.GetAbstractMemory("amber", "amber-relationship-1")
+	if err != nil || !ok {
+		t.Fatalf("get memory after apply: ok=%v err=%v", ok, err)
+	}
+	if record.Summary != "Amber has an open world-facing relationship thread with Chenglin." || record.Layer != memory.LayerLong {
+		t.Fatalf("apply did not mutate stored memory: %#v", record)
+	}
+	if record.Governance.ReviewReason == "" || record.Governance.ReviewState != "resolved" {
+		t.Fatalf("expected audit review fields: %#v", record.Governance)
+	}
+}
+
+func TestRunMemoryReviewRejectsProtectedOperatorRewrite(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC()
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:        "amber-relationship-protected",
+			Layer:     memory.LayerShort,
+			Status:    memory.StatusActive,
+			Domain:    memory.DomainRelationships,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "A world-facing thread was opened.",
+		DecisionAction: memory.ActionCreate,
+		Governance: memory.GovernanceMeta{
+			ProtectedFrom: []string{"host_rewrite", "host_delete"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	_, err := app.RunMemoryReview(MemoryReviewInput{
+		ResidentID: "amber",
+		MemoryID:   "amber-relationship-protected",
+		Action:     "rewrite",
+		Summary:    "Operator rewrite should not be allowed.",
+	})
+	if err == nil {
+		t.Fatalf("expected protected operator rewrite to fail")
+	}
+	record, ok, err := store.GetAbstractMemory("amber", "amber-relationship-protected")
+	if err != nil || !ok {
+		t.Fatalf("get memory after rejected rewrite: ok=%v err=%v", ok, err)
+	}
+	if record.Summary != "A world-facing thread was opened." {
+		t.Fatalf("rejected rewrite mutated memory: %#v", record)
+	}
+}
+
+func TestRunMemoryReviewMarkProtectedMemoryForResidentReview(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC()
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:        "amber-relationship-protected",
+			Layer:     memory.LayerShort,
+			Status:    memory.StatusActive,
+			Domain:    memory.DomainRelationships,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "A world-facing thread was opened.",
+		DecisionAction: memory.ActionCreate,
+		Governance: memory.GovernanceMeta{
+			ReviewState:   "none",
+			HostMay:       []string{"mark"},
+			ProtectedFrom: []string{"host_rewrite", "host_delete"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	report, err := app.RunMemoryReview(MemoryReviewInput{
+		ResidentID: "amber",
+		MemoryID:   "amber-relationship-protected",
+		Action:     "mark",
+		Reason:     "This generic relationship placeholder should be reviewed by Amber.",
+	})
+	if err != nil {
+		t.Fatalf("run memory mark dry-run: %v", err)
+	}
+	if report.Apply || report.After.Governance.ReviewState != "needs_resident_review" {
+		t.Fatalf("unexpected mark dry-run report: %#v", report)
+	}
+	record, ok, err := store.GetAbstractMemory("amber", "amber-relationship-protected")
+	if err != nil || !ok {
+		t.Fatalf("get memory after dry-run: ok=%v err=%v", ok, err)
+	}
+	if record.Governance.ReviewState != "none" {
+		t.Fatalf("mark dry-run mutated stored memory: %#v", record.Governance)
+	}
+
+	report, err = app.RunMemoryReview(MemoryReviewInput{
+		ResidentID: "amber",
+		MemoryID:   "amber-relationship-protected",
+		Action:     "mark",
+		Reason:     "This generic relationship placeholder should be reviewed by Amber.",
+		Apply:      true,
+	})
+	if err != nil {
+		t.Fatalf("run memory mark apply: %v", err)
+	}
+	if !report.Apply || report.After.Governance.ReviewState != "needs_resident_review" || report.After.Governance.FlaggedBy != "operator" {
+		t.Fatalf("unexpected mark apply report: %#v", report)
+	}
+	record, ok, err = store.GetAbstractMemory("amber", "amber-relationship-protected")
+	if err != nil || !ok {
+		t.Fatalf("get memory after apply: ok=%v err=%v", ok, err)
+	}
+	if record.Governance.ReviewState != "needs_resident_review" || record.Governance.FlaggedBy != "operator" {
+		t.Fatalf("mark apply did not update stored governance: %#v", record.Governance)
+	}
+}
+
+func TestRunMemoryReviewRejectsInvalidAction(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	_, err := app.RunMemoryReview(MemoryReviewInput{
+		ResidentID: "amber",
+		MemoryID:   "amber-relationship-1",
+		Action:     "promote",
+	})
+	if err == nil {
+		t.Fatalf("expected invalid action error")
+	}
+}
+
 func TestRunMemoryMaintenanceSummaryAggregatesDryRuns(t *testing.T) {
 	root := t.TempDir()
 	app := New(root)
@@ -239,8 +454,8 @@ func TestRunMemoryMaintenanceSummaryAggregatesDryRuns(t *testing.T) {
 	}
 	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
 		Record: memory.Record{
-			ID:             "amber-instant-old",
-			Layer:          memory.LayerInstant,
+			ID:             "amber-short-old",
+			Layer:          memory.LayerShort,
 			Status:         memory.StatusActive,
 			CreatedAt:      now,
 			UpdatedAt:      now,
@@ -260,7 +475,7 @@ func TestRunMemoryMaintenanceSummaryAggregatesDryRuns(t *testing.T) {
 	if summary.ResidentCount == 0 || summary.ResidentsAttention != 1 {
 		t.Fatalf("unexpected resident counts: %#v", summary)
 	}
-	if summary.LifecycleAttention != 1 || summary.DuplicateHistoryGroups != 1 {
+	if summary.LifecycleAttention != 1 || summary.OperatorDecayCandidates != 1 || summary.DuplicateHistoryGroups != 1 {
 		t.Fatalf("unexpected maintenance totals: %#v", summary)
 	}
 	if summary.BeforeHistoryGroups != 2 || summary.AfterHistoryGroups != 1 {
@@ -283,9 +498,19 @@ func TestMemoryMaintenanceRecommendation(t *testing.T) {
 		t.Fatalf("unexpected combined recommendation: %q %q", action, summary)
 	}
 
-	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{LifecycleAttention: 1})
-	if action != "lifecycle_dry_run" {
+	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{LifecycleAttention: 1, OperatorDecayCandidates: 1})
+	if action != "lifecycle_safe_decay_dry_run" {
 		t.Fatalf("unexpected lifecycle recommendation: %q", action)
+	}
+
+	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{LifecycleAttention: 1, ResidentReviewQueue: 1})
+	if action != "resident_memory_review_queue" {
+		t.Fatalf("unexpected resident review recommendation: %q", action)
+	}
+
+	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{LifecycleAttention: 1, OperatorReviewRequired: 1})
+	if action != "lifecycle_operator_review" {
+		t.Fatalf("unexpected operator review recommendation: %q", action)
 	}
 
 	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{DuplicateHistoryGroups: 1})

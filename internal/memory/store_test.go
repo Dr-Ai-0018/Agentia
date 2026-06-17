@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -310,6 +311,47 @@ func TestFileStoreDoesNotLeaveTempFiles(t *testing.T) {
 		t.Fatalf("upsert abstract memory: %v", err)
 	}
 
+	matches, err := filepath.Glob(filepath.Join(root, "*.tmp"))
+	if err != nil {
+		t.Fatalf("glob tmp files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected no temp files, got %#v", matches)
+	}
+}
+
+func TestFileStoreConcurrentWritesDoNotConflictOnTempName(t *testing.T) {
+	root := t.TempDir()
+	store := NewFileStore(root)
+	now := time.Now()
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, id := range []string{"amber-memory-a", "amber-memory-b"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			errs <- store.UpsertAbstractMemory(AbstractMemory{
+				Record: Record{
+					ID:        id,
+					Layer:     LayerShort,
+					Status:    StatusActive,
+					CreatedAt: now,
+					UpdatedAt: now,
+				},
+				Resident:       "amber",
+				Summary:        id,
+				DecisionAction: ActionCreate,
+			})
+		}(id)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent write failed: %v", err)
+		}
+	}
 	matches, err := filepath.Glob(filepath.Join(root, "*.tmp"))
 	if err != nil {
 		t.Fatalf("glob tmp files: %v", err)
@@ -660,6 +702,49 @@ func TestReviewAbstractMemoryRewrite(t *testing.T) {
 	}
 	if updated.Status != StatusActive {
 		t.Fatalf("expected active status, got %s", updated.Status)
+	}
+}
+
+func TestOperatorReviewCannotRewriteProtectedMemory(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 6, 7, 6, 0, 0, 0, time.UTC)
+	err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:        "amber-short-protected",
+			Layer:     LayerShort,
+			Domain:    DomainRelationships,
+			Status:    StatusActive,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		Resident: "amber",
+		Summary:  "A world-facing thread was opened.",
+		Governance: GovernanceMeta{
+			ProtectedFrom: []string{"host_rewrite", "host_delete"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	_, err = store.ReviewAbstractMemory("amber", "amber-short-protected", now.Add(time.Hour), MemoryReviewRequest{
+		Action:     ActionUpdate,
+		NewSummary: "Operator rewrite should not be allowed.",
+		Reviewer:   "operator",
+	})
+	if err == nil {
+		t.Fatalf("expected operator rewrite to be rejected")
+	}
+
+	updated, err := store.ReviewAbstractMemory("amber", "amber-short-protected", now.Add(time.Hour), MemoryReviewRequest{
+		Action:     ActionUpdate,
+		NewSummary: "Resident rewrite is still allowed.",
+	})
+	if err != nil {
+		t.Fatalf("resident rewrite should still be allowed: %v", err)
+	}
+	if updated.Summary != "Resident rewrite is still allowed." || updated.Governance.FlaggedBy != "resident" {
+		t.Fatalf("unexpected resident rewrite result: %#v", updated)
 	}
 }
 

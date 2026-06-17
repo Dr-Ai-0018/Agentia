@@ -67,27 +67,33 @@ type HostInspectOutput struct {
 }
 
 type ResidentMemoryMaintenance struct {
-	ResidentID             string `json:"resident_id"`
-	LifecycleAttention     int    `json:"lifecycle_attention,omitempty"`
-	DuplicateHistoryGroups int    `json:"duplicate_history_groups,omitempty"`
-	BeforeHistoryGroups    int    `json:"before_history_groups,omitempty"`
-	AfterHistoryGroups     int    `json:"after_history_groups,omitempty"`
-	RecommendedAction      string `json:"recommended_action,omitempty"`
-	Summary                string `json:"summary,omitempty"`
-	NeedsAttention         bool   `json:"needs_attention"`
+	ResidentID              string `json:"resident_id"`
+	LifecycleAttention      int    `json:"lifecycle_attention,omitempty"`
+	OperatorDecayCandidates int    `json:"operator_decay_candidates,omitempty"`
+	ResidentReviewQueue     int    `json:"resident_review_queue,omitempty"`
+	OperatorReviewRequired  int    `json:"operator_review_required,omitempty"`
+	DuplicateHistoryGroups  int    `json:"duplicate_history_groups,omitempty"`
+	BeforeHistoryGroups     int    `json:"before_history_groups,omitempty"`
+	AfterHistoryGroups      int    `json:"after_history_groups,omitempty"`
+	RecommendedAction       string `json:"recommended_action,omitempty"`
+	Summary                 string `json:"summary,omitempty"`
+	NeedsAttention          bool   `json:"needs_attention"`
 }
 
 type MemoryMaintenanceSummary struct {
-	CheckedAt              string                      `json:"checked_at"`
-	ApplyMode              string                      `json:"apply_mode"`
-	OperatorPolicy         string                      `json:"operator_policy"`
-	Residents              []ResidentMemoryMaintenance `json:"residents"`
-	ResidentCount          int                         `json:"resident_count"`
-	ResidentsAttention     int                         `json:"residents_attention"`
-	LifecycleAttention     int                         `json:"lifecycle_attention"`
-	DuplicateHistoryGroups int                         `json:"duplicate_history_groups"`
-	BeforeHistoryGroups    int                         `json:"before_history_groups"`
-	AfterHistoryGroups     int                         `json:"after_history_groups"`
+	CheckedAt               string                      `json:"checked_at"`
+	ApplyMode               string                      `json:"apply_mode"`
+	OperatorPolicy          string                      `json:"operator_policy"`
+	Residents               []ResidentMemoryMaintenance `json:"residents"`
+	ResidentCount           int                         `json:"resident_count"`
+	ResidentsAttention      int                         `json:"residents_attention"`
+	LifecycleAttention      int                         `json:"lifecycle_attention"`
+	OperatorDecayCandidates int                         `json:"operator_decay_candidates,omitempty"`
+	ResidentReviewQueue     int                         `json:"resident_review_queue,omitempty"`
+	OperatorReviewRequired  int                         `json:"operator_review_required,omitempty"`
+	DuplicateHistoryGroups  int                         `json:"duplicate_history_groups"`
+	BeforeHistoryGroups     int                         `json:"before_history_groups"`
+	AfterHistoryGroups      int                         `json:"after_history_groups"`
 }
 
 type MemoryLifecycleSafeApplyReport struct {
@@ -102,6 +108,28 @@ type MemoryLifecycleSafeApplyReport struct {
 	CandidateMemoryIDs  []string               `json:"candidate_memory_ids,omitempty"`
 	Skipped             []memory.LifecycleItem `json:"skipped,omitempty"`
 	PostLifecycleReport memory.LifecycleReport `json:"post_lifecycle_report,omitempty"`
+}
+
+type MemoryReviewInput struct {
+	ResidentID string `json:"resident_id"`
+	MemoryID   string `json:"memory_id"`
+	Action     string `json:"action"`
+	Summary    string `json:"summary,omitempty"`
+	Text       string `json:"text,omitempty"`
+	Layer      string `json:"layer,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Apply      bool   `json:"apply"`
+}
+
+type MemoryReviewReport struct {
+	ResidentID string                `json:"resident_id"`
+	MemoryID   string                `json:"memory_id"`
+	Apply      bool                  `json:"apply"`
+	CheckedAt  string                `json:"checked_at"`
+	Action     string                `json:"action"`
+	Reason     string                `json:"reason,omitempty"`
+	Before     memory.AbstractMemory `json:"before"`
+	After      memory.AbstractMemory `json:"after"`
 }
 
 type HostInspectSummary struct {

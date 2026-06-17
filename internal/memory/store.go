@@ -179,6 +179,7 @@ type MemoryReviewRequest struct {
 	TargetLayer  Layer
 	ReasonNote   string
 	ResidentNote string
+	Reviewer     string
 }
 
 type MemoryStore struct {
@@ -762,6 +763,13 @@ func (s *FileStore) Root() string {
 }
 
 func applyMemoryReview(now time.Time, record AbstractMemory, review MemoryReviewRequest) (AbstractMemory, error) {
+	reviewer := strings.TrimSpace(review.Reviewer)
+	if reviewer == "" {
+		reviewer = "resident"
+	}
+	if err := authorizeMemoryReview(record, review.Action, reviewer); err != nil {
+		return AbstractMemory{}, err
+	}
 	switch review.Action {
 	case ActionRetain:
 		record.Record = ApplyDecision(now, record.Record, Decision{
@@ -832,11 +840,36 @@ func applyMemoryReview(now time.Time, record AbstractMemory, review MemoryReview
 	if note := strings.TrimSpace(review.ResidentNote); note != "" {
 		record.Tags = append(record.Tags, "resident_reviewed")
 	}
-	record.Governance.FlaggedBy = "resident"
+	record.Governance.FlaggedBy = reviewer
 	record.Governance.FlaggedAt = now
 	record.Governance.Quality = fallbackReviewQuality(record.Governance.Quality, record)
 	record.Tags = uniqueTrimmed(record.Tags)
 	return record, nil
+}
+
+func authorizeMemoryReview(record AbstractMemory, action Action, reviewer string) error {
+	if reviewer != "operator" {
+		return nil
+	}
+	protected := map[string]struct{}{}
+	for _, value := range record.Governance.ProtectedFrom {
+		protected[strings.TrimSpace(value)] = struct{}{}
+	}
+	switch action {
+	case ActionUpdate, ActionSummarize:
+		if _, ok := protected["host_rewrite"]; ok {
+			return errors.New("memory is protected from host rewrite")
+		}
+	case ActionDelete:
+		if _, ok := protected["host_delete"]; ok {
+			return errors.New("memory is protected from host delete")
+		}
+	case ActionDecay:
+		if _, ok := protected["host_rewrite"]; ok {
+			return errors.New("memory is protected from host demotion")
+		}
+	}
+	return nil
 }
 
 func fallbackReviewQuality(current string, record AbstractMemory) string {
@@ -1165,13 +1198,33 @@ func sortAbstractMemories(records []AbstractMemory) {
 }
 
 func atomicWriteResidentBundle(path string, data []byte, mode os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	tmpFile, err := os.CreateTemp(dir, base+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := tmpFile.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Chmod(mode); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
 		return err
 	}
+	cleanup = false
 	return nil
 }

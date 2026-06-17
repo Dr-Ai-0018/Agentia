@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-review|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -36,6 +36,9 @@ func main() {
 	limit := flag.Int("limit", 8, "Message limit for messages mode")
 	status := flag.String("status", "", "Optional status filter for messages mode")
 	messageID := flag.String("message-id", "", "Target message ID for reply/ticket-reply/get-ticket modes")
+	memoryID := flag.String("memory-id", "", "Target memory ID for memory-review mode")
+	memoryAction := flag.String("memory-action", "", "Memory review action: mark|keep|rewrite|compress|demote|delete")
+	memoryLayer := flag.String("memory-layer", "", "Optional memory target layer for memory-review mode")
 	body := flag.String("body", "", "Reply body for reply mode")
 	pathArg := flag.String("path", "", "Target file path for world quarantine modes")
 	priority := flag.String("priority", "", "Optional ticket priority filter or value: low|medium|high|urgent")
@@ -180,6 +183,21 @@ func main() {
 		printJSON(out)
 	case "memory-lifecycle-safe-apply":
 		out, err := app.RunMemoryLifecycleSafeApply(*residentID, *apply)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "memory-review":
+		out, err := app.RunMemoryReview(broker.MemoryReviewInput{
+			ResidentID: *residentID,
+			MemoryID:   *memoryID,
+			Action:     *memoryAction,
+			Summary:    *summary,
+			Text:       *body,
+			Layer:      *memoryLayer,
+			Reason:     *reason,
+			Apply:      *apply,
+		})
 		if err != nil {
 			exitf("%v", err)
 		}
