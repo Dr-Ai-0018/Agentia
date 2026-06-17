@@ -15,9 +15,14 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 		ResidentCount: len(out.ResidentFacts),
 		FollowupCount: len(out.Followups),
 		TopFollowups:  append([]worldstate.HostFollowup(nil), out.Followups...),
+		TopOpenTickets: append([]worldstate.ResidentTicketSummary(nil),
+			out.Inbox.OpenTickets...),
 	}
 	if len(summary.TopFollowups) > 5 {
 		summary.TopFollowups = summary.TopFollowups[:5]
+	}
+	if len(summary.TopOpenTickets) > 5 {
+		summary.TopOpenTickets = summary.TopOpenTickets[:5]
 	}
 	if out.LatestOrchestrator != nil {
 		latest := *out.LatestOrchestrator
@@ -96,6 +101,9 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			if item.Resident != "" {
 				pendingChat[item.Resident] = struct{}{}
 			}
+			if len(summary.TopPendingChats) < 5 {
+				summary.TopPendingChats = append(summary.TopPendingChats, item)
+			}
 		case "ticket_reply":
 			summary.OpenTicketCount++
 			if item.Resident != "" {
@@ -105,6 +113,9 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			summary.InterventionCount++
 			if item.Resident != "" {
 				openIntervention[item.Resident] = struct{}{}
+			}
+			if len(summary.TopHostInterventions) < 5 {
+				summary.TopHostInterventions = append(summary.TopHostInterventions, item)
 			}
 		}
 	}

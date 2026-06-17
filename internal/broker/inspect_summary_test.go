@@ -38,8 +38,13 @@ func TestSummarizeHostInspect(t *testing.T) {
 			{RunID: "orchestrator-20260616T082449.311075354Z", BudgetBlockedRuns: 1},
 			{RunID: "orchestrator-20260616T074926.897967380Z"},
 		},
+		Inbox: worldstate.HostInboxSummary{
+			OpenTickets: []worldstate.ResidentTicketSummary{
+				{ID: "ticket-1", Resident: "amber", Title: "Need help", Status: worldstate.TicketStatusOpen},
+			},
+		},
 		Followups: []worldstate.HostFollowup{
-			{Kind: "chat_reply", Resident: "jade"},
+			{Kind: "chat_reply", Resident: "jade", TargetID: "msg-1", Preview: "hello"},
 			{Kind: "ticket_reply", Resident: "amber"},
 			{Kind: "host_intervention", Resident: "amber"},
 		},
@@ -63,6 +68,15 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if summary.PendingChatResidents != 1 || summary.OpenTicketResidents != 1 || summary.InterventionCount != 1 {
 		t.Fatalf("unexpected followup aggregation: %#v", summary)
+	}
+	if len(summary.TopPendingChats) != 1 || summary.TopPendingChats[0].TargetID != "msg-1" || summary.TopPendingChats[0].Preview != "hello" {
+		t.Fatalf("expected top pending chat in summary: %#v", summary.TopPendingChats)
+	}
+	if len(summary.TopOpenTickets) != 1 || summary.TopOpenTickets[0].Resident != "amber" {
+		t.Fatalf("expected top open ticket in summary: %#v", summary.TopOpenTickets)
+	}
+	if len(summary.TopHostInterventions) != 1 || summary.TopHostInterventions[0].Resident != "amber" {
+		t.Fatalf("expected top host intervention in summary: %#v", summary.TopHostInterventions)
 	}
 	if len(summary.ResidentRisk) != 3 {
 		t.Fatalf("unexpected resident risk count: %#v", summary)
