@@ -23,7 +23,7 @@ func TestSummarizeHostInspect(t *testing.T) {
 			{Resident: "amber", NeedsAttention: 2},
 		},
 		MemoryMaintenance: []ResidentMemoryMaintenance{
-			{ResidentID: "amber", LifecycleAttention: 2, DuplicateHistoryGroups: 3, RecommendedAction: "lifecycle_then_compaction_dry_run", Summary: "inspect lifecycle first", NeedsAttention: true},
+			{ResidentID: "amber", LifecycleAttention: 2, OperatorDecayCandidates: 1, ResidentReviewQueue: 1, OperatorReviewRequired: 1, DuplicateHistoryGroups: 3, RecommendedAction: "lifecycle_then_compaction_dry_run", Summary: "inspect lifecycle first", NeedsAttention: true},
 		},
 		LatestOrchestrator: &OrchestratorInspectionDigest{
 			RunID:             "orchestrator-20260616T082449.311075354Z",
@@ -76,6 +76,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	if summary.MemoryMaintenanceResidents != 1 || summary.MemoryDuplicateHistoryGroups != 3 {
 		t.Fatalf("unexpected memory maintenance summary: %#v", summary)
 	}
+	if summary.MemoryOperatorDecayCandidates != 1 || summary.MemoryResidentReviewQueue != 1 || summary.MemoryOperatorReviewRequired != 1 {
+		t.Fatalf("unexpected memory governance summary: %#v", summary)
+	}
 	if summary.LatestOrchestrator == nil || summary.LatestOrchestrator.RunID == "" {
 		t.Fatalf("expected latest orchestrator report in summary: %#v", summary)
 	}
@@ -100,6 +103,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if amber.MemoryDuplicateHistoryGroups != 3 {
 		t.Fatalf("expected amber duplicate history groups, got %#v", amber)
+	}
+	if amber.MemoryOperatorDecayCandidates != 1 || amber.MemoryResidentReviewQueue != 1 || amber.MemoryOperatorReviewRequired != 1 {
+		t.Fatalf("expected amber memory governance fields, got %#v", amber)
 	}
 	if !amber.OrchestratorBudgetBlocked {
 		t.Fatalf("expected amber orchestrator budget block, got %#v", amber)

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"sort"
 	"strings"
 
 	"ai-arena/internal/worldstate"
@@ -40,6 +41,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	openIntervention := map[string]struct{}{}
 	memoryAttention := map[string]int{}
 	memoryDuplicateGroups := map[string]int{}
+	memoryMaintenanceByResident := map[string]ResidentMemoryMaintenance{}
 	memoryRecommendation := map[string]ResidentMemoryMaintenance{}
 	orchestratorByResident := map[string]OrchestratorResidentInspectionDigest{}
 	if out.LatestOrchestrator != nil {
@@ -56,9 +58,13 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 		memoryAttention[item.Resident] = item.NeedsAttention
 	}
 	for _, item := range out.MemoryMaintenance {
+		memoryMaintenanceByResident[item.ResidentID] = item
 		if item.LifecycleAttention > 0 {
 			memoryAttention[item.ResidentID] = item.LifecycleAttention
 		}
+		summary.MemoryOperatorDecayCandidates += item.OperatorDecayCandidates
+		summary.MemoryResidentReviewQueue += item.ResidentReviewQueue
+		summary.MemoryOperatorReviewRequired += item.OperatorReviewRequired
 		if item.DuplicateHistoryGroups > 0 {
 			memoryDuplicateGroups[item.ResidentID] = item.DuplicateHistoryGroups
 			summary.MemoryDuplicateHistoryGroups += item.DuplicateHistoryGroups
@@ -77,6 +83,11 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	}
 	for resident := range memoryDuplicateGroups {
 		maintenanceResidents[resident] = struct{}{}
+	}
+	for resident, item := range memoryMaintenanceByResident {
+		if item.OperatorDecayCandidates > 0 || item.ResidentReviewQueue > 0 || item.OperatorReviewRequired > 0 {
+			maintenanceResidents[resident] = struct{}{}
+		}
 	}
 	summary.MemoryMaintenanceResidents = len(maintenanceResidents)
 	for _, item := range out.Followups {
@@ -103,20 +114,29 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 	risks := make([]ResidentInspectRisk, 0, len(out.ResidentFacts))
 	for _, item := range out.ResidentFacts {
 		risk := ResidentInspectRisk{
-			ResidentID:                   item.ResidentID,
-			Status:                       item.Status,
-			DriftFields:                  append([]string(nil), item.DriftFields...),
-			HostRSSHighGuestUsageLow:     item.HostRSSHighGuestUsageLow,
-			HostQEMURSSMiB:               item.HostQEMURSSMiB,
-			IncusMemoryCurrentMiB:        item.IncusMemoryCurrentMiB,
-			GuestMemAvailableMiB:         item.GuestMemAvailableMiB,
-			GuestBuffCacheMiB:            item.GuestBuffCacheMiB,
-			GuestTopMemoryProcess:        item.GuestTopMemoryProcess,
-			LiveMetricsError:             item.LiveMetricsError,
-			HasPendingChat:               hasResident(pendingChat, item.ResidentID),
-			HasOpenTicket:                hasResident(openTicket, item.ResidentID),
-			HasIntervention:              hasResident(openIntervention, item.ResidentID),
-			MemoryAttention:              memoryAttention[item.ResidentID],
+			ResidentID:               item.ResidentID,
+			Status:                   item.Status,
+			DriftFields:              append([]string(nil), item.DriftFields...),
+			HostRSSHighGuestUsageLow: item.HostRSSHighGuestUsageLow,
+			HostQEMURSSMiB:           item.HostQEMURSSMiB,
+			IncusMemoryCurrentMiB:    item.IncusMemoryCurrentMiB,
+			GuestMemAvailableMiB:     item.GuestMemAvailableMiB,
+			GuestBuffCacheMiB:        item.GuestBuffCacheMiB,
+			GuestTopMemoryProcess:    item.GuestTopMemoryProcess,
+			LiveMetricsError:         item.LiveMetricsError,
+			HasPendingChat:           hasResident(pendingChat, item.ResidentID),
+			HasOpenTicket:            hasResident(openTicket, item.ResidentID),
+			HasIntervention:          hasResident(openIntervention, item.ResidentID),
+			MemoryAttention:          memoryAttention[item.ResidentID],
+			MemoryOperatorDecayCandidates: memoryMaintenanceCount(memoryMaintenanceByResident, item.ResidentID, func(item ResidentMemoryMaintenance) int {
+				return item.OperatorDecayCandidates
+			}),
+			MemoryResidentReviewQueue: memoryMaintenanceCount(memoryMaintenanceByResident, item.ResidentID, func(item ResidentMemoryMaintenance) int {
+				return item.ResidentReviewQueue
+			}),
+			MemoryOperatorReviewRequired: memoryMaintenanceCount(memoryMaintenanceByResident, item.ResidentID, func(item ResidentMemoryMaintenance) int {
+				return item.OperatorReviewRequired
+			}),
 			MemoryDuplicateHistoryGroups: memoryDuplicateGroups[item.ResidentID],
 		}
 		if item.HostRSSHighGuestUsageLow {
@@ -146,6 +166,9 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			risk.HasOpenTicket ||
 			risk.HasIntervention ||
 			risk.MemoryAttention > 0 ||
+			risk.MemoryOperatorDecayCandidates > 0 ||
+			risk.MemoryResidentReviewQueue > 0 ||
+			risk.MemoryOperatorReviewRequired > 0 ||
 			risk.MemoryDuplicateHistoryGroups > 0 ||
 			risk.HostRSSHighGuestUsageLow ||
 			strings.TrimSpace(risk.LiveMetricsError) != "" ||
@@ -155,6 +178,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			strings.TrimSpace(item.Status) == ""
 		risks = append(risks, risk)
 	}
+	sortResidentInspectRisks(risks)
 	summary.ResidentRisk = risks
 	return summary
 }
@@ -162,4 +186,45 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 func hasResident(set map[string]struct{}, resident string) bool {
 	_, ok := set[resident]
 	return ok
+}
+
+func memoryMaintenanceCount(items map[string]ResidentMemoryMaintenance, resident string, value func(ResidentMemoryMaintenance) int) int {
+	item, ok := items[resident]
+	if !ok {
+		return 0
+	}
+	return value(item)
+}
+
+func sortResidentInspectRisks(items []ResidentInspectRisk) {
+	sort.SliceStable(items, func(i, j int) bool {
+		left, right := items[i], items[j]
+		if inspectRiskRank(left) != inspectRiskRank(right) {
+			return inspectRiskRank(left) > inspectRiskRank(right)
+		}
+		return left.ResidentID < right.ResidentID
+	})
+}
+
+func inspectRiskRank(item ResidentInspectRisk) int {
+	switch {
+	case strings.TrimSpace(item.Status) == "":
+		return 4
+	case len(item.DriftFields) > 0 || item.HasIntervention:
+		return 3
+	case item.HasPendingChat || item.HasOpenTicket:
+		return 2
+	case item.MemoryAttention > 0 ||
+		item.MemoryOperatorDecayCandidates > 0 ||
+		item.MemoryResidentReviewQueue > 0 ||
+		item.MemoryOperatorReviewRequired > 0 ||
+		item.MemoryDuplicateHistoryGroups > 0 ||
+		item.HostRSSHighGuestUsageLow ||
+		strings.TrimSpace(item.LiveMetricsError) != "" ||
+		item.OrchestratorBudgetBlocked ||
+		strings.TrimSpace(item.OrchestratorError) != "":
+		return 1
+	default:
+		return 0
+	}
 }

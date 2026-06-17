@@ -147,6 +147,9 @@ type HostInspectSummary struct {
 	MemoryResidentsAttention          int                            `json:"memory_residents_attention"`
 	MemoryItemsAttention              int                            `json:"memory_items_attention"`
 	MemoryMaintenanceResidents        int                            `json:"memory_maintenance_residents,omitempty"`
+	MemoryOperatorDecayCandidates     int                            `json:"memory_operator_decay_candidates,omitempty"`
+	MemoryResidentReviewQueue         int                            `json:"memory_resident_review_queue,omitempty"`
+	MemoryOperatorReviewRequired      int                            `json:"memory_operator_review_required,omitempty"`
 	MemoryDuplicateHistoryGroups      int                            `json:"memory_duplicate_history_groups,omitempty"`
 	LatestOrchestrator                *OrchestratorInspectionDigest  `json:"latest_orchestrator,omitempty"`
 	RecentOrchestrators               []OrchestratorInspectionDigest `json:"recent_orchestrators,omitempty"`
@@ -159,28 +162,31 @@ type HostInspectSummary struct {
 }
 
 type ResidentInspectRisk struct {
-	ResidentID                   string   `json:"resident_id"`
-	Status                       string   `json:"status,omitempty"`
-	DriftFields                  []string `json:"drift_fields,omitempty"`
-	HostRSSHighGuestUsageLow     bool     `json:"host_rss_high_guest_usage_low,omitempty"`
-	HostQEMURSSMiB               int64    `json:"host_qemu_rss_mib,omitempty"`
-	IncusMemoryCurrentMiB        int64    `json:"incus_memory_current_mib,omitempty"`
-	GuestMemAvailableMiB         int64    `json:"guest_mem_available_mib,omitempty"`
-	GuestBuffCacheMiB            int64    `json:"guest_buff_cache_mib,omitempty"`
-	GuestTopMemoryProcess        string   `json:"guest_top_memory_process,omitempty"`
-	LiveMetricsError             string   `json:"live_metrics_error,omitempty"`
-	HasPendingChat               bool     `json:"has_pending_chat"`
-	HasOpenTicket                bool     `json:"has_open_ticket"`
-	HasIntervention              bool     `json:"has_intervention"`
-	MemoryAttention              int      `json:"memory_attention,omitempty"`
-	MemoryDuplicateHistoryGroups int      `json:"memory_duplicate_history_groups,omitempty"`
-	MemoryRecommendedAction      string   `json:"memory_recommended_action,omitempty"`
-	MemorySummary                string   `json:"memory_summary,omitempty"`
-	OrchestratorStatus           string   `json:"orchestrator_status,omitempty"`
-	OrchestratorStoppedReason    string   `json:"orchestrator_stopped_reason,omitempty"`
-	OrchestratorBudgetBlocked    bool     `json:"orchestrator_budget_blocked,omitempty"`
-	OrchestratorError            string   `json:"orchestrator_error,omitempty"`
-	NeedsAttention               bool     `json:"needs_attention"`
+	ResidentID                    string   `json:"resident_id"`
+	Status                        string   `json:"status,omitempty"`
+	DriftFields                   []string `json:"drift_fields,omitempty"`
+	HostRSSHighGuestUsageLow      bool     `json:"host_rss_high_guest_usage_low,omitempty"`
+	HostQEMURSSMiB                int64    `json:"host_qemu_rss_mib,omitempty"`
+	IncusMemoryCurrentMiB         int64    `json:"incus_memory_current_mib,omitempty"`
+	GuestMemAvailableMiB          int64    `json:"guest_mem_available_mib,omitempty"`
+	GuestBuffCacheMiB             int64    `json:"guest_buff_cache_mib,omitempty"`
+	GuestTopMemoryProcess         string   `json:"guest_top_memory_process,omitempty"`
+	LiveMetricsError              string   `json:"live_metrics_error,omitempty"`
+	HasPendingChat                bool     `json:"has_pending_chat"`
+	HasOpenTicket                 bool     `json:"has_open_ticket"`
+	HasIntervention               bool     `json:"has_intervention"`
+	MemoryAttention               int      `json:"memory_attention,omitempty"`
+	MemoryOperatorDecayCandidates int      `json:"memory_operator_decay_candidates,omitempty"`
+	MemoryResidentReviewQueue     int      `json:"memory_resident_review_queue,omitempty"`
+	MemoryOperatorReviewRequired  int      `json:"memory_operator_review_required,omitempty"`
+	MemoryDuplicateHistoryGroups  int      `json:"memory_duplicate_history_groups,omitempty"`
+	MemoryRecommendedAction       string   `json:"memory_recommended_action,omitempty"`
+	MemorySummary                 string   `json:"memory_summary,omitempty"`
+	OrchestratorStatus            string   `json:"orchestrator_status,omitempty"`
+	OrchestratorStoppedReason     string   `json:"orchestrator_stopped_reason,omitempty"`
+	OrchestratorBudgetBlocked     bool     `json:"orchestrator_budget_blocked,omitempty"`
+	OrchestratorError             string   `json:"orchestrator_error,omitempty"`
+	NeedsAttention                bool     `json:"needs_attention"`
 }
 
 type HostDecisionAssist struct {

@@ -82,6 +82,27 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		addOperatorAction(&out, "memory_lifecycle_review", "medium", "Review memory lifecycle reports before enabling automatic decay or deletion.")
 		addOperatorObservation(&out, reason)
 	}
+	if summary.MemoryOperatorDecayCandidates > 0 {
+		raiseSeverity(&out, "medium")
+		reason := fmt.Sprintf("%d memory lifecycle items are safe decay candidates", summary.MemoryOperatorDecayCandidates)
+		out.Reasons = append(out.Reasons, reason)
+		addOperatorAction(&out, "memory_safe_decay_review", "medium", "Run memory-lifecycle-safe-apply as a dry-run first; apply only operator-safe decay candidates.")
+		addOperatorObservation(&out, reason)
+	}
+	if summary.MemoryResidentReviewQueue > 0 {
+		raiseSeverity(&out, "medium")
+		reason := fmt.Sprintf("%d memory lifecycle items are waiting for resident self-review", summary.MemoryResidentReviewQueue)
+		out.Reasons = append(out.Reasons, reason)
+		addOperatorAction(&out, "resident_memory_review_queue", "medium", "Let residents review marked memories in-world; do not rewrite protected resident memories from host review.")
+		addOperatorObservation(&out, reason)
+	}
+	if summary.MemoryOperatorReviewRequired > 0 {
+		raiseSeverity(&out, "medium")
+		reason := fmt.Sprintf("%d memory lifecycle items require operator review", summary.MemoryOperatorReviewRequired)
+		out.Reasons = append(out.Reasons, reason)
+		addOperatorAction(&out, "memory_operator_review", "medium", "Inspect operator-required memory items manually and prefer mark/keep over destructive edits.")
+		addOperatorObservation(&out, reason)
+	}
 	if summary.MemoryDuplicateHistoryGroups > 0 {
 		raiseSeverity(&out, "medium")
 		reason := fmt.Sprintf("%d duplicate memory history groups across %d residents can be compacted", summary.MemoryDuplicateHistoryGroups, summary.MemoryMaintenanceResidents)
@@ -145,6 +166,15 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		}
 		if item.MemoryAttention > 0 {
 			addFocusOperatorReason(&focus, fmt.Sprintf("%d memory items need lifecycle attention", item.MemoryAttention))
+		}
+		if item.MemoryOperatorDecayCandidates > 0 {
+			addFocusOperatorReason(&focus, fmt.Sprintf("%d memory lifecycle items are safe decay candidates", item.MemoryOperatorDecayCandidates))
+		}
+		if item.MemoryResidentReviewQueue > 0 {
+			addFocusOperatorReason(&focus, fmt.Sprintf("%d memory lifecycle items are waiting for resident self-review", item.MemoryResidentReviewQueue))
+		}
+		if item.MemoryOperatorReviewRequired > 0 {
+			addFocusOperatorReason(&focus, fmt.Sprintf("%d memory lifecycle items require operator review", item.MemoryOperatorReviewRequired))
 		}
 		if item.MemoryDuplicateHistoryGroups > 0 {
 			addFocusOperatorReason(&focus, fmt.Sprintf("%d duplicate memory history groups can be compacted", item.MemoryDuplicateHistoryGroups))
@@ -277,6 +307,9 @@ func residentPriority(item ResidentInspectRisk) string {
 		return "medium"
 	}
 	if item.OrchestratorBudgetBlocked || item.OrchestratorError != "" {
+		return "medium"
+	}
+	if item.MemoryOperatorReviewRequired > 0 || item.MemoryOperatorDecayCandidates > 0 || item.MemoryResidentReviewQueue > 0 {
 		return "medium"
 	}
 	if item.HostRSSHighGuestUsageLow || item.LiveMetricsError != "" {
