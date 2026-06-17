@@ -75,23 +75,24 @@ type ResidentThreadSummary struct {
 }
 
 type HostInboxSummary struct {
-	ResidentsNeedingChatReply   int                     `json:"residents_needing_chat_reply"`
-	ResidentsWithOpenTickets    int                     `json:"residents_with_open_tickets"`
-	PendingChatMessages         []ThreadMessage         `json:"pending_chat_messages"`
-	OpenTickets                 []ResidentTicketSummary `json:"open_tickets"`
-	ThreadSummaries             []ResidentThreadSummary `json:"thread_summaries"`
+	ResidentsNeedingChatReply int                     `json:"residents_needing_chat_reply"`
+	ResidentsWithOpenTickets  int                     `json:"residents_with_open_tickets"`
+	PendingChatMessages       []ThreadMessage         `json:"pending_chat_messages"`
+	OpenTickets               []ResidentTicketSummary `json:"open_tickets"`
+	ThreadSummaries           []ResidentThreadSummary `json:"thread_summaries"`
 }
 
 type HostFollowup struct {
-	Kind       string `json:"kind"`
-	Resident   string `json:"resident"`
-	TargetID   string `json:"target_id"`
-	Priority   string `json:"priority,omitempty"`
-	CreatedAt  string `json:"created_at,omitempty"`
-	UpdatedAt  string `json:"updated_at,omitempty"`
-	Title      string `json:"title,omitempty"`
-	Preview    string `json:"preview,omitempty"`
-	Status     string `json:"status,omitempty"`
+	Kind        string            `json:"kind"`
+	Resident    string            `json:"resident"`
+	TargetID    string            `json:"target_id"`
+	Priority    string            `json:"priority,omitempty"`
+	CreatedAt   string            `json:"created_at,omitempty"`
+	UpdatedAt   string            `json:"updated_at,omitempty"`
+	Title       string            `json:"title,omitempty"`
+	Preview     string            `json:"preview,omitempty"`
+	Status      string            `json:"status,omitempty"`
+	Maintenance map[string]string `json:"maintenance,omitempty"`
 }
 
 type HostIntervention struct {
@@ -108,17 +109,17 @@ type HostIntervention struct {
 }
 
 type Ticket struct {
-	ID         string        `json:"id"`
-	Resident   string        `json:"resident"`
-	Title      string        `json:"title"`
-	Body       string        `json:"body"`
-	Priority   string        `json:"priority"`
-	Status     string        `json:"status"`
-	CreatedAt  string        `json:"created_at"`
-	UpdatedAt  string        `json:"updated_at"`
-	ResidentSeenAt string    `json:"resident_seen_at,omitempty"`
-	OpenedBy   string        `json:"opened_by"`
-	Replies    []TicketReply `json:"replies"`
+	ID             string        `json:"id"`
+	Resident       string        `json:"resident"`
+	Title          string        `json:"title"`
+	Body           string        `json:"body"`
+	Priority       string        `json:"priority"`
+	Status         string        `json:"status"`
+	CreatedAt      string        `json:"created_at"`
+	UpdatedAt      string        `json:"updated_at"`
+	ResidentSeenAt string        `json:"resident_seen_at,omitempty"`
+	OpenedBy       string        `json:"opened_by"`
+	Replies        []TicketReply `json:"replies"`
 }
 
 type TicketReply struct {
@@ -129,30 +130,31 @@ type TicketReply struct {
 }
 
 type ResidentTicketSummary struct {
-	ID           string `json:"id"`
-	Resident     string `json:"resident"`
-	Title        string `json:"title"`
-	Priority     string `json:"priority"`
-	Status       string `json:"status"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	LastReplyAt  string `json:"last_reply_at,omitempty"`
-	LastPreview  string `json:"last_preview,omitempty"`
-	ReplyCount   int    `json:"reply_count"`
-	NeedsReply   bool   `json:"needs_reply"`
+	ID          string `json:"id"`
+	Resident    string `json:"resident"`
+	Title       string `json:"title"`
+	Priority    string `json:"priority"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	LastReplyAt string `json:"last_reply_at,omitempty"`
+	LastPreview string `json:"last_preview,omitempty"`
+	ReplyCount  int    `json:"reply_count"`
+	NeedsReply  bool   `json:"needs_reply"`
 }
 
 type ResidentInterventionSummary struct {
-	ID           string `json:"id"`
-	Resident     string `json:"resident"`
-	Kind         string `json:"kind"`
-	Title        string `json:"title"`
-	Status       string `json:"status"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
-	LastPreview  string `json:"last_preview,omitempty"`
-	Operator     string `json:"operator,omitempty"`
-	NeedsAttention bool `json:"needs_attention"`
+	ID             string            `json:"id"`
+	Resident       string            `json:"resident"`
+	Kind           string            `json:"kind"`
+	Title          string            `json:"title"`
+	Status         string            `json:"status"`
+	CreatedAt      string            `json:"created_at"`
+	UpdatedAt      string            `json:"updated_at"`
+	LastPreview    string            `json:"last_preview,omitempty"`
+	Operator       string            `json:"operator,omitempty"`
+	Maintenance    map[string]string `json:"maintenance,omitempty"`
+	NeedsAttention bool              `json:"needs_attention"`
 }
 
 func New(root string) *Store {
@@ -558,14 +560,15 @@ func (s *Store) ReadHostFollowups(limit int) ([]HostFollowup, error) {
 	}
 	for _, item := range openInterventions {
 		out = append(out, HostFollowup{
-			Kind:      "host_intervention",
-			Resident:  item.Resident,
-			TargetID:  item.ID,
-			CreatedAt: item.CreatedAt,
-			UpdatedAt: item.UpdatedAt,
-			Title:     item.Title,
-			Preview:   item.LastPreview,
-			Status:    item.Status,
+			Kind:        "host_intervention",
+			Resident:    item.Resident,
+			TargetID:    item.ID,
+			CreatedAt:   item.CreatedAt,
+			UpdatedAt:   item.UpdatedAt,
+			Title:       item.Title,
+			Preview:     item.LastPreview,
+			Status:      item.Status,
+			Maintenance: item.Maintenance,
 		})
 	}
 
@@ -1226,15 +1229,15 @@ func (s *Store) loadAllHostInterventions() ([]HostIntervention, error) {
 
 func summarizeTicket(ticket Ticket) ResidentTicketSummary {
 	summary := ResidentTicketSummary{
-		ID:         ticket.ID,
-		Resident:   ticket.Resident,
-		Title:      ticket.Title,
-		Priority:   ticket.Priority,
-		Status:     ticket.Status,
-		CreatedAt:  ticket.CreatedAt,
-		UpdatedAt:  ticket.UpdatedAt,
-		ReplyCount: len(ticket.Replies),
-		NeedsReply: ticket.Status == TicketStatusOpen,
+		ID:          ticket.ID,
+		Resident:    ticket.Resident,
+		Title:       ticket.Title,
+		Priority:    ticket.Priority,
+		Status:      ticket.Status,
+		CreatedAt:   ticket.CreatedAt,
+		UpdatedAt:   ticket.UpdatedAt,
+		ReplyCount:  len(ticket.Replies),
+		NeedsReply:  ticket.Status == TicketStatusOpen,
 		LastPreview: previewText(ticket.Body, 160),
 	}
 	if len(ticket.Replies) > 0 {
@@ -1256,8 +1259,33 @@ func summarizeHostIntervention(item HostIntervention) ResidentInterventionSummar
 		UpdatedAt:      item.UpdatedAt,
 		LastPreview:    previewText(item.Body, 160),
 		Operator:       item.Operator,
+		Maintenance:    ParseMaintenanceMetadata(item.Body),
 		NeedsAttention: strings.TrimSpace(item.ResidentSeenAt) != item.UpdatedAt,
 	}
+}
+
+func ParseMaintenanceMetadata(note string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(note), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		switch key {
+		case "approved_for_maintenance", "maintenance_action", "maintenance_window", "maintenance_completed", "maintenance_result", "maintenance_started", "maintenance_failed", "maintenance_rolled_back", "maintenance_state", "operator", "maintenance_checkpoint":
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {

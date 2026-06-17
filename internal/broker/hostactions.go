@@ -19,35 +19,35 @@ type HostActionService struct {
 }
 
 type ResourceSettlementInput struct {
-	TicketID  string `json:"ticket_id"`
-	Resource  string `json:"resource"`
-	Amount    string `json:"amount"`
-	Decision  string `json:"decision"`
-	Note      string `json:"note"`
-	Close     bool   `json:"close"`
+	TicketID string `json:"ticket_id"`
+	Resource string `json:"resource"`
+	Amount   string `json:"amount"`
+	Decision string `json:"decision"`
+	Note     string `json:"note"`
+	Close    bool   `json:"close"`
 }
 
 type ResourceMaintenancePlanInput struct {
-	TicketID                string `json:"ticket_id"`
-	Resident                string `json:"resident"`
-	Resource                string `json:"resource"`
-	Amount                  string `json:"amount"`
-	Note                    string `json:"note"`
-	Window                  string `json:"window"`
-	Operator                string `json:"operator"`
-	AlsoCreateIntervention  bool   `json:"also_create_intervention"`
-	CreateHostCheckpoint    bool   `json:"create_host_checkpoint"`
+	TicketID               string `json:"ticket_id"`
+	Resident               string `json:"resident"`
+	Resource               string `json:"resource"`
+	Amount                 string `json:"amount"`
+	Note                   string `json:"note"`
+	Window                 string `json:"window"`
+	Operator               string `json:"operator"`
+	AlsoCreateIntervention bool   `json:"also_create_intervention"`
+	CreateHostCheckpoint   bool   `json:"create_host_checkpoint"`
 }
 
 type ResourceMaintenanceCompleteInput struct {
-	TicketID            string `json:"ticket_id"`
-	Resident            string `json:"resident"`
-	Resource            string `json:"resource"`
-	Amount              string `json:"amount"`
-	Note                string `json:"note"`
-	Close               bool   `json:"close"`
-	Operator            string `json:"operator"`
-	CheckpointName      string `json:"checkpoint_name"`
+	TicketID       string `json:"ticket_id"`
+	Resident       string `json:"resident"`
+	Resource       string `json:"resource"`
+	Amount         string `json:"amount"`
+	Note           string `json:"note"`
+	Close          bool   `json:"close"`
+	Operator       string `json:"operator"`
+	CheckpointName string `json:"checkpoint_name"`
 }
 
 type ResourceMaintenanceStartInput struct {
@@ -240,7 +240,7 @@ func (s *HostActionService) SettleResourceTicket(input ResourceSettlementInput) 
 	if note != "" {
 		metadata["note"] = note
 	}
-	for k, v := range parseMaintenanceMetadata(note) {
+	for k, v := range worldstate.ParseMaintenanceMetadata(note) {
 		metadata[k] = v
 	}
 	_ = s.audit.Write(audit.Event{
@@ -697,25 +697,4 @@ func (s *HostActionService) ApplyDiskAdjustment(ticketID, residentID string, dis
 		AlsoCreateIntervention: true,
 		CreateHostCheckpoint:   true,
 	})
-}
-
-func parseMaintenanceMetadata(note string) map[string]string {
-	out := map[string]string{}
-	for _, line := range strings.Split(strings.TrimSpace(note), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		switch key {
-		case "approved_for_maintenance", "maintenance_action", "maintenance_window", "maintenance_completed", "maintenance_result", "maintenance_started", "maintenance_failed", "maintenance_rolled_back", "maintenance_state", "operator", "maintenance_checkpoint":
-			out[key] = value
-		}
-	}
-	return out
 }

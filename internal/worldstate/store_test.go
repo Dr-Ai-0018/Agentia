@@ -250,7 +250,7 @@ func TestUpdateLatestOpenHostInterventionChangesStatus(t *testing.T) {
 		t.Fatalf("expected planned intervention, got %#v", created)
 	}
 
-	updated, ok, err := store.UpdateLatestOpenHostIntervention("amber", "maintenance", "Planned maintenance", "in_progress", "Maintenance has started.", "chenglin", now.Add(time.Minute))
+	updated, ok, err := store.UpdateLatestOpenHostIntervention("amber", "maintenance", "Planned maintenance", "in_progress", "Maintenance has started.\nmaintenance_started=true\nmaintenance_state=in_progress\noperator=chenglin", "chenglin", now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("update intervention status: %v", err)
 	}
@@ -262,6 +262,27 @@ func TestUpdateLatestOpenHostInterventionChangesStatus(t *testing.T) {
 	}
 	if !strings.Contains(updated.Body, "Maintenance has started.") {
 		t.Fatalf("expected updated body, got %#v", updated)
+	}
+	items, err := store.ReadHostInterventions("amber", "", 10)
+	if err != nil {
+		t.Fatalf("read interventions: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one intervention summary, got %#v", items)
+	}
+	if items[0].Maintenance["maintenance_state"] != "in_progress" || items[0].Maintenance["operator"] != "chenglin" {
+		t.Fatalf("expected structured maintenance metadata, got %#v", items[0].Maintenance)
+	}
+
+	followups, err := store.ReadHostFollowups(10)
+	if err != nil {
+		t.Fatalf("read host followups: %v", err)
+	}
+	if len(followups) != 1 {
+		t.Fatalf("expected one followup, got %#v", followups)
+	}
+	if followups[0].Maintenance["maintenance_state"] != "in_progress" {
+		t.Fatalf("expected followup maintenance metadata, got %#v", followups[0].Maintenance)
 	}
 }
 
