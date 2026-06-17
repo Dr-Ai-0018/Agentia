@@ -70,9 +70,24 @@ type ResidentMemoryMaintenance struct {
 	ResidentID             string `json:"resident_id"`
 	LifecycleAttention     int    `json:"lifecycle_attention,omitempty"`
 	DuplicateHistoryGroups int    `json:"duplicate_history_groups,omitempty"`
+	BeforeHistoryGroups    int    `json:"before_history_groups,omitempty"`
+	AfterHistoryGroups     int    `json:"after_history_groups,omitempty"`
 	RecommendedAction      string `json:"recommended_action,omitempty"`
 	Summary                string `json:"summary,omitempty"`
 	NeedsAttention         bool   `json:"needs_attention"`
+}
+
+type MemoryMaintenanceSummary struct {
+	CheckedAt              string                      `json:"checked_at"`
+	ApplyMode              string                      `json:"apply_mode"`
+	OperatorPolicy         string                      `json:"operator_policy"`
+	Residents              []ResidentMemoryMaintenance `json:"residents"`
+	ResidentCount          int                         `json:"resident_count"`
+	ResidentsAttention     int                         `json:"residents_attention"`
+	LifecycleAttention     int                         `json:"lifecycle_attention"`
+	DuplicateHistoryGroups int                         `json:"duplicate_history_groups"`
+	BeforeHistoryGroups    int                         `json:"before_history_groups"`
+	AfterHistoryGroups     int                         `json:"after_history_groups"`
 }
 
 type HostInspectSummary struct {

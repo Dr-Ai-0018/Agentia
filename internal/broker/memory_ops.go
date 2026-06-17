@@ -19,6 +19,28 @@ func (a *App) RunMemoryLifecycle(residentID string, apply bool) (memory.Lifecycl
 	return store.LifecycleReportWithApply(strings.TrimSpace(residentID), time.Now().UTC(), memory.DefaultPolicy(), apply)
 }
 
+func (a *App) RunMemoryMaintenanceSummary() MemoryMaintenanceSummary {
+	now := time.Now().UTC()
+	residents := a.buildMemoryMaintenanceReportsAt(now)
+	out := MemoryMaintenanceSummary{
+		CheckedAt:      now.Format(time.RFC3339Nano),
+		ApplyMode:      "dry_run_only",
+		OperatorPolicy: "v0 memory maintenance is operator-only: inspect lifecycle first, then apply per resident only after reviewing dry-run output; no automatic scheduler is enabled.",
+		Residents:      residents,
+		ResidentCount:  len(a.cfg.Residents),
+	}
+	for _, item := range residents {
+		if item.NeedsAttention {
+			out.ResidentsAttention++
+		}
+		out.LifecycleAttention += item.LifecycleAttention
+		out.DuplicateHistoryGroups += item.DuplicateHistoryGroups
+		out.BeforeHistoryGroups += item.BeforeHistoryGroups
+		out.AfterHistoryGroups += item.AfterHistoryGroups
+	}
+	return out
+}
+
 func (a *App) buildMemoryLifecycleReports() []memory.LifecycleReport {
 	store := memory.NewFileStore(filepath.Join(a.root, "memory"))
 	now := time.Now().UTC()
@@ -34,16 +56,23 @@ func (a *App) buildMemoryLifecycleReports() []memory.LifecycleReport {
 }
 
 func (a *App) buildMemoryMaintenanceReports() []ResidentMemoryMaintenance {
+	return a.buildMemoryMaintenanceReportsAt(time.Now().UTC())
+}
+
+func (a *App) buildMemoryMaintenanceReportsAt(now time.Time) []ResidentMemoryMaintenance {
 	store := memory.NewFileStore(filepath.Join(a.root, "memory"))
-	now := time.Now().UTC()
 	out := make([]ResidentMemoryMaintenance, 0, len(a.cfg.Residents))
 	for _, resident := range a.cfg.Residents {
 		item := ResidentMemoryMaintenance{ResidentID: resident.ResidentID}
 		if report, err := store.LifecycleReport(resident.ResidentID, now, memory.DefaultPolicy()); err == nil {
 			item.LifecycleAttention = report.NeedsAttention
 		}
-		if report, err := store.CompactResidentWithReport(resident.ResidentID, false); err == nil && report.BeforeHistoryGroups > report.AfterHistoryGroups {
-			item.DuplicateHistoryGroups = report.BeforeHistoryGroups - report.AfterHistoryGroups
+		if report, err := store.CompactResidentWithReport(resident.ResidentID, false); err == nil {
+			item.BeforeHistoryGroups = report.BeforeHistoryGroups
+			item.AfterHistoryGroups = report.AfterHistoryGroups
+			if report.BeforeHistoryGroups > report.AfterHistoryGroups {
+				item.DuplicateHistoryGroups = report.BeforeHistoryGroups - report.AfterHistoryGroups
+			}
 		}
 		item.NeedsAttention = item.LifecycleAttention > 0 || item.DuplicateHistoryGroups > 0
 		item.RecommendedAction, item.Summary = memoryMaintenanceRecommendation(item)

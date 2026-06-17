@@ -68,6 +68,62 @@ func TestRunMemoryLifecycleReportsStoredMemory(t *testing.T) {
 	}
 }
 
+func TestRunMemoryMaintenanceSummaryAggregatesDryRuns(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC().Add(-8 * time.Hour)
+
+	for _, id := range []string{"group-a", "group-b"} {
+		if err := store.UpsertHistoryGroup(memory.HistoryGroup{
+			GroupUUID:    id,
+			Resident:     "amber",
+			CreatedAt:    now,
+			SourceKind:   "dialogue_window",
+			State:        memory.HistoryGroupClosed,
+			EventCount:   2,
+			RawEventRefs: []string{"evt-1", "evt-2"},
+		}); err != nil {
+			t.Fatalf("upsert history group: %v", err)
+		}
+	}
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-instant-old",
+			Layer:          memory.LayerInstant,
+			Status:         memory.StatusActive,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "temporary note",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	summary := app.RunMemoryMaintenanceSummary()
+	if summary.ApplyMode != "dry_run_only" {
+		t.Fatalf("expected dry-run-only summary, got %#v", summary)
+	}
+	if summary.ResidentCount == 0 || summary.ResidentsAttention != 1 {
+		t.Fatalf("unexpected resident counts: %#v", summary)
+	}
+	if summary.LifecycleAttention != 1 || summary.DuplicateHistoryGroups != 1 {
+		t.Fatalf("unexpected maintenance totals: %#v", summary)
+	}
+	if summary.BeforeHistoryGroups != 2 || summary.AfterHistoryGroups != 1 {
+		t.Fatalf("unexpected compaction totals: %#v", summary)
+	}
+	if len(summary.Residents) != 1 || summary.Residents[0].ResidentID != "amber" {
+		t.Fatalf("expected amber maintenance row, got %#v", summary.Residents)
+	}
+	if summary.Residents[0].RecommendedAction != "lifecycle_then_compaction_dry_run" {
+		t.Fatalf("unexpected recommendation: %#v", summary.Residents[0])
+	}
+}
+
 func TestMemoryMaintenanceRecommendation(t *testing.T) {
 	action, summary := memoryMaintenanceRecommendation(ResidentMemoryMaintenance{
 		LifecycleAttention:     2,
