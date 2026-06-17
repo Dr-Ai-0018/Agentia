@@ -68,11 +68,161 @@ func TestRunMemoryLifecycleReportsStoredMemory(t *testing.T) {
 	}
 }
 
+func TestRunMemoryLifecycleSafeApplyDryRunDoesNotMutate(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC().Add(-96 * time.Hour)
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-old-machine-fact",
+			Layer:          memory.LayerShort,
+			Status:         memory.StatusActive,
+			Domain:         memory.DomainResources,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "temporary dns and https probe succeeded",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+
+	report, err := app.RunMemoryLifecycleSafeApply("amber", false)
+	if err != nil {
+		t.Fatalf("run safe lifecycle dry-run: %v", err)
+	}
+	if report.Apply || report.CandidateCount != 1 || report.AppliedCount != 0 || report.SkippedCount != 0 {
+		t.Fatalf("unexpected safe lifecycle dry-run report: %#v", report)
+	}
+	record, ok, err := store.GetAbstractMemory("amber", "amber-old-machine-fact")
+	if err != nil || !ok {
+		t.Fatalf("get memory after dry-run: ok=%v err=%v", ok, err)
+	}
+	if record.Status != memory.StatusActive || record.Layer != memory.LayerShort {
+		t.Fatalf("dry-run mutated memory: %#v", record)
+	}
+}
+
+func TestRunMemoryLifecycleSafeApplyOnlyDecaysSafeCandidates(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC().Add(-96 * time.Hour)
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-old-machine-fact",
+			Layer:          memory.LayerShort,
+			Status:         memory.StatusActive,
+			Domain:         memory.DomainResources,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "temporary dns and https probe succeeded",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert safe memory: %v", err)
+	}
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-old-relationship",
+			Layer:          memory.LayerShort,
+			Status:         memory.StatusActive,
+			Domain:         memory.DomainRelationships,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+		},
+		Resident:       "amber",
+		Summary:        "world-facing thread opened with Chenglin",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert skipped memory: %v", err)
+	}
+
+	report, err := app.RunMemoryLifecycleSafeApply("amber", true)
+	if err != nil {
+		t.Fatalf("run safe lifecycle apply: %v", err)
+	}
+	if !report.Apply || report.CandidateCount != 1 || report.AppliedCount != 1 || report.SkippedCount != 1 {
+		t.Fatalf("unexpected safe lifecycle apply report: %#v", report)
+	}
+	if len(report.AppliedMemoryIDs) != 1 || report.AppliedMemoryIDs[0] != "amber-old-machine-fact" {
+		t.Fatalf("unexpected applied ids: %#v", report.AppliedMemoryIDs)
+	}
+	safe, ok, err := store.GetAbstractMemory("amber", "amber-old-machine-fact")
+	if err != nil || !ok {
+		t.Fatalf("get safe memory after apply: ok=%v err=%v", ok, err)
+	}
+	if safe.Status != memory.StatusDecaying || safe.Layer != memory.LayerInstant {
+		t.Fatalf("safe memory was not decayed: %#v", safe)
+	}
+	if safe.Governance.ReviewReason != "operator_safe_lifecycle_decay" {
+		t.Fatalf("missing audit reason: %#v", safe.Governance)
+	}
+	skipped, ok, err := store.GetAbstractMemory("amber", "amber-old-relationship")
+	if err != nil || !ok {
+		t.Fatalf("get skipped memory after apply: ok=%v err=%v", ok, err)
+	}
+	if skipped.Status != memory.StatusActive || skipped.Layer != memory.LayerShort {
+		t.Fatalf("skipped memory mutated: %#v", skipped)
+	}
+}
+
+func TestRunMemoryLifecycleSafeApplySettlesStaleDecayingReviewSchedule(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC()
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-decaying-machine-fact",
+			Layer:          memory.LayerInstant,
+			Status:         memory.StatusDecaying,
+			Domain:         memory.DomainResources,
+			CreatedAt:      now.Add(-96 * time.Hour),
+			UpdatedAt:      now.Add(-96 * time.Hour),
+			LastAccessedAt: now,
+			ReviewAt:       now.Add(-24 * time.Hour),
+			ReviewAfter:    now.Add(-48 * time.Hour),
+			ExpiresAt:      now.Add(3 * time.Hour),
+			HardExpiresAt:  now.Add(7 * time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "temporary dns and https probe succeeded",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert decaying memory: %v", err)
+	}
+
+	report, err := app.RunMemoryLifecycleSafeApply("amber", true)
+	if err != nil {
+		t.Fatalf("run safe lifecycle apply: %v", err)
+	}
+	if report.CandidateCount != 1 || report.AppliedCount != 1 || report.SkippedCount != 0 {
+		t.Fatalf("unexpected stale decaying apply report: %#v", report)
+	}
+	updated, ok, err := store.GetAbstractMemory("amber", "amber-decaying-machine-fact")
+	if err != nil || !ok {
+		t.Fatalf("get decaying memory after apply: ok=%v err=%v", ok, err)
+	}
+	if updated.Status != memory.StatusDecaying || updated.Layer != memory.LayerInstant {
+		t.Fatalf("expected memory to remain decaying instant: %#v", updated.Record)
+	}
+	if !updated.ReviewAt.IsZero() || !updated.ReviewAfter.IsZero() {
+		t.Fatalf("expected stale review schedule to be cleared: %#v", updated.Record)
+	}
+}
+
 func TestRunMemoryMaintenanceSummaryAggregatesDryRuns(t *testing.T) {
 	root := t.TempDir()
 	app := New(root)
 	store := memory.NewFileStore(filepath.Join(root, "memory"))
-	now := time.Now().UTC().Add(-8 * time.Hour)
+	now := time.Now().UTC().Add(-96 * time.Hour)
 
 	for _, id := range []string{"group-a", "group-b"} {
 		if err := store.UpsertHistoryGroup(memory.HistoryGroup{

@@ -697,6 +697,47 @@ func TestReviewAbstractMemoryDelete(t *testing.T) {
 	}
 }
 
+func TestReviewAbstractMemoryDecayRefreshesAccessTime(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Date(2026, 6, 7, 6, 0, 0, 0, time.UTC)
+	err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:             "amber-short-4",
+			Layer:          LayerShort,
+			Domain:         DomainLessons,
+			Status:         StatusActive,
+			CreatedAt:      now.Add(-96 * time.Hour),
+			UpdatedAt:      now.Add(-96 * time.Hour),
+			LastAccessedAt: now.Add(-96 * time.Hour),
+			ReviewAt:       now.Add(-24 * time.Hour),
+			ReviewAfter:    now.Add(-48 * time.Hour),
+		},
+		Resident: "amber",
+		Summary:  "stale machine probe",
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	reviewedAt := now.Add(time.Hour)
+	updated, err := store.ReviewAbstractMemory("amber", "amber-short-4", reviewedAt, MemoryReviewRequest{
+		Action:     ActionDecay,
+		ReasonNote: "operator_safe_lifecycle_decay",
+	})
+	if err != nil {
+		t.Fatalf("review memory: %v", err)
+	}
+	if updated.Status != StatusDecaying || updated.Layer != LayerInstant {
+		t.Fatalf("expected decayed instant memory, got %#v", updated.Record)
+	}
+	if !updated.LastAccessedAt.Equal(reviewedAt) {
+		t.Fatalf("expected decay review to refresh access time, got %s", updated.LastAccessedAt)
+	}
+	if !updated.ReviewAt.IsZero() || !updated.ReviewAfter.IsZero() {
+		t.Fatalf("expected decay review to clear stale review schedule, got %#v", updated.Record)
+	}
+}
+
 func TestReviewAbstractMemoryCompressAlsoRewritesResidentTextByDefault(t *testing.T) {
 	store := NewMemoryStore()
 	now := time.Date(2026, 6, 7, 6, 0, 0, 0, time.UTC)

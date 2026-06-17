@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -174,6 +174,12 @@ func main() {
 		printJSON(out)
 	case "memory-lifecycle":
 		out, err := app.RunMemoryLifecycle(*residentID, *apply)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "memory-lifecycle-safe-apply":
+		out, err := app.RunMemoryLifecycleSafeApply(*residentID, *apply)
 		if err != nil {
 			exitf("%v", err)
 		}

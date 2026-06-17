@@ -90,6 +90,20 @@ type MemoryMaintenanceSummary struct {
 	AfterHistoryGroups     int                         `json:"after_history_groups"`
 }
 
+type MemoryLifecycleSafeApplyReport struct {
+	ResidentID          string                 `json:"resident_id"`
+	Apply               bool                   `json:"apply"`
+	CheckedAt           string                 `json:"checked_at"`
+	Policy              string                 `json:"policy"`
+	CandidateCount      int                    `json:"candidate_count"`
+	AppliedCount        int                    `json:"applied_count"`
+	SkippedCount        int                    `json:"skipped_count"`
+	AppliedMemoryIDs    []string               `json:"applied_memory_ids,omitempty"`
+	CandidateMemoryIDs  []string               `json:"candidate_memory_ids,omitempty"`
+	Skipped             []memory.LifecycleItem `json:"skipped,omitempty"`
+	PostLifecycleReport memory.LifecycleReport `json:"post_lifecycle_report,omitempty"`
+}
+
 type HostInspectSummary struct {
 	CollectedAt                       string                         `json:"collected_at"`
 	InventoryPath                     string                         `json:"inventory_path,omitempty"`

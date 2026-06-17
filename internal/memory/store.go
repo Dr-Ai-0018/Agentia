@@ -717,8 +717,15 @@ func ApplyDecision(now time.Time, record Record, decision Decision) Record {
 	if record.LastAccessedAt.IsZero() {
 		record.LastAccessedAt = now
 	}
+	if decision.Action == ActionRetain || decision.Action == ActionUpdate || decision.Action == ActionPromote || decision.Action == ActionDecay || decision.Action == ActionReview {
+		record.LastAccessedAt = now
+	}
 	if decision.TTL > 0 {
 		record.ExpiresAt = now.Add(decision.TTL)
+	}
+	if decision.Action == ActionDecay {
+		record.ReviewAfter = time.Time{}
+		record.ReviewAt = time.Time{}
 	}
 	if decision.ReviewAfter > 0 {
 		record.ReviewAfter = now

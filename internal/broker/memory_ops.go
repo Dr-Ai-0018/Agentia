@@ -19,6 +19,64 @@ func (a *App) RunMemoryLifecycle(residentID string, apply bool) (memory.Lifecycl
 	return store.LifecycleReportWithApply(strings.TrimSpace(residentID), time.Now().UTC(), memory.DefaultPolicy(), apply)
 }
 
+func (a *App) RunMemoryLifecycleSafeApply(residentID string, apply bool) (MemoryLifecycleSafeApplyReport, error) {
+	residentID = strings.TrimSpace(residentID)
+	now := time.Now().UTC()
+	store := memory.NewFileStore(filepath.Join(a.root, "memory"))
+	lifecycle, err := store.LifecycleReport(residentID, now, memory.DefaultPolicy())
+	if err != nil {
+		return MemoryLifecycleSafeApplyReport{}, err
+	}
+	out := MemoryLifecycleSafeApplyReport{
+		ResidentID: residentID,
+		Apply:      apply,
+		CheckedAt:  now.Format(time.RFC3339Nano),
+		Policy:     "only lifecycle items recommended as decay_ok_after_spot_check are eligible; relationship, continuity, identity, rule, history, audit, and private items remain skipped for human review.",
+	}
+	for _, item := range lifecycle.Items {
+		if !item.NeedsAttention {
+			continue
+		}
+		if !safeLifecycleDecayCandidate(item, now) {
+			out.Skipped = append(out.Skipped, item)
+			continue
+		}
+		out.CandidateCount++
+		out.CandidateMemoryIDs = append(out.CandidateMemoryIDs, item.ID)
+		if !apply {
+			continue
+		}
+		if _, err := store.ReviewAbstractMemory(residentID, item.ID, now, memory.MemoryReviewRequest{
+			Action:     memory.ActionDecay,
+			ReasonNote: "operator_safe_lifecycle_decay",
+		}); err != nil {
+			return MemoryLifecycleSafeApplyReport{}, err
+		}
+		out.AppliedCount++
+		out.AppliedMemoryIDs = append(out.AppliedMemoryIDs, item.ID)
+	}
+	out.SkippedCount = len(out.Skipped)
+	post, err := store.LifecycleReport(residentID, now, memory.DefaultPolicy())
+	if err != nil {
+		return MemoryLifecycleSafeApplyReport{}, err
+	}
+	out.PostLifecycleReport = post
+	return out, nil
+}
+
+func safeLifecycleDecayCandidate(item memory.LifecycleItem, now time.Time) bool {
+	if item.RecommendedOperatorAction == "decay_ok_after_spot_check" {
+		return true
+	}
+	return item.Status == memory.StatusDecaying &&
+		item.Layer == memory.LayerInstant &&
+		item.Action == memory.ActionRetain &&
+		!item.ReviewAt.IsZero() &&
+		!item.ReviewAt.After(now) &&
+		!item.ExpiresAt.IsZero() &&
+		item.ExpiresAt.After(now)
+}
+
 func (a *App) RunMemoryMaintenanceSummary() MemoryMaintenanceSummary {
 	now := time.Now().UTC()
 	residents := a.buildMemoryMaintenanceReportsAt(now)
