@@ -182,3 +182,42 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 		t.Fatalf("expected amber resident memory self-review to remain operator-only, got %#v", amber)
 	}
 }
+
+func TestSortDecisionAssistUsesStableActionOrder(t *testing.T) {
+	out := HostDecisionAssist{
+		Actions: []HostSuggestedAction{
+			{Kind: "chat_reply", Priority: "medium", Visibility: decisionVisibilityWorldEventCandidate},
+			{Kind: "resident_memory_review_queue", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
+			{Kind: "runtime_budget_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
+			{Kind: "inventory_check", Priority: "high", Visibility: decisionVisibilityOperatorOnly},
+			{Kind: "ticket_review", Priority: "medium", Visibility: decisionVisibilityWorldEventCandidate},
+			{Kind: "capacity_review", Priority: "high", Visibility: decisionVisibilityOperatorOnly},
+			{Kind: "memory_operator_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
+			{Kind: "orchestrator_failure_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
+			{Kind: "intervention_followup", Priority: "medium", Visibility: decisionVisibilityWorldEventCandidate},
+			{Kind: "drift_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
+		},
+	}
+
+	sortDecisionAssist(&out)
+
+	got := make([]string, 0, len(out.Actions))
+	for _, action := range out.Actions {
+		got = append(got, action.Kind)
+	}
+	want := []string{
+		"capacity_review",
+		"inventory_check",
+		"drift_review",
+		"orchestrator_failure_review",
+		"runtime_budget_review",
+		"memory_operator_review",
+		"resident_memory_review_queue",
+		"ticket_review",
+		"intervention_followup",
+		"chat_reply",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("unexpected action order:\n got %v\nwant %v", got, want)
+	}
+}

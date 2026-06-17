@@ -254,8 +254,11 @@ func sortDecisionAssist(out *HostDecisionAssist) {
 		if priorityRank(left.Priority) != priorityRank(right.Priority) {
 			return priorityRank(left.Priority) > priorityRank(right.Priority)
 		}
-		if left.Visibility != right.Visibility {
-			return left.Visibility < right.Visibility
+		if actionRank(left.Kind) != actionRank(right.Kind) {
+			return actionRank(left.Kind) < actionRank(right.Kind)
+		}
+		if visibilityRank(left.Visibility) != visibilityRank(right.Visibility) {
+			return visibilityRank(left.Visibility) < visibilityRank(right.Visibility)
 		}
 		if left.Kind != right.Kind {
 			return left.Kind < right.Kind
@@ -273,6 +276,52 @@ func sortDecisionAssist(out *HostDecisionAssist) {
 		sort.Strings(out.ResidentFocus[idx].Reasons)
 		sort.Strings(out.ResidentFocus[idx].OperatorOnlyObservations)
 		sort.Strings(out.ResidentFocus[idx].WorldEventCandidates)
+	}
+}
+
+func actionRank(kind string) int {
+	switch kind {
+	case "capacity_review":
+		return 10
+	case "inventory_check":
+		return 20
+	case "drift_review":
+		return 30
+	case "runtime_memory_observation":
+		return 40
+	case "orchestrator_failure_review":
+		return 50
+	case "runtime_budget_review":
+		return 60
+	case "memory_operator_review":
+		return 70
+	case "memory_safe_decay_review":
+		return 80
+	case "memory_lifecycle_review":
+		return 90
+	case "memory_compaction_review":
+		return 100
+	case "resident_memory_review_queue":
+		return 110
+	case "ticket_review":
+		return 120
+	case "intervention_followup":
+		return 130
+	case "chat_reply":
+		return 140
+	default:
+		return 1000
+	}
+}
+
+func visibilityRank(visibility string) int {
+	switch visibility {
+	case decisionVisibilityOperatorOnly:
+		return 0
+	case decisionVisibilityWorldEventCandidate:
+		return 1
+	default:
+		return 10
 	}
 }
 
