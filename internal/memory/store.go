@@ -115,13 +115,23 @@ type ResidentMemoryBundle struct {
 }
 
 type CompactReport struct {
-	Resident              string `json:"resident"`
-	Apply                 bool   `json:"apply"`
-	BeforeHistoryGroups   int    `json:"before_history_groups"`
-	AfterHistoryGroups    int    `json:"after_history_groups"`
-	BeforeSourceGroupRefs int    `json:"before_source_group_refs"`
-	AfterSourceGroupRefs  int    `json:"after_source_group_refs"`
-	Changed               bool   `json:"changed"`
+	Resident              string              `json:"resident"`
+	Apply                 bool                `json:"apply"`
+	BeforeHistoryGroups   int                 `json:"before_history_groups"`
+	AfterHistoryGroups    int                 `json:"after_history_groups"`
+	BeforeSourceGroupRefs int                 `json:"before_source_group_refs"`
+	AfterSourceGroupRefs  int                 `json:"after_source_group_refs"`
+	Changed               bool                `json:"changed"`
+	MergeGroups           []CompactMergeGroup `json:"merge_groups,omitempty"`
+}
+
+type CompactMergeGroup struct {
+	Signature        string   `json:"signature,omitempty"`
+	KeepGroupUUID    string   `json:"keep_group_uuid"`
+	DropGroupUUIDs   []string `json:"drop_group_uuids,omitempty"`
+	GroupUUIDs       []string `json:"group_uuids"`
+	SummaryHint      string   `json:"summary_hint,omitempty"`
+	RawEventRefCount int      `json:"raw_event_ref_count"`
 }
 
 type LifecycleItem struct {
@@ -502,6 +512,7 @@ func (s *FileStore) CompactResidentWithReport(resident string, apply bool) (Comp
 		BeforeSourceGroupRefs: countSourceGroupRefs(bundle.AbstractMemories),
 		AfterSourceGroupRefs:  countSourceGroupRefs(compactedRecords),
 		Changed:               !reflect.DeepEqual(groups, compactedGroups) || !reflect.DeepEqual(bundle.AbstractMemories, compactedRecords),
+		MergeGroups:           buildCompactMergeGroups(groups, groupIDMap),
 	}
 	if !apply {
 		return report, nil
@@ -905,6 +916,56 @@ func compactHistoryGroups(groups []HistoryGroup) ([]HistoryGroup, map[string]str
 		return compacted[i].CreatedAt.After(compacted[j].CreatedAt)
 	})
 	return compacted, idMap
+}
+
+func buildCompactMergeGroups(groups []HistoryGroup, groupIDMap map[string]string) []CompactMergeGroup {
+	byKeep := map[string][]HistoryGroup{}
+	keepByID := map[string]HistoryGroup{}
+	for _, group := range groups {
+		group = normalizeHistoryGroup(group)
+		keepID := group.GroupUUID
+		if replacement, ok := groupIDMap[group.GroupUUID]; ok && strings.TrimSpace(replacement) != "" {
+			keepID = replacement
+		}
+		byKeep[keepID] = append(byKeep[keepID], group)
+	}
+	out := make([]CompactMergeGroup, 0, len(byKeep))
+	for keepID, members := range byKeep {
+		if len(members) <= 1 {
+			continue
+		}
+		sort.Slice(members, func(i, j int) bool {
+			return members[i].GroupUUID < members[j].GroupUUID
+		})
+		for _, member := range members {
+			if member.GroupUUID == keepID {
+				keepByID[keepID] = member
+				break
+			}
+		}
+		keep := keepByID[keepID]
+		if strings.TrimSpace(keep.GroupUUID) == "" {
+			keep = members[0]
+		}
+		item := CompactMergeGroup{
+			Signature:        historyGroupSignature(keep),
+			KeepGroupUUID:    keepID,
+			GroupUUIDs:       make([]string, 0, len(members)),
+			SummaryHint:      keep.SummaryHint,
+			RawEventRefCount: len(keep.RawEventRefs),
+		}
+		for _, member := range members {
+			item.GroupUUIDs = append(item.GroupUUIDs, member.GroupUUID)
+			if member.GroupUUID != keepID {
+				item.DropGroupUUIDs = append(item.DropGroupUUIDs, member.GroupUUID)
+			}
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].KeepGroupUUID < out[j].KeepGroupUUID
+	})
+	return out
 }
 
 func remapAbstractMemoryGroups(records []AbstractMemory, groupIDMap map[string]string) []AbstractMemory {

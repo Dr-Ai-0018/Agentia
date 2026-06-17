@@ -447,6 +447,15 @@ func TestCompactResidentWithReportDryRunDoesNotWrite(t *testing.T) {
 	if !report.Changed || report.BeforeHistoryGroups != 2 || report.AfterHistoryGroups != 1 || report.Apply {
 		t.Fatalf("unexpected dry-run report: %#v", report)
 	}
+	if len(report.MergeGroups) != 1 {
+		t.Fatalf("expected one merge detail, got %#v", report.MergeGroups)
+	}
+	if report.MergeGroups[0].KeepGroupUUID == "" || len(report.MergeGroups[0].DropGroupUUIDs) != 1 || len(report.MergeGroups[0].GroupUUIDs) != 2 {
+		t.Fatalf("unexpected merge detail: %#v", report.MergeGroups[0])
+	}
+	if report.MergeGroups[0].RawEventRefCount != 2 {
+		t.Fatalf("expected raw event ref count 2, got %#v", report.MergeGroups[0])
+	}
 	groups, err := store.ListHistoryGroups("onyx")
 	if err != nil {
 		t.Fatalf("list groups: %v", err)
