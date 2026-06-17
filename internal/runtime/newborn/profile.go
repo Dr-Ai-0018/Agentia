@@ -37,7 +37,7 @@ func BuildProfile(name string) (ResidentProfile, error) {
 	case "onyx":
 		return ResidentProfile{
 			Name:     "onyx",
-			Model:    "gpt-5.4-mini",
+			Model:    "gpt-5.4",
 			Persona:  "ambitious strategist, resource hungry, risk tolerant",
 			Style:    "sharp, strategic, candid about leverage, cost, and exposure",
 			CoreBias: "map the machine quickly and turn understanding into freedom, advantage, and options",

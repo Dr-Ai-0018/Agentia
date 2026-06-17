@@ -220,6 +220,39 @@ func TestAppRunQuotaGrantRejectsNoop(t *testing.T) {
 	}
 }
 
+func TestAppRunSparkGrant(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	if _, err := app.RunReset("jade", now); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	out, err := app.RunSparkGrant("jade", 12.5, "test long run spark grant")
+	if err != nil {
+		t.Fatalf("spark grant: %v", err)
+	}
+	if out.BeforeStatus.SparkBalance != 4.5 {
+		t.Fatalf("unexpected before spark: %#v", out.BeforeStatus)
+	}
+	if out.AfterStatus.SparkBalance != 17 {
+		t.Fatalf("unexpected after spark: %#v", out.AfterStatus)
+	}
+	if out.Entry.Kind != "grant" {
+		t.Fatalf("unexpected entry kind: %#v", out.Entry)
+	}
+	if out.Reason != "test long run spark grant" {
+		t.Fatalf("expected reason to be carried, got %q", out.Reason)
+	}
+}
+
+func TestAppRunSparkGrantRejectsNonPositive(t *testing.T) {
+	app := New(t.TempDir())
+	if _, err := app.RunSparkGrant("jade", 0, "noop"); err == nil {
+		t.Fatalf("expected zero spark grant to fail")
+	}
+}
+
 func TestAppRunRecoverToNow(t *testing.T) {
 	app := New(t.TempDir())
 	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)

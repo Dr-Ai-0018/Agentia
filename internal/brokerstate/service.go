@@ -7,6 +7,7 @@ import (
 	"ai-arena/internal/recovery"
 	"ai-arena/internal/runtimecore"
 	"ai-arena/internal/runtimeguard"
+	"ai-arena/internal/sparkledger"
 	"ai-arena/internal/tokenledger"
 )
 
@@ -63,6 +64,23 @@ type QuotaGrantResponse struct {
 	AfterStatus      ResidentStatus `json:"after_status"`
 	SnapshotPath     string         `json:"snapshot_path"`
 	SnapshotRevision uint64         `json:"snapshot_revision"`
+}
+
+type SparkGrantRequest struct {
+	ResidentID string  `json:"resident_id"`
+	Amount     float64 `json:"amount"`
+	Reason     string  `json:"reason,omitempty"`
+}
+
+type SparkGrantResponse struct {
+	ResidentID       string                 `json:"resident_id"`
+	Amount           float64                `json:"amount"`
+	Reason           string                 `json:"reason,omitempty"`
+	Entry            sparkledger.Entry      `json:"entry"`
+	BeforeStatus     ResidentStatus         `json:"before_status"`
+	AfterStatus      ResidentStatus         `json:"after_status"`
+	SnapshotPath     string                 `json:"snapshot_path"`
+	SnapshotRevision uint64                 `json:"snapshot_revision"`
 }
 
 func NewBrokerService(sessions *SessionManager) *BrokerService {
@@ -148,6 +166,38 @@ func (s *BrokerService) GrantQuota(req QuotaGrantRequest) (QuotaGrantResponse, e
 		Window6HDelta:    req.Window6HDelta,
 		DayDelta:         req.DayDelta,
 		WeekDelta:        req.WeekDelta,
+		BeforeStatus:     before,
+		AfterStatus:      after,
+		SnapshotPath:     path,
+		SnapshotRevision: revision + 1,
+	}, nil
+}
+
+func (s *BrokerService) GrantSpark(req SparkGrantRequest) (SparkGrantResponse, error) {
+	if req.ResidentID == "" {
+		return SparkGrantResponse{}, fmt.Errorf("resident id is required")
+	}
+	if req.Amount <= 0 {
+		return SparkGrantResponse{}, fmt.Errorf("spark grant amount must be positive")
+	}
+	engine, before, revision, err := s.sessions.LoadResidentWithRevision(req.ResidentID)
+	if err != nil {
+		return SparkGrantResponse{}, err
+	}
+	entry, err := engine.SparkLedger().Credit(sparkledger.EntryGrant, req.Amount, req.Reason, time.Now().UTC())
+	if err != nil {
+		return SparkGrantResponse{}, err
+	}
+	path, err := s.sessions.SaveResidentExpected(engine, revision, true)
+	if err != nil {
+		return SparkGrantResponse{}, err
+	}
+	after := BuildResidentStatus(engine, true, path)
+	return SparkGrantResponse{
+		ResidentID:       req.ResidentID,
+		Amount:           req.Amount,
+		Reason:           req.Reason,
+		Entry:            entry,
 		BeforeStatus:     before,
 		AfterStatus:      after,
 		SnapshotPath:     path,

@@ -492,6 +492,14 @@ func (a *App) RunQuotaGrant(residentID string, window6HDelta, dayDelta, weekDelt
 	})
 }
 
+func (a *App) RunSparkGrant(residentID string, amount float64, reason string) (brokerstate.SparkGrantResponse, error) {
+	return a.service(false).GrantSpark(brokerstate.SparkGrantRequest{
+		ResidentID: residentID,
+		Amount:     amount,
+		Reason:     reason,
+	})
+}
+
 func (a *App) RunReset(residentID string, now time.Time) (ResetOutput, error) {
 	status, path, err := a.service(false).ResetResident(residentID, now)
 	if err != nil {

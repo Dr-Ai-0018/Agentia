@@ -16,13 +16,14 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-compact|memory-lifecycle|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-compact|memory-lifecycle|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
 	window6HDelta := flag.Int("window-6h-delta", 0, "6h quota cap delta for quota-grant mode")
 	dayDelta := flag.Int("day-delta", 0, "day quota cap delta for quota-grant mode")
 	weekDelta := flag.Int("week-delta", 0, "week quota cap delta for quota-grant mode")
+	sparkAmount := flag.Float64("spark-amount", 0, "Spark amount for spark-grant mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
 	apply := flag.Bool("apply", false, "Whether admit mode should actually apply the call")
 	model := flag.String("model", "", "Optional model override for admit mode")
@@ -81,6 +82,12 @@ func main() {
 		printJSON(out)
 	case "quota-grant":
 		out, err := app.RunQuotaGrant(*residentID, *window6HDelta, *dayDelta, *weekDelta, *reason)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "spark-grant":
+		out, err := app.RunSparkGrant(*residentID, *sparkAmount, *reason)
 		if err != nil {
 			exitf("%v", err)
 		}
