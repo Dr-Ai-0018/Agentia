@@ -135,17 +135,21 @@ type CompactMergeGroup struct {
 }
 
 type LifecycleItem struct {
-	ID             string       `json:"id"`
-	Layer          Layer        `json:"layer"`
-	Status         RecordStatus `json:"status"`
-	Action         Action       `json:"action"`
-	TargetLayer    Layer        `json:"target_layer"`
-	ReasonCodes    []string     `json:"reason_codes,omitempty"`
-	ReviewAt       time.Time    `json:"review_at,omitempty"`
-	ExpiresAt      time.Time    `json:"expires_at,omitempty"`
-	HardExpiresAt  time.Time    `json:"hard_expires_at,omitempty"`
-	HardExpired    bool         `json:"hard_expired"`
-	NeedsAttention bool         `json:"needs_attention"`
+	ID                        string       `json:"id"`
+	Layer                     Layer        `json:"layer"`
+	Domain                    Domain       `json:"domain,omitempty"`
+	Visibility                Visibility   `json:"visibility,omitempty"`
+	Status                    RecordStatus `json:"status"`
+	Action                    Action       `json:"action"`
+	TargetLayer               Layer        `json:"target_layer"`
+	ReasonCodes               []string     `json:"reason_codes,omitempty"`
+	Summary                   string       `json:"summary,omitempty"`
+	RecommendedOperatorAction string       `json:"recommended_operator_action,omitempty"`
+	ReviewAt                  time.Time    `json:"review_at,omitempty"`
+	ExpiresAt                 time.Time    `json:"expires_at,omitempty"`
+	HardExpiresAt             time.Time    `json:"hard_expires_at,omitempty"`
+	HardExpired               bool         `json:"hard_expired"`
+	NeedsAttention            bool         `json:"needs_attention"`
 }
 
 type LifecycleReport struct {
@@ -583,17 +587,21 @@ func buildLifecycleReport(resident string, records []AbstractMemory, now time.Ti
 		hardExpired := !record.HardExpiresAt.IsZero() && !record.HardExpiresAt.After(now)
 		needsAttention := decision.Action != ActionRetain || hardExpired || dueAt(record.ReviewAt, now) || dueAt(record.ExpiresAt, now)
 		item := LifecycleItem{
-			ID:             record.ID,
-			Layer:          record.Layer,
-			Status:         record.Status,
-			Action:         decision.Action,
-			TargetLayer:    decision.TargetLayer,
-			ReasonCodes:    append([]string(nil), decision.ReasonCodes...),
-			ReviewAt:       record.ReviewAt,
-			ExpiresAt:      record.ExpiresAt,
-			HardExpiresAt:  record.HardExpiresAt,
-			HardExpired:    hardExpired,
-			NeedsAttention: needsAttention,
+			ID:                        record.ID,
+			Layer:                     record.Layer,
+			Domain:                    record.Domain,
+			Visibility:                NormalizeVisibility(record.Visibility),
+			Status:                    record.Status,
+			Action:                    decision.Action,
+			TargetLayer:               decision.TargetLayer,
+			ReasonCodes:               append([]string(nil), decision.ReasonCodes...),
+			Summary:                   record.EffectiveSummary(),
+			RecommendedOperatorAction: recommendLifecycleOperatorAction(record, decision, hardExpired),
+			ReviewAt:                  record.ReviewAt,
+			ExpiresAt:                 record.ExpiresAt,
+			HardExpiresAt:             record.HardExpiresAt,
+			HardExpired:               hardExpired,
+			NeedsAttention:            needsAttention,
 		}
 		report.ActionCounts[decision.Action]++
 		if needsAttention {
@@ -602,6 +610,34 @@ func buildLifecycleReport(resident string, records []AbstractMemory, now time.Ti
 		report.Items = append(report.Items, item)
 	}
 	return report
+}
+
+func recommendLifecycleOperatorAction(record AbstractMemory, decision Decision, hardExpired bool) string {
+	if decision.Action == ActionRetain && !hardExpired {
+		return "retain"
+	}
+	summary := strings.ToLower(record.EffectiveSummary())
+	switch record.Domain {
+	case DomainIdentity, DomainRelationships, DomainRules, DomainHistory:
+		return "review_for_promotion_or_rewrite"
+	}
+	for _, marker := range []string{
+		"chenglin",
+		"persistence",
+		"world-facing thread",
+		"ticket",
+		"relationship",
+		"policy",
+		"continuity",
+	} {
+		if strings.Contains(summary, marker) {
+			return "review_for_promotion_or_rewrite"
+		}
+	}
+	if hardExpired || decision.Action == ActionDecay {
+		return "decay_ok_after_spot_check"
+	}
+	return "review"
 }
 
 func lifecycleDecision(record AbstractMemory, now time.Time, policy Policy) Decision {

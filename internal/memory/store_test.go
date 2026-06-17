@@ -502,22 +502,46 @@ func TestLifecycleReportFlagsExpiredMemories(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert memory: %v", err)
 	}
+	if err := store.UpsertAbstractMemory(AbstractMemory{
+		Record: Record{
+			ID:             "relationship-old",
+			Layer:          LayerShort,
+			Domain:         DomainRelationships,
+			Status:         StatusActive,
+			CreatedAt:      now.Add(-96 * time.Hour),
+			UpdatedAt:      now.Add(-96 * time.Hour),
+			LastAccessedAt: now.Add(-96 * time.Hour),
+			ExpiresAt:      now.Add(-48 * time.Hour),
+			HardExpiresAt:  now.Add(-24 * time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "Chenglin confirmed persistence is intentional and continuity notes matter.",
+		DecisionAction: ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
 
 	report, err := store.LifecycleReport("amber", now, DefaultPolicy())
 	if err != nil {
 		t.Fatalf("lifecycle report: %v", err)
 	}
-	if report.Total != 2 || report.NeedsAttention != 1 {
+	if report.Total != 3 || report.NeedsAttention != 2 {
 		t.Fatalf("unexpected lifecycle counts: %#v", report)
 	}
-	if report.ActionCounts[ActionDelete] != 1 || report.ActionCounts[ActionRetain] != 1 {
+	if report.ActionCounts[ActionDelete] != 1 || report.ActionCounts[ActionDecay] != 1 || report.ActionCounts[ActionRetain] != 1 {
 		t.Fatalf("unexpected action counts: %#v", report.ActionCounts)
 	}
-	if len(report.Items) != 2 || report.Items[0].ID != "long-fresh" || report.Items[1].ID != "instant-old" {
+	if len(report.Items) != 3 || report.Items[0].ID != "long-fresh" || report.Items[1].ID != "instant-old" || report.Items[2].ID != "relationship-old" {
 		t.Fatalf("expected report to preserve memory listing order, got %#v", report.Items)
 	}
 	if !report.Items[1].HardExpired || !report.Items[1].NeedsAttention {
 		t.Fatalf("expected expired instant memory to need attention: %#v", report.Items[1])
+	}
+	if report.Items[1].Summary != "temporary note" || report.Items[1].Visibility != VisibilityResidentPrivate || report.Items[1].RecommendedOperatorAction != "decay_ok_after_spot_check" {
+		t.Fatalf("expected machine-like expired memory to include summary and decay recommendation: %#v", report.Items[1])
+	}
+	if report.Items[2].Domain != DomainRelationships || report.Items[2].RecommendedOperatorAction != "review_for_promotion_or_rewrite" {
+		t.Fatalf("expected relationship memory to need promotion/rewrite review: %#v", report.Items[2])
 	}
 }
 
