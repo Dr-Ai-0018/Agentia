@@ -29,6 +29,11 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 			BudgetBlockedRuns: 1,
 		},
 		RecentRunsNeedingAttention: 2,
+		MaintenanceInterventions: &MaintenanceInterventionSummary{
+			Total:      2,
+			InProgress: 1,
+			Failed:     1,
+		},
 		ResidentRisk: []ResidentInspectRisk{
 			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, MemoryAttention: 2, MemoryOperatorDecayCandidates: 1, MemoryResidentReviewQueue: 1, MemoryOperatorReviewRequired: 1, MemoryDuplicateHistoryGroups: 3, MemoryRecommendedAction: "lifecycle_then_compaction_dry_run", OrchestratorBudgetBlocked: true, OrchestratorStoppedReason: "broker_preflight_denied: effective_window_exhausted", NeedsAttention: true, Status: "Running"},
 			{ResidentID: "onyx", NeedsAttention: true, Status: "", HostRSSHighGuestUsageLow: true, HostQEMURSSMiB: 2225, IncusMemoryCurrentMiB: 134, GuestMemAvailableMiB: 1806},
@@ -60,6 +65,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	foundOrchestratorBudgetAction := false
 	foundOrchestratorFailureAction := false
 	foundRuntimeMemoryAction := false
+	foundMaintenanceStateAction := false
 	foundWorldVisibleChatAction := false
 	for _, action := range out.Actions {
 		if action.Kind == "memory_lifecycle_review" {
@@ -110,6 +116,12 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 				t.Fatalf("expected runtime memory action to be operator-only, got %#v", action)
 			}
 		}
+		if action.Kind == "maintenance_state_review" {
+			foundMaintenanceStateAction = true
+			if action.Visibility != decisionVisibilityWorldEventCandidate {
+				t.Fatalf("expected maintenance state action to be a world event candidate, got %#v", action)
+			}
+		}
 		if action.Kind == "chat_reply" {
 			foundWorldVisibleChatAction = true
 			if action.Visibility != decisionVisibilityWorldEventCandidate {
@@ -140,6 +152,9 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	}
 	if !foundRuntimeMemoryAction {
 		t.Fatalf("expected runtime memory observation action, got %#v", out.Actions)
+	}
+	if !foundMaintenanceStateAction {
+		t.Fatalf("expected maintenance state review action, got %#v", out.Actions)
 	}
 	if !foundWorldVisibleChatAction {
 		t.Fatalf("expected world-visible chat action, got %#v", out.Actions)
@@ -191,6 +206,7 @@ func TestSortDecisionAssistUsesStableActionOrder(t *testing.T) {
 			{Kind: "runtime_budget_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
 			{Kind: "inventory_check", Priority: "high", Visibility: decisionVisibilityOperatorOnly},
 			{Kind: "ticket_review", Priority: "medium", Visibility: decisionVisibilityWorldEventCandidate},
+			{Kind: "maintenance_state_review", Priority: "medium", Visibility: decisionVisibilityWorldEventCandidate},
 			{Kind: "capacity_review", Priority: "high", Visibility: decisionVisibilityOperatorOnly},
 			{Kind: "memory_operator_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
 			{Kind: "orchestrator_failure_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
@@ -214,6 +230,7 @@ func TestSortDecisionAssistUsesStableActionOrder(t *testing.T) {
 		"memory_operator_review",
 		"resident_memory_review_queue",
 		"ticket_review",
+		"maintenance_state_review",
 		"intervention_followup",
 		"chat_reply",
 	}

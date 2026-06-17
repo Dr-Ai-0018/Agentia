@@ -75,6 +75,16 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		addWorldCandidateAction(&out, "intervention_followup", "medium", "Check active host interventions and confirm whether any maintenance or notice chain still needs closure.")
 		addWorldEventCandidate(&out, reason)
 	}
+	if summary.MaintenanceInterventions != nil {
+		maintenance := summary.MaintenanceInterventions
+		if maintenance.InProgress > 0 || maintenance.Failed > 0 || maintenance.RolledBack > 0 || maintenance.Unknown > 0 {
+			raiseSeverity(&out, "medium")
+			reason := fmt.Sprintf("maintenance interventions need status review: in_progress=%d failed=%d rolled_back=%d unknown=%d", maintenance.InProgress, maintenance.Failed, maintenance.RolledBack, maintenance.Unknown)
+			out.Reasons = append(out.Reasons, reason)
+			addWorldCandidateAction(&out, "maintenance_state_review", "medium", "Review maintenance intervention states and close, fail, roll back, or complete them through the maintenance workflow.")
+			addWorldEventCandidate(&out, reason)
+		}
+	}
 	if summary.MemoryItemsAttention > 0 {
 		raiseSeverity(&out, "medium")
 		reason := fmt.Sprintf("%d memory items across %d residents need lifecycle attention", summary.MemoryItemsAttention, summary.MemoryResidentsAttention)
@@ -305,10 +315,12 @@ func actionRank(kind string) int {
 		return 110
 	case "ticket_review":
 		return 120
-	case "intervention_followup":
+	case "maintenance_state_review":
 		return 130
-	case "chat_reply":
+	case "intervention_followup":
 		return 140
+	case "chat_reply":
+		return 150
 	default:
 		return 1000
 	}

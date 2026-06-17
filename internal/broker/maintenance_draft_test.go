@@ -12,6 +12,11 @@ func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
 		RuntimeMemoryObservationResidents: 1,
 		MemoryResidentReviewQueue:         3,
 		PendingChatResidents:              1,
+		MaintenanceInterventions: &MaintenanceInterventionSummary{
+			Total:      2,
+			InProgress: 1,
+			Unknown:    1,
+		},
 		ResidentRisk: []ResidentInspectRisk{
 			{
 				ResidentID:               "onyx",
@@ -66,6 +71,23 @@ func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
 	}
 	if len(memoryDraft.ResidentIDs) != 1 || memoryDraft.ResidentIDs[0] != "jade" {
 		t.Fatalf("expected jade memory draft focus, got %#v", memoryDraft.ResidentIDs)
+	}
+
+	maintenanceDraft := findDraft(out.Drafts, "maintenance_state_review")
+	if maintenanceDraft.ID == "" {
+		t.Fatalf("expected maintenance state draft: %#v", out.Drafts)
+	}
+	if maintenanceDraft.Kind != "maintenance_intervention_followup" {
+		t.Fatalf("unexpected maintenance state draft kind: %#v", maintenanceDraft)
+	}
+	if !maintenanceDraft.ManualOnly || !maintenanceDraft.RequiresMaintenanceWindow || maintenanceDraft.RequiresStopStart {
+		t.Fatalf("maintenance state draft should be manual window review without stop/start by itself: %#v", maintenanceDraft)
+	}
+	if maintenanceDraft.Visibility != decisionVisibilityWorldEventCandidate {
+		t.Fatalf("maintenance state draft should remain a world event candidate: %#v", maintenanceDraft)
+	}
+	if maintenanceDraft.Reason == "" {
+		t.Fatalf("expected maintenance state draft reason: %#v", maintenanceDraft)
 	}
 
 	chatDraft := findDraft(out.Drafts, "chat_reply")

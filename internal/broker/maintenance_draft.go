@@ -66,7 +66,7 @@ func maintenanceDraftForAction(action HostSuggestedAction, decision HostDecision
 		draft.RequiresStopStart = true
 	case "ticket_review":
 		draft.RequiresTicketReview = true
-	case "intervention_followup":
+	case "maintenance_state_review", "intervention_followup":
 		draft.RequiresMaintenanceWindow = true
 	}
 	return draft, true
@@ -84,7 +84,7 @@ func draftKind(actionKind string) string {
 		return "memory_governance_review"
 	case "ticket_review":
 		return "ticket_review"
-	case "intervention_followup":
+	case "maintenance_state_review", "intervention_followup":
 		return "maintenance_intervention_followup"
 	case "chat_reply":
 		return "chat_followup"
@@ -121,6 +121,8 @@ func draftTitle(actionKind string) string {
 		return "Review open resident tickets"
 	case "intervention_followup":
 		return "Close or advance active host interventions"
+	case "maintenance_state_review":
+		return "Review active maintenance intervention states"
 	case "chat_reply":
 		return "Review pending resident chats"
 	default:
@@ -160,6 +162,12 @@ func draftNextSteps(actionKind string) []string {
 		return []string{
 			"Read the ticket and decide whether to ask a follow-up, defer, or plan maintenance.",
 			"Resource changes must remain maintenance-window based.",
+		}
+	case "maintenance_state_review":
+		return []string{
+			"Inspect each maintenance intervention state and its structured metadata.",
+			"Use the explicit maintenance workflow to complete, fail, or roll back; do not mutate resources from the draft.",
+			"Send resident-facing notices only through the normal maintenance/intervention channel.",
 		}
 	case "intervention_followup":
 		return []string{
@@ -205,6 +213,8 @@ func matchingDecisionReason(actionKind string, decision HostDecisionAssist) stri
 		keywords = []string{"open tickets"}
 	case "intervention_followup":
 		keywords = []string{"host interventions"}
+	case "maintenance_state_review":
+		keywords = []string{"maintenance interventions need status review"}
 	case "chat_reply":
 		keywords = []string{"waiting on chat replies"}
 	}
@@ -264,6 +274,8 @@ func focusMatchesAction(focus ResidentDecisionFocus, actionKind string) bool {
 		return strings.Contains(haystack, "open ticket")
 	case "intervention_followup":
 		return strings.Contains(haystack, "host intervention")
+	case "maintenance_state_review":
+		return strings.Contains(haystack, "host intervention") || strings.Contains(haystack, "maintenance")
 	case "chat_reply":
 		return strings.Contains(haystack, "pending resident chat")
 	default:
