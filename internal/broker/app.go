@@ -305,6 +305,39 @@ type V0RunbookStep struct {
 	WritesRuntime    bool     `json:"writes_runtime"`
 }
 
+type V0AcceptanceOutput struct {
+	GeneratedAt string              `json:"generated_at"`
+	Source      string              `json:"source"`
+	Gate        string              `json:"gate"`
+	Summary     V0AcceptanceSummary `json:"summary"`
+	Checks      []V0AcceptanceCheck `json:"checks"`
+	NextActions []string            `json:"next_actions,omitempty"`
+}
+
+type V0AcceptanceSummary struct {
+	WeightedPercent      int `json:"weighted_percent"`
+	AutomaticPassed      int `json:"automatic_passed"`
+	AutomaticWarnings    int `json:"automatic_warnings"`
+	AutomaticFailed      int `json:"automatic_failed"`
+	ManualPending        int `json:"manual_pending"`
+	ManualBlocking       int `json:"manual_blocking"`
+	ApprovalRequired     int `json:"approval_required"`
+	RunbookSections      int `json:"runbook_sections"`
+	RunbookApprovalSteps int `json:"runbook_approval_steps"`
+}
+
+type V0AcceptanceCheck struct {
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	Category         string   `json:"category"`
+	Status           string   `json:"status"`
+	Required         bool     `json:"required"`
+	BlocksRelease    bool     `json:"blocks_release"`
+	RequiresApproval bool     `json:"requires_approval"`
+	Evidence         []string `json:"evidence,omitempty"`
+	Command          string   `json:"command,omitempty"`
+}
+
 type HostMaintenanceDraft struct {
 	ID                        string                             `json:"id"`
 	Kind                      string                             `json:"kind"`

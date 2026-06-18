@@ -190,7 +190,7 @@ func knownManualGapReadiness() V0ReadinessItem {
 		Evidence: []string{
 			"CPU and disk maintenance-style real regressions still require approved maintenance windows.",
 			"checkpoint cleanup apply is intentionally not run without explicit approval.",
-			"final acceptance checklist still needs final docs pass.",
+			"final acceptance still needs manual pass after validation gaps close.",
 		},
 	}
 }
