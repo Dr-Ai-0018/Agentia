@@ -38,6 +38,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 			{RunID: "orchestrator-20260616T082449.311075354Z", BudgetBlockedRuns: 1},
 			{RunID: "orchestrator-20260616T074926.897967380Z"},
 		},
+		RecentMaintenanceRuns: []MaintenanceRunRecord{
+			{ID: "maintenance-1", State: "completed", ResidentID: "amber", TicketID: "ticket-1", Resource: "cpu", Amount: "2", InventoryRefreshed: true},
+		},
 		Inbox: worldstate.HostInboxSummary{
 			OpenTickets: []worldstate.ResidentTicketSummary{
 				{ID: "ticket-1", Resident: "amber", Title: "Need help", Status: worldstate.TicketStatusOpen},
@@ -108,6 +111,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if len(summary.RecentOrchestrators) != 2 || summary.RecentRunsNeedingAttention != 1 {
 		t.Fatalf("unexpected recent orchestrator summary: %#v", summary)
+	}
+	if len(summary.RecentMaintenanceRuns) != 1 || summary.RecentMaintenanceRuns[0].State != "completed" {
+		t.Fatalf("expected recent maintenance run in summary: %#v", summary.RecentMaintenanceRuns)
 	}
 	var amber ResidentInspectRisk
 	var onyx ResidentInspectRisk

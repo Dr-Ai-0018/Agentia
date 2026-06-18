@@ -40,6 +40,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			summary.RecentRunsNeedingAttention++
 		}
 	}
+	summary.RecentMaintenanceRuns = append([]MaintenanceRunRecord(nil), out.RecentMaintenanceRuns...)
 
 	pendingChat := map[string]struct{}{}
 	openTicket := map[string]struct{}{}

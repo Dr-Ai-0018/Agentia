@@ -222,6 +222,7 @@ func TestRunHostInspectSummaryFromSnapshot(t *testing.T) {
 			{"resident":"amber","status":"error","error":"runner failed","budget_blocked":true}
 		]
 	}`)
+	writeTestMaintenanceRunRecord(t, root, `{"id":"maintenance-20260616T090000Z","created_at":"2026-06-16T09:00:00Z","state":"completed","resident_id":"amber","ticket_id":"ticket-1","resource":"cpu","amount":"2","operator":"chenglin","checkpoint_name":"checkpoint-amber-20260616","inventory_refreshed":true}`)
 
 	out, err := app.RunHostInspectSummaryFromSnapshot(10)
 	if err != nil {
@@ -242,6 +243,9 @@ func TestRunHostInspectSummaryFromSnapshot(t *testing.T) {
 	if len(out.RecentOrchestrators) != 1 || out.RecentRunsNeedingAttention != 1 {
 		t.Fatalf("expected recent orchestrator attention in summary: %#v", out)
 	}
+	if len(out.RecentMaintenanceRuns) != 1 || out.RecentMaintenanceRuns[0].State != "completed" || !out.RecentMaintenanceRuns[0].InventoryRefreshed {
+		t.Fatalf("expected recent maintenance run in summary: %#v", out.RecentMaintenanceRuns)
+	}
 }
 
 func writeTestOrchestratorInspection(t *testing.T, root, report string) {
@@ -252,6 +256,17 @@ func writeTestOrchestratorInspection(t *testing.T, root, report string) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "inspection-report.json"), []byte(report), 0o644); err != nil {
 		t.Fatalf("write orchestrator report: %v", err)
+	}
+}
+
+func writeTestMaintenanceRunRecord(t *testing.T, root, record string) {
+	t.Helper()
+	dir := filepath.Join(root, "operations")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir operations dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "maintenance-runs-2026-06-16.jsonl"), []byte(record+"\n"), 0o644); err != nil {
+		t.Fatalf("write maintenance run record: %v", err)
 	}
 }
 
