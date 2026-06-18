@@ -231,6 +231,25 @@ type HostMaintenanceDraftOutput struct {
 	Drafts         []HostMaintenanceDraft `json:"drafts"`
 }
 
+type V0ReadinessOutput struct {
+	GeneratedAt string            `json:"generated_at"`
+	Source      string            `json:"source"`
+	Status      string            `json:"status"`
+	Passed      int               `json:"passed"`
+	Warnings    int               `json:"warnings"`
+	Failed      int               `json:"failed"`
+	Items       []V0ReadinessItem `json:"items"`
+	NextActions []string          `json:"next_actions,omitempty"`
+}
+
+type V0ReadinessItem struct {
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Status   string   `json:"status"`
+	Required bool     `json:"required"`
+	Evidence []string `json:"evidence,omitempty"`
+}
+
 type HostMaintenanceDraft struct {
 	ID                        string                             `json:"id"`
 	Kind                      string                             `json:"kind"`
