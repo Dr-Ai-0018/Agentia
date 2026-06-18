@@ -257,6 +257,7 @@ type V0CompletionSummary struct {
 	ChecklistPercent     int                    `json:"checklist_percent"`
 	ReleaseGate          string                 `json:"release_gate"`
 	Workstreams          []V0WorkstreamProgress `json:"workstreams"`
+	RecommendedSteps     []V0RecommendedStep    `json:"recommended_steps,omitempty"`
 	ManualValidationGaps []string               `json:"manual_validation_gaps,omitempty"`
 	CompletionNotes      []string               `json:"completion_notes,omitempty"`
 }
@@ -268,6 +269,16 @@ type V0WorkstreamProgress struct {
 	Percent  int      `json:"percent"`
 	Status   string   `json:"status"`
 	Evidence []string `json:"evidence,omitempty"`
+}
+
+type V0RecommendedStep struct {
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	Reason           string   `json:"reason"`
+	Command          string   `json:"command,omitempty"`
+	RequiresApproval bool     `json:"requires_approval"`
+	BlocksRelease    bool     `json:"blocks_release"`
+	RelatedItems     []string `json:"related_items,omitempty"`
 }
 
 type HostMaintenanceDraft struct {

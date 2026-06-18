@@ -240,6 +240,7 @@ func buildV0Completion(items []V0ReadinessItem) V0CompletionSummary {
 		ReleaseGate:      "ready_with_warnings",
 		Workstreams:      workstreams,
 	}
+	summary.RecommendedSteps = buildV0RecommendedSteps(byID)
 	for _, item := range items {
 		if item.ID == "known_manual_gaps" {
 			summary.ManualValidationGaps = append(summary.ManualValidationGaps, item.Evidence...)
@@ -259,6 +260,97 @@ func buildV0Completion(items []V0ReadinessItem) V0CompletionSummary {
 		"manual CPU/disk/checkpoint apply validations are intentionally not auto-run by readiness",
 	)
 	return summary
+}
+
+func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedStep {
+	var steps []V0RecommendedStep
+	if hasFailure(items, "inventory_facts", "capacity_headroom") {
+		steps = append(steps, V0RecommendedStep{
+			ID:            "refresh_inventory_and_capacity",
+			Title:         "Refresh inventory and capacity facts",
+			Reason:        "Required host facts are missing or unsafe; v0 cannot be declared until host view is reliable.",
+			Command:       "arena-broker --mode host-inspect-summary --limit 5",
+			BlocksRelease: true,
+			RelatedItems:  []string{"inventory_facts", "capacity_headroom"},
+		})
+	}
+	if hasFailure(items, "orchestrator_registry") {
+		steps = append(steps, V0RecommendedStep{
+			ID:            "run_orchestrator_smoke",
+			Title:         "Run a fresh orchestrator smoke test",
+			Reason:        "The latest orchestrator report is missing, so runtime registry readiness is not proven.",
+			Command:       "arena-orchestrator --help",
+			BlocksRelease: true,
+			RelatedItems:  []string{"orchestrator_registry"},
+		})
+	}
+	if hasFailure(items, "memory_governance") {
+		steps = append(steps, V0RecommendedStep{
+			ID:            "resolve_memory_duplicate_debt",
+			Title:         "Resolve duplicate memory debt before release",
+			Reason:        "Duplicate history groups can bury useful resident memory and are treated as a required readiness failure.",
+			Command:       "arena-broker --mode memory-maintenance",
+			BlocksRelease: true,
+			RelatedItems:  []string{"memory_governance"},
+		})
+	}
+	if hasFailure(items, "decision_boundaries", "maintenance_draft_safety") {
+		steps = append(steps, V0RecommendedStep{
+			ID:            "fix_operator_world_boundary",
+			Title:         "Fix operator-only and world-facing boundary failures",
+			Reason:        "Readiness found a required boundary or side-effect safety failure.",
+			Command:       "arena-broker --mode host-decision-assist-cached --limit 5",
+			BlocksRelease: true,
+			RelatedItems:  []string{"decision_boundaries", "maintenance_draft_safety"},
+		})
+	}
+	if hasWarning(items, "orchestrator_registry") {
+		steps = append(steps, V0RecommendedStep{
+			ID:               "longer_orchestrator_soak",
+			Title:            "Run a longer multi-resident orchestrator soak",
+			Reason:           "Recent orchestrator runs are readable but still need attention, usually budget-blocked or runtime stop reasons.",
+			Command:          "arena-orchestrator --mode run --run-mode parallel --residents jade,amber,onyx --duration 10m",
+			RequiresApproval: true,
+			RelatedItems:     []string{"orchestrator_registry"},
+		})
+	}
+	if hasWarning(items, "world_followups") {
+		steps = append(steps, V0RecommendedStep{
+			ID:           "review_world_followups",
+			Title:        "Review pending world-facing followups",
+			Reason:       "There are pending chats, tickets, or host interventions that should be handled through in-world boundaries.",
+			Command:      "arena-broker --mode host-decision-assist-cached --limit 5",
+			RelatedItems: []string{"world_followups"},
+		})
+	}
+	if hasWarning(items, "memory_governance") {
+		steps = append(steps, V0RecommendedStep{
+			ID:           "review_memory_governance_queue",
+			Title:        "Review memory governance queue without leaking operator-only context",
+			Reason:       "Memory governance has resident self-review or operator review work; v0 can continue, but the queue should stay visible.",
+			Command:      "arena-broker --mode memory-maintenance",
+			RelatedItems: []string{"memory_governance"},
+		})
+	}
+	if hasWarning(items, "known_manual_gaps") {
+		steps = append(steps, V0RecommendedStep{
+			ID:               "close_manual_validation_gaps",
+			Title:            "Close manual validation gaps with explicit maintenance windows",
+			Reason:           "CPU/disk maintenance and checkpoint cleanup apply are intentionally not automated by readiness.",
+			Command:          "arena-broker --mode checkpoint-cleanup --resident jade --keep 2",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+			RelatedItems:     []string{"known_manual_gaps"},
+		})
+		steps = append(steps, V0RecommendedStep{
+			ID:           "final_operator_runbook",
+			Title:        "Finish the operator runbook and final acceptance pass",
+			Reason:       "v0 needs a clear human operation path for start, long run, inspect, pause, resume, maintenance, rollback, and reports.",
+			Command:      "arena-broker --mode v0-readiness-cached --limit 5",
+			RelatedItems: []string{"known_manual_gaps"},
+		})
+	}
+	return steps
 }
 
 func v0FoundationProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress {

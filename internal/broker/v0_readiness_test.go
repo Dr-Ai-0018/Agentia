@@ -31,6 +31,12 @@ func TestBuildV0ReadinessReportsWarningsForKnownGaps(t *testing.T) {
 	if len(out.Completion.Workstreams) != 5 {
 		t.Fatalf("expected five weighted workstreams: %#v", out.Completion.Workstreams)
 	}
+	if len(out.Completion.RecommendedSteps) == 0 {
+		t.Fatalf("expected recommended steps for warning state: %#v", out.Completion)
+	}
+	if !hasRecommendedStep(out, "close_manual_validation_gaps") {
+		t.Fatalf("expected manual validation step: %#v", out.Completion.RecommendedSteps)
+	}
 	if findReadinessItem(out, "maintenance_draft_safety").Status != v0ReadinessPass {
 		t.Fatalf("expected dry-run maintenance draft safety pass: %#v", out)
 	}
@@ -53,6 +59,9 @@ func TestBuildV0ReadinessFailsWhenRequiredStateMissing(t *testing.T) {
 	}
 	if out.Completion.ReleaseGate != "blocked_by_required_failures" {
 		t.Fatalf("expected blocked release gate: %#v", out.Completion)
+	}
+	if !hasBlockingRecommendedStep(out, "refresh_inventory_and_capacity") {
+		t.Fatalf("expected blocking inventory/capacity step: %#v", out.Completion.RecommendedSteps)
 	}
 	if findReadinessItem(out, "inventory_facts").Status != v0ReadinessFail {
 		t.Fatalf("expected inventory failure: %#v", out)
@@ -83,6 +92,30 @@ func TestBuildV0ReadinessFailsOnDuplicateMemoryDebt(t *testing.T) {
 	}
 }
 
+func TestBuildV0ReadinessMarksLongSoakAsApprovalRequired(t *testing.T) {
+	out := BuildV0Readiness(HostInspectSummary{
+		ResidentCount:                 3,
+		ResidentsRunning:              3,
+		Capacity:                      HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "cpu", AllocatableTotal: 8, AllocatableFree: 4, Unit: "vcpu"}}},
+		RecentRunsNeedingAttention:    1,
+		LatestRunNeedsAttention:       true,
+		LatestOrchestrator:            &OrchestratorInspectionDigest{RunID: "orchestrator-budget-blocked", BudgetBlockedRuns: 1},
+		MemoryDuplicateHistoryGroups:  0,
+		MemoryOperatorDecayCandidates: 0,
+	}, time.Date(2026, 6, 18, 6, 30, 0, 0, time.UTC), "test")
+
+	step, ok := findRecommendedStep(out, "longer_orchestrator_soak")
+	if !ok {
+		t.Fatalf("expected longer orchestrator soak step: %#v", out.Completion.RecommendedSteps)
+	}
+	if !step.RequiresApproval {
+		t.Fatalf("expected longer soak to require approval: %#v", step)
+	}
+	if step.BlocksRelease {
+		t.Fatalf("longer soak should not be a hard release blocker by itself: %#v", step)
+	}
+}
+
 func findReadinessItem(out V0ReadinessOutput, id string) V0ReadinessItem {
 	for _, item := range out.Items {
 		if item.ID == id {
@@ -90,4 +123,26 @@ func findReadinessItem(out V0ReadinessOutput, id string) V0ReadinessItem {
 		}
 	}
 	return V0ReadinessItem{}
+}
+
+func hasRecommendedStep(out V0ReadinessOutput, id string) bool {
+	_, ok := findRecommendedStep(out, id)
+	return ok
+}
+
+func hasBlockingRecommendedStep(out V0ReadinessOutput, id string) bool {
+	step, ok := findRecommendedStep(out, id)
+	if !ok {
+		return false
+	}
+	return step.BlocksRelease
+}
+
+func findRecommendedStep(out V0ReadinessOutput, id string) (V0RecommendedStep, bool) {
+	for _, step := range out.Completion.RecommendedSteps {
+		if step.ID == id {
+			return step, true
+		}
+	}
+	return V0RecommendedStep{}, false
 }
