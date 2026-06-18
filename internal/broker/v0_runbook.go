@@ -22,6 +22,7 @@ func BuildV0Runbook(now time.Time) V0RunbookOutput {
 			v0OrchestratorRunbookSection(),
 			v0HostDecisionRunbookSection(),
 			v0MaintenanceRunbookSection(),
+			v0BaselineRecoveryRunbookSection(),
 			v0MemoryRunbookSection(),
 			v0FinalAcceptanceRunbookSection(),
 		},
@@ -296,6 +297,80 @@ func v0MemoryRunbookSection() V0RunbookSection {
 					"Host may mark protected memory for resident self-review.",
 					"Host must not rewrite/delete/demote protected resident memory.",
 				},
+			},
+		},
+	}
+}
+
+func v0BaselineRecoveryRunbookSection() V0RunbookSection {
+	return V0RunbookSection{
+		ID:      "baseline_recovery",
+		Title:   "Baseline, Checkpoint, Restore",
+		Purpose: "Handle snapshot visibility, baseline recovery, and resident self-restore without blurring host and resident authority.",
+		Steps: []V0RunbookStep{
+			{
+				ID:      "checkpoint_list",
+				Title:   "List resident checkpoints before any cleanup or restore",
+				Command: "go run ./cmd/arena-broker --mode checkpoint-list --resident <resident>",
+				Notes: []string{
+					"Read-only.",
+					"Confirm baseline, host checkpoints, resident self snapshots, and unknown snapshots before any destructive action.",
+				},
+			},
+			{
+				ID:               "create_host_checkpoint",
+				Title:            "Create a host checkpoint before risky maintenance or recovery",
+				Command:          "go run ./cmd/arena-broker --mode checkpoint-create --resident <resident> --operator <operator>",
+				RequiresApproval: true,
+				WritesRuntime:    true,
+				Notes: []string{
+					"Creates checkpoint-<resident>-<timestamp>.",
+					"Use before risky host maintenance or recovery work when rollback evidence matters.",
+				},
+			},
+			{
+				ID:               "resident_self_restore",
+				Title:            "Resident-initiated self snapshot restore",
+				Command:          "go run ./cmd/arena-broker --mode self-restore --resident <resident> --snapshot-name <self-snapshot-name> --reason '<resident-visible reason>'",
+				RequiresApproval: true,
+				WritesWorldState: true,
+				WritesRuntime:    true,
+				Notes: []string{
+					"Use only when the restore is within resident-visible self-service authority.",
+					"Do not use operator-only checkpoint knowledge as world-internal Chenglin context.",
+				},
+			},
+			{
+				ID:               "operator_baseline_restore",
+				Title:            "Operator baseline or host checkpoint restore",
+				Command:          "incus snapshot restore <instance> <clean-base-or-host-checkpoint>",
+				RequiresApproval: true,
+				WritesRuntime:    true,
+				Notes: []string{
+					"Operator-only host action; announce maintenance or outage through world-facing channels when residents are affected.",
+					"Prefer a fresh host checkpoint and inventory snapshot before restore.",
+					"After restore, run inventory refresh and write a maintenance completion or rollback note if a resident-facing process exists.",
+				},
+			},
+			{
+				ID:               "broker_state_reset",
+				Title:            "Reset broker-side resident state only when intentionally reseeding",
+				Command:          "go run ./cmd/arena-broker --mode reset --resident <resident>",
+				RequiresApproval: true,
+				WritesRuntime:    true,
+				Notes: []string{
+					"This resets broker-side state, not the VM by itself.",
+					"Do not use as routine recovery for a living resident without a clear operator decision.",
+				},
+			},
+			{
+				ID:      "post_restore_inventory",
+				Title:   "Refresh host inventory after restore or reset",
+				Command: "go run ./cmd/arena-broker --mode inventory",
+				Notes: []string{
+					"Required after any host restore or maintenance rollback that can change VM facts.",
+				},
+				WritesRuntime: true,
 			},
 		},
 	}
