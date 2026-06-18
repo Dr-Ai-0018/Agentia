@@ -20,6 +20,9 @@ func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
 		TopHostInterventions: []worldstate.HostFollowup{
 			{Kind: "host_intervention", Resident: "onyx", TargetID: "host-1", Title: "Planned maintenance", Preview: "maintenance preview", Status: "in_progress", Maintenance: map[string]string{"maintenance_state": "in_progress"}},
 		},
+		RecentMaintenanceRuns: []MaintenanceRunRecord{
+			{ID: "maintenance-1", State: "in_progress", ResidentID: "onyx", TicketID: "ticket-1", Resource: "cpu", Amount: "2"},
+		},
 		MaintenanceInterventions: &MaintenanceInterventionSummary{
 			Total:      2,
 			InProgress: 1,
@@ -82,6 +85,20 @@ func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
 	}
 	if len(memoryDraft.RelatedPendingChats) != 0 || len(memoryDraft.RelatedHostInterventions) != 0 {
 		t.Fatalf("operator-only memory draft should not carry world followup context: %#v", memoryDraft)
+	}
+
+	runDraft := findDraft(out.Drafts, "maintenance_run_review")
+	if runDraft.ID == "" {
+		t.Fatalf("expected maintenance run review draft: %#v", out.Drafts)
+	}
+	if runDraft.Kind != "maintenance_run_review" || runDraft.Visibility != decisionVisibilityOperatorOnly {
+		t.Fatalf("unexpected maintenance run draft classification: %#v", runDraft)
+	}
+	if runDraft.RequiresMaintenanceWindow || runDraft.RequiresStopStart {
+		t.Fatalf("maintenance run review should not require maintenance operation by itself: %#v", runDraft)
+	}
+	if len(runDraft.RelatedMaintenanceRuns) != 1 || runDraft.RelatedMaintenanceRuns[0].ID != "maintenance-1" {
+		t.Fatalf("expected maintenance run draft context: %#v", runDraft.RelatedMaintenanceRuns)
 	}
 
 	maintenanceDraft := findDraft(out.Drafts, "maintenance_state_review")

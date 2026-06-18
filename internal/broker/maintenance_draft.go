@@ -84,6 +84,8 @@ func attachDraftContext(draft *HostMaintenanceDraft, actionKind string, decision
 		draft.RelatedPendingChats = filterHostFollowupsByResident(decision.TopPendingChats, draft.ResidentIDs)
 	case "ticket_review":
 		draft.RelatedOpenTickets = filterTicketsByResident(decision.TopOpenTickets, draft.ResidentIDs)
+	case "maintenance_run_review":
+		draft.RelatedMaintenanceRuns = filterMaintenanceRunsByResident(decision.RecentMaintenanceRuns, draft.ResidentIDs)
 	case "maintenance_state_review", "intervention_followup":
 		draft.RelatedHostInterventions = filterHostFollowupsByResident(decision.TopHostInterventions, draft.ResidentIDs)
 	}
@@ -101,6 +103,8 @@ func draftKind(actionKind string) string {
 		return "memory_governance_review"
 	case "ticket_review":
 		return "ticket_review"
+	case "maintenance_run_review":
+		return "maintenance_run_review"
 	case "maintenance_state_review", "intervention_followup":
 		return "maintenance_intervention_followup"
 	case "chat_reply":
@@ -136,6 +140,8 @@ func draftTitle(actionKind string) string {
 		return "Let residents handle marked memory self-review"
 	case "ticket_review":
 		return "Review open resident tickets"
+	case "maintenance_run_review":
+		return "Review recent maintenance run records"
 	case "intervention_followup":
 		return "Close or advance active host interventions"
 	case "maintenance_state_review":
@@ -179,6 +185,11 @@ func draftNextSteps(actionKind string) []string {
 		return []string{
 			"Read the ticket and decide whether to ask a follow-up, defer, or plan maintenance.",
 			"Resource changes must remain maintenance-window based.",
+		}
+	case "maintenance_run_review":
+		return []string{
+			"Inspect recent maintenance run records and compare them with tickets, interventions, and inventory snapshots.",
+			"Complete, fail, roll back, or refresh inventory through the explicit maintenance workflow; do not mutate resources from the draft.",
 		}
 	case "maintenance_state_review":
 		return []string{
@@ -228,6 +239,8 @@ func matchingDecisionReason(actionKind string, decision HostDecisionAssist) stri
 		keywords = []string{"resident self-review"}
 	case "ticket_review":
 		keywords = []string{"open tickets"}
+	case "maintenance_run_review":
+		keywords = []string{"maintenance run records need operator review"}
 	case "intervention_followup":
 		keywords = []string{"host interventions"}
 	case "maintenance_state_review":
@@ -297,6 +310,23 @@ func filterTicketsByResident(items []worldstate.ResidentTicketSummary, residentI
 	return out
 }
 
+func filterMaintenanceRunsByResident(items []MaintenanceRunRecord, residentIDs []string) []MaintenanceRunRecord {
+	if len(items) == 0 {
+		return nil
+	}
+	if len(residentIDs) == 0 {
+		return append([]MaintenanceRunRecord(nil), items...)
+	}
+	allowed := residentSet(residentIDs)
+	out := []MaintenanceRunRecord{}
+	for _, item := range items {
+		if _, ok := allowed[item.ResidentID]; ok {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 func residentSet(residentIDs []string) map[string]struct{} {
 	out := map[string]struct{}{}
 	for _, residentID := range residentIDs {
@@ -334,6 +364,8 @@ func focusMatchesAction(focus ResidentDecisionFocus, actionKind string) bool {
 		return strings.Contains(haystack, "resident self-review")
 	case "ticket_review":
 		return strings.Contains(haystack, "open ticket")
+	case "maintenance_run_review":
+		return strings.Contains(haystack, "maintenance")
 	case "intervention_followup":
 		return strings.Contains(haystack, "host intervention")
 	case "maintenance_state_review":

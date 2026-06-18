@@ -14,14 +14,15 @@ const (
 
 func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 	out := HostDecisionAssist{
-		CollectedAt:          summary.CollectedAt,
-		InventoryPath:        summary.InventoryPath,
-		Capacity:             summary.Capacity,
-		Severity:             "normal",
-		Headline:             "No immediate host action is suggested.",
-		TopPendingChats:      append([]worldstate.HostFollowup(nil), summary.TopPendingChats...),
-		TopOpenTickets:       append([]worldstate.ResidentTicketSummary(nil), summary.TopOpenTickets...),
-		TopHostInterventions: append([]worldstate.HostFollowup(nil), summary.TopHostInterventions...),
+		CollectedAt:           summary.CollectedAt,
+		InventoryPath:         summary.InventoryPath,
+		Capacity:              summary.Capacity,
+		Severity:              "normal",
+		Headline:              "No immediate host action is suggested.",
+		TopPendingChats:       append([]worldstate.HostFollowup(nil), summary.TopPendingChats...),
+		TopOpenTickets:        append([]worldstate.ResidentTicketSummary(nil), summary.TopOpenTickets...),
+		TopHostInterventions:  append([]worldstate.HostFollowup(nil), summary.TopHostInterventions...),
+		RecentMaintenanceRuns: append([]MaintenanceRunRecord(nil), summary.RecentMaintenanceRuns...),
 	}
 
 	for _, pool := range summary.Capacity.Pools {
@@ -89,6 +90,13 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 			addWorldCandidateAction(&out, "maintenance_state_review", "medium", "Review maintenance intervention states and close, fail, roll back, or complete them through the maintenance workflow.")
 			addWorldEventCandidate(&out, reason)
 		}
+	}
+	if count, staleInventory := maintenanceRunsNeedingReview(summary.RecentMaintenanceRuns); count > 0 {
+		raiseSeverity(&out, "medium")
+		reason := fmt.Sprintf("%d recent maintenance run records need operator review; stale_inventory=%d", count, staleInventory)
+		out.Reasons = append(out.Reasons, reason)
+		addOperatorAction(&out, "maintenance_run_review", "medium", "Review recent maintenance run records and verify state closure, rollback handling, and inventory refresh.")
+		addOperatorObservation(&out, reason)
 	}
 	if summary.MemoryItemsAttention > 0 {
 		raiseSeverity(&out, "medium")
@@ -260,6 +268,26 @@ func addFocusWorldCandidateReason(focus *ResidentDecisionFocus, value string) {
 	focus.WorldEventCandidates = append(focus.WorldEventCandidates, value)
 }
 
+func maintenanceRunsNeedingReview(records []MaintenanceRunRecord) (count int, staleInventory int) {
+	for _, record := range records {
+		stale := (record.State == "completed" || record.State == "rolled_back") && !record.InventoryRefreshed
+		switch record.State {
+		case "in_progress", "failed", "rolled_back", "unknown":
+			count++
+		case "completed":
+			if stale {
+				count++
+			}
+		default:
+			continue
+		}
+		if stale {
+			staleInventory++
+		}
+	}
+	return count, staleInventory
+}
+
 func sortDecisionAssist(out *HostDecisionAssist) {
 	sort.Strings(out.Reasons)
 	sort.Strings(out.OperatorOnlyObservations)
@@ -320,12 +348,14 @@ func actionRank(kind string) int {
 		return 110
 	case "ticket_review":
 		return 120
-	case "maintenance_state_review":
+	case "maintenance_run_review":
 		return 130
-	case "intervention_followup":
+	case "maintenance_state_review":
 		return 140
-	case "chat_reply":
+	case "intervention_followup":
 		return 150
+	case "chat_reply":
+		return 160
 	default:
 		return 1000
 	}

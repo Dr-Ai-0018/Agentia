@@ -218,6 +218,7 @@ type HostDecisionAssist struct {
 	TopPendingChats          []worldstate.HostFollowup          `json:"top_pending_chats,omitempty"`
 	TopOpenTickets           []worldstate.ResidentTicketSummary `json:"top_open_tickets,omitempty"`
 	TopHostInterventions     []worldstate.HostFollowup          `json:"top_host_interventions,omitempty"`
+	RecentMaintenanceRuns    []MaintenanceRunRecord             `json:"recent_maintenance_runs,omitempty"`
 	ResidentFocus            []ResidentDecisionFocus            `json:"resident_focus"`
 }
 
@@ -247,6 +248,7 @@ type HostMaintenanceDraft struct {
 	RelatedPendingChats       []worldstate.HostFollowup          `json:"related_pending_chats,omitempty"`
 	RelatedOpenTickets        []worldstate.ResidentTicketSummary `json:"related_open_tickets,omitempty"`
 	RelatedHostInterventions  []worldstate.HostFollowup          `json:"related_host_interventions,omitempty"`
+	RelatedMaintenanceRuns    []MaintenanceRunRecord             `json:"related_maintenance_runs,omitempty"`
 	NextSteps                 []string                           `json:"next_steps"`
 }
 

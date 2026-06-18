@@ -32,6 +32,10 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 			BudgetBlockedRuns: 1,
 		},
 		RecentRunsNeedingAttention: 2,
+		RecentMaintenanceRuns: []MaintenanceRunRecord{
+			{ID: "maintenance-1", State: "in_progress", ResidentID: "amber", TicketID: "ticket-1", Resource: "cpu", Amount: "2"},
+			{ID: "maintenance-2", State: "completed", ResidentID: "onyx", TicketID: "ticket-2", Resource: "disk", Amount: "20GiB"},
+		},
 		MaintenanceInterventions: &MaintenanceInterventionSummary{
 			Total:      2,
 			InProgress: 1,
@@ -68,6 +72,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	foundOrchestratorBudgetAction := false
 	foundOrchestratorFailureAction := false
 	foundRuntimeMemoryAction := false
+	foundMaintenanceRunAction := false
 	foundMaintenanceStateAction := false
 	foundWorldVisibleChatAction := false
 	for _, action := range out.Actions {
@@ -119,6 +124,12 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 				t.Fatalf("expected runtime memory action to be operator-only, got %#v", action)
 			}
 		}
+		if action.Kind == "maintenance_run_review" {
+			foundMaintenanceRunAction = true
+			if action.Visibility != decisionVisibilityOperatorOnly {
+				t.Fatalf("expected maintenance run action to be operator-only, got %#v", action)
+			}
+		}
 		if action.Kind == "maintenance_state_review" {
 			foundMaintenanceStateAction = true
 			if action.Visibility != decisionVisibilityWorldEventCandidate {
@@ -155,6 +166,9 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	}
 	if !foundRuntimeMemoryAction {
 		t.Fatalf("expected runtime memory observation action, got %#v", out.Actions)
+	}
+	if !foundMaintenanceRunAction {
+		t.Fatalf("expected maintenance run review action, got %#v", out.Actions)
 	}
 	if !foundMaintenanceStateAction {
 		t.Fatalf("expected maintenance state review action, got %#v", out.Actions)
@@ -257,6 +271,7 @@ func TestSortDecisionAssistUsesStableActionOrder(t *testing.T) {
 			{Kind: "runtime_budget_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
 			{Kind: "inventory_check", Priority: "high", Visibility: decisionVisibilityOperatorOnly},
 			{Kind: "ticket_review", Priority: "medium", Visibility: decisionVisibilityWorldEventCandidate},
+			{Kind: "maintenance_run_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
 			{Kind: "maintenance_state_review", Priority: "medium", Visibility: decisionVisibilityWorldEventCandidate},
 			{Kind: "capacity_review", Priority: "high", Visibility: decisionVisibilityOperatorOnly},
 			{Kind: "memory_operator_review", Priority: "medium", Visibility: decisionVisibilityOperatorOnly},
@@ -281,6 +296,7 @@ func TestSortDecisionAssistUsesStableActionOrder(t *testing.T) {
 		"memory_operator_review",
 		"resident_memory_review_queue",
 		"ticket_review",
+		"maintenance_run_review",
 		"maintenance_state_review",
 		"intervention_followup",
 		"chat_reply",
