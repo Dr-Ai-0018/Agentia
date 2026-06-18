@@ -33,14 +33,16 @@ type CheckpointCleanupInput struct {
 }
 
 type CheckpointCleanupOutput struct {
-	ResidentID   string               `json:"resident_id"`
-	InstanceName string               `json:"instance_name"`
-	Keep         int                  `json:"keep"`
-	Apply        bool                 `json:"apply"`
-	Policy       string               `json:"policy"`
-	Deletable    int                  `json:"deletable"`
-	Deleted      []ResidentCheckpoint `json:"deleted"`
-	Retained     []ResidentCheckpoint `json:"retained"`
+	ResidentID           string               `json:"resident_id"`
+	InstanceName         string               `json:"instance_name"`
+	Keep                 int                  `json:"keep"`
+	Apply                bool                 `json:"apply"`
+	ManualReviewRequired bool                 `json:"manual_review_required"`
+	Policy               string               `json:"policy"`
+	ProtectedKinds       []string             `json:"protected_kinds"`
+	Deletable            int                  `json:"deletable"`
+	Deleted              []ResidentCheckpoint `json:"deleted"`
+	Retained             []ResidentCheckpoint `json:"retained"`
 }
 
 type CheckpointCreateOutput struct {
@@ -177,14 +179,16 @@ func (s *HostActionService) CleanupResidentCheckpoints(input CheckpointCleanupIn
 		s.recordCheckpointCleanup(list.ResidentID, list.InstanceName, deleted, input)
 	}
 	return CheckpointCleanupOutput{
-		ResidentID:   list.ResidentID,
-		InstanceName: list.InstanceName,
-		Keep:         input.Keep,
-		Apply:        input.Apply,
-		Policy:       fmt.Sprintf("retain newest %d host checkpoint(s); never delete baseline, resident self snapshots, or unknown snapshots", input.Keep),
-		Deletable:    len(deleted),
-		Deleted:      deleted,
-		Retained:     retained,
+		ResidentID:           list.ResidentID,
+		InstanceName:         list.InstanceName,
+		Keep:                 input.Keep,
+		Apply:                input.Apply,
+		ManualReviewRequired: !input.Apply && len(deleted) > 0,
+		Policy:               fmt.Sprintf("retain newest %d host checkpoint(s); never delete baseline, resident self snapshots, or unknown snapshots", input.Keep),
+		ProtectedKinds:       []string{"baseline", "self_snapshot", "other"},
+		Deletable:            len(deleted),
+		Deleted:              deleted,
+		Retained:             retained,
 	}, nil
 }
 

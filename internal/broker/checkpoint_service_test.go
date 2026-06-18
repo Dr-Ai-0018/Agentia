@@ -55,6 +55,12 @@ func TestCleanupResidentCheckpointsDryRunKeepsNewestHostCheckpoints(t *testing.T
 	if out.Deletable != 2 || out.Policy == "" {
 		t.Fatalf("expected cleanup policy and deletable count, got %#v", out)
 	}
+	if !out.ManualReviewRequired {
+		t.Fatalf("expected dry-run cleanup with deletions to require manual review: %#v", out)
+	}
+	if len(out.ProtectedKinds) != 3 {
+		t.Fatalf("expected protected checkpoint kinds in output: %#v", out)
+	}
 	if out.Deleted[0].Name != "checkpoint-amber-20260612T020000Z" || out.Deleted[1].Name != "checkpoint-amber-20260612T010000Z" {
 		t.Fatalf("unexpected deleted checkpoints: %#v", out.Deleted)
 	}
@@ -87,6 +93,9 @@ func TestCleanupResidentCheckpointsApplyDeletesOldHostCheckpoints(t *testing.T) 
 	}
 	if fake.deletedInstance != "amber" || fake.deletedName != "checkpoint-amber-20260612T010000Z" {
 		t.Fatalf("expected delete call, got fake=%#v", fake)
+	}
+	if out.ManualReviewRequired {
+		t.Fatalf("apply cleanup should not report pending manual review: %#v", out)
 	}
 	if _, err := os.Stat(filepath.Join(root, "world")); err != nil {
 		t.Fatalf("expected history/audit output directories to exist: %v", err)
