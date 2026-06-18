@@ -322,6 +322,7 @@ type V0AcceptanceSummary struct {
 	ManualPending        int `json:"manual_pending"`
 	ManualBlocking       int `json:"manual_blocking"`
 	ApprovalRequired     int `json:"approval_required"`
+	EvidenceRecords      int `json:"evidence_records"`
 	RunbookSections      int `json:"runbook_sections"`
 	RunbookApprovalSteps int `json:"runbook_approval_steps"`
 }
@@ -336,6 +337,18 @@ type V0AcceptanceCheck struct {
 	RequiresApproval bool     `json:"requires_approval"`
 	Evidence         []string `json:"evidence,omitempty"`
 	Command          string   `json:"command,omitempty"`
+}
+
+type V0AcceptanceEvidenceRecord struct {
+	ID          string   `json:"id"`
+	CheckID     string   `json:"check_id"`
+	Status      string   `json:"status"`
+	RecordedAt  string   `json:"recorded_at"`
+	Operator    string   `json:"operator,omitempty"`
+	Summary     string   `json:"summary,omitempty"`
+	Evidence    []string `json:"evidence,omitempty"`
+	Command     string   `json:"command,omitempty"`
+	RequiresLog bool     `json:"requires_log,omitempty"`
 }
 
 type HostMaintenanceDraft struct {

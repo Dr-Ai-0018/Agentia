@@ -16,7 +16,7 @@ func TestBuildV0AcceptanceBlocksOnManualValidation(t *testing.T) {
 		},
 	}, now, "test")
 
-	out := BuildV0Acceptance(readiness, BuildV0Runbook(now), now, "test")
+	out := BuildV0Acceptance(readiness, BuildV0Runbook(now), nil, now, "test")
 
 	if out.Gate != "blocked_by_manual_validation" {
 		t.Fatalf("expected manual validation blocker, got %#v", out)
@@ -42,7 +42,7 @@ func TestBuildV0AcceptanceBlocksOnAutomaticFailure(t *testing.T) {
 		Capacity:                  HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "memory", AllocatableTotal: 8192, AllocatableFree: 0, Unit: "MiB"}}},
 	}, now, "test")
 
-	out := BuildV0Acceptance(readiness, BuildV0Runbook(now), now, "test")
+	out := BuildV0Acceptance(readiness, BuildV0Runbook(now), nil, now, "test")
 
 	if out.Gate != "blocked_by_automatic_failures" {
 		t.Fatalf("expected automatic failure gate, got %#v", out)
@@ -66,13 +66,56 @@ func TestBuildV0AcceptanceFailsWithoutRunbook(t *testing.T) {
 		},
 	}, now, "test")
 
-	out := BuildV0Acceptance(readiness, V0RunbookOutput{}, now, "test")
+	out := BuildV0Acceptance(readiness, V0RunbookOutput{}, nil, now, "test")
 
 	if out.Gate != "blocked_by_automatic_failures" {
 		t.Fatalf("expected missing runbook to block automatically, got %#v", out)
 	}
 	if !hasAcceptanceCheck(out, "operator_runbook", v0AcceptanceFail) {
 		t.Fatalf("expected operator runbook failure: %#v", out.Checks)
+	}
+}
+
+func TestBuildV0AcceptancePassesManualChecksWithEvidence(t *testing.T) {
+	now := time.Date(2026, 6, 18, 8, 0, 0, 0, time.UTC)
+	readiness := BuildV0Readiness(HostInspectSummary{
+		ResidentCount:    3,
+		ResidentsRunning: 3,
+		Capacity:         HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "cpu", AllocatableTotal: 8, AllocatableFree: 4, Unit: "vcpu"}}},
+		LatestOrchestrator: &OrchestratorInspectionDigest{
+			RunID: "orchestrator-ok",
+		},
+	}, now, "test")
+
+	evidence := []V0AcceptanceEvidenceRecord{
+		passedAcceptanceEvidence("cpu_maintenance_regression", "2026-06-18T08:01:00Z"),
+		passedAcceptanceEvidence("disk_maintenance_regression", "2026-06-18T08:02:00Z"),
+		passedAcceptanceEvidence("checkpoint_cleanup_apply_regression", "2026-06-18T08:03:00Z"),
+		passedAcceptanceEvidence("final_acceptance_manual_pass", "2026-06-18T08:04:00Z"),
+	}
+	out := BuildV0Acceptance(readiness, BuildV0Runbook(now), evidence, now, "test")
+
+	if out.Gate != "ready_with_warnings" {
+		t.Fatalf("expected manual evidence to clear blocker while automatic warnings remain, got %#v", out)
+	}
+	if out.Summary.ManualBlocking != 0 || out.Summary.ManualPending != 0 || out.Summary.EvidenceRecords != 4 {
+		t.Fatalf("expected evidence to clear manual blockers: %#v", out.Summary)
+	}
+	if !hasAcceptanceCheck(out, "cpu_maintenance_regression", v0AcceptancePass) ||
+		!hasAcceptanceCheck(out, "final_acceptance_manual_pass", v0AcceptancePass) {
+		t.Fatalf("expected manual checks to pass with evidence: %#v", out.Checks)
+	}
+}
+
+func passedAcceptanceEvidence(checkID, recordedAt string) V0AcceptanceEvidenceRecord {
+	return V0AcceptanceEvidenceRecord{
+		ID:         "evidence-" + checkID,
+		CheckID:    checkID,
+		Status:     "passed",
+		RecordedAt: recordedAt,
+		Operator:   "test-operator",
+		Summary:    "test evidence",
+		Evidence:   []string{"test evidence detail"},
 	}
 }
 

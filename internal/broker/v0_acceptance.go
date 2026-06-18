@@ -18,7 +18,11 @@ func (a *App) RunV0Acceptance(limit int) (V0AcceptanceOutput, error) {
 	if err != nil {
 		return V0AcceptanceOutput{}, err
 	}
-	return BuildV0Acceptance(readiness, BuildV0Runbook(time.Now().UTC()), time.Now().UTC(), "live"), nil
+	evidence, err := LoadRecentV0AcceptanceEvidence(a.root, 64)
+	if err != nil {
+		return V0AcceptanceOutput{}, err
+	}
+	return BuildV0Acceptance(readiness, BuildV0Runbook(time.Now().UTC()), evidence, time.Now().UTC(), "live"), nil
 }
 
 func (a *App) RunV0AcceptanceFromSnapshot(limit int) (V0AcceptanceOutput, error) {
@@ -26,15 +30,21 @@ func (a *App) RunV0AcceptanceFromSnapshot(limit int) (V0AcceptanceOutput, error)
 	if err != nil {
 		return V0AcceptanceOutput{}, err
 	}
-	return BuildV0Acceptance(readiness, BuildV0Runbook(time.Now().UTC()), time.Now().UTC(), "cached"), nil
+	evidence, err := LoadRecentV0AcceptanceEvidence(a.root, 64)
+	if err != nil {
+		return V0AcceptanceOutput{}, err
+	}
+	return BuildV0Acceptance(readiness, BuildV0Runbook(time.Now().UTC()), evidence, time.Now().UTC(), "cached"), nil
 }
 
-func BuildV0Acceptance(readiness V0ReadinessOutput, runbook V0RunbookOutput, now time.Time, source string) V0AcceptanceOutput {
+func BuildV0Acceptance(readiness V0ReadinessOutput, runbook V0RunbookOutput, evidence []V0AcceptanceEvidenceRecord, now time.Time, source string) V0AcceptanceOutput {
+	evidenceByCheck := latestPassingV0AcceptanceEvidence(evidence)
 	out := V0AcceptanceOutput{
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Source:      strings.TrimSpace(source),
 		Summary: V0AcceptanceSummary{
 			WeightedPercent:      readiness.Completion.WeightedPercent,
+			EvidenceRecords:      len(evidence),
 			RunbookSections:      len(runbook.Sections),
 			RunbookApprovalSteps: countRunbookApprovalSteps(runbook),
 		},
@@ -60,7 +70,7 @@ func BuildV0Acceptance(readiness V0ReadinessOutput, runbook V0RunbookOutput, now
 		if !step.RequiresApproval && !step.BlocksRelease {
 			continue
 		}
-		addAcceptanceCheck(&out, acceptanceCheckFromRecommendedStep(step))
+		addAcceptanceCheck(&out, acceptanceCheckFromRecommendedStep(step, evidenceByCheck[step.ID]))
 	}
 	finalizeV0Acceptance(&out)
 	return out
@@ -81,12 +91,12 @@ func acceptanceCheckFromReadinessItem(item V0ReadinessItem) V0AcceptanceCheck {
 	return check
 }
 
-func acceptanceCheckFromRecommendedStep(step V0RecommendedStep) V0AcceptanceCheck {
+func acceptanceCheckFromRecommendedStep(step V0RecommendedStep, evidence *V0AcceptanceEvidenceRecord) V0AcceptanceCheck {
 	status := v0AcceptancePending
 	if !step.BlocksRelease {
 		status = v0AcceptanceWarn
 	}
-	return V0AcceptanceCheck{
+	check := V0AcceptanceCheck{
 		ID:               step.ID,
 		Title:            step.Title,
 		Category:         "manual",
@@ -97,6 +107,19 @@ func acceptanceCheckFromRecommendedStep(step V0RecommendedStep) V0AcceptanceChec
 		Evidence:         []string{step.Reason},
 		Command:          step.Command,
 	}
+	if evidence != nil {
+		check.Status = v0AcceptancePass
+		check.BlocksRelease = false
+		check.RequiresApproval = false
+		check.Evidence = append(check.Evidence,
+			fmt.Sprintf("accepted evidence %s recorded_at=%s operator=%s", evidence.ID, evidence.RecordedAt, evidence.Operator),
+		)
+		if evidence.Summary != "" {
+			check.Evidence = append(check.Evidence, evidence.Summary)
+		}
+		check.Evidence = append(check.Evidence, evidence.Evidence...)
+	}
+	return check
 }
 
 func runbookAvailabilityStatus(runbook V0RunbookOutput) string {
@@ -162,4 +185,21 @@ func countRunbookApprovalSteps(runbook V0RunbookOutput) int {
 		}
 	}
 	return count
+}
+
+func latestPassingV0AcceptanceEvidence(records []V0AcceptanceEvidenceRecord) map[string]*V0AcceptanceEvidenceRecord {
+	out := map[string]*V0AcceptanceEvidenceRecord{}
+	for i := range records {
+		record := records[i]
+		if strings.TrimSpace(record.CheckID) == "" || !strings.EqualFold(strings.TrimSpace(record.Status), "passed") {
+			continue
+		}
+		current, ok := out[record.CheckID]
+		if ok && current.RecordedAt >= record.RecordedAt {
+			continue
+		}
+		copyRecord := record
+		out[record.CheckID] = &copyRecord
+	}
+	return out
 }
