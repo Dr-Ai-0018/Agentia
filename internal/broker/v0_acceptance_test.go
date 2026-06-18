@@ -21,14 +21,17 @@ func TestBuildV0AcceptanceBlocksOnManualValidation(t *testing.T) {
 	if out.Gate != "blocked_by_manual_validation" {
 		t.Fatalf("expected manual validation blocker, got %#v", out)
 	}
-	if out.Summary.ManualBlocking == 0 || out.Summary.ApprovalRequired == 0 {
+	if out.Summary.ManualBlocking != 4 || out.Summary.ApprovalRequired != 4 {
 		t.Fatalf("expected manual blocking approval summary: %#v", out.Summary)
 	}
 	if !hasAcceptanceCheck(out, "operator_runbook", v0AcceptancePass) {
 		t.Fatalf("expected operator runbook pass: %#v", out.Checks)
 	}
-	if !hasAcceptanceCheck(out, "close_manual_validation_gaps", v0AcceptancePending) {
-		t.Fatalf("expected manual validation pending check: %#v", out.Checks)
+	if !hasAcceptanceCheck(out, "cpu_maintenance_regression", v0AcceptancePending) ||
+		!hasAcceptanceCheck(out, "disk_maintenance_regression", v0AcceptancePending) ||
+		!hasAcceptanceCheck(out, "checkpoint_cleanup_apply_regression", v0AcceptancePending) ||
+		!hasAcceptanceCheck(out, "final_acceptance_manual_pass", v0AcceptancePending) {
+		t.Fatalf("expected split manual validation pending checks: %#v", out.Checks)
 	}
 }
 

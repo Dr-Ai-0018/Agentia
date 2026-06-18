@@ -34,8 +34,11 @@ func TestBuildV0ReadinessReportsWarningsForKnownGaps(t *testing.T) {
 	if len(out.Completion.RecommendedSteps) == 0 {
 		t.Fatalf("expected recommended steps for warning state: %#v", out.Completion)
 	}
-	if !hasRecommendedStep(out, "close_manual_validation_gaps") {
-		t.Fatalf("expected manual validation step: %#v", out.Completion.RecommendedSteps)
+	if !hasRecommendedStep(out, "cpu_maintenance_regression") ||
+		!hasRecommendedStep(out, "disk_maintenance_regression") ||
+		!hasRecommendedStep(out, "checkpoint_cleanup_apply_regression") ||
+		!hasRecommendedStep(out, "final_acceptance_manual_pass") {
+		t.Fatalf("expected split manual validation steps: %#v", out.Completion.RecommendedSteps)
 	}
 	if findReadinessItem(out, "maintenance_draft_safety").Status != v0ReadinessPass {
 		t.Fatalf("expected dry-run maintenance draft safety pass: %#v", out)

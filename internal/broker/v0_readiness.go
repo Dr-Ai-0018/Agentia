@@ -334,10 +334,37 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 	}
 	if hasWarning(items, "known_manual_gaps") {
 		steps = append(steps, V0RecommendedStep{
-			ID:               "close_manual_validation_gaps",
-			Title:            "Close manual validation gaps with explicit maintenance windows",
-			Reason:           "CPU/disk maintenance and checkpoint cleanup apply are intentionally not automated by readiness.",
+			ID:               "cpu_maintenance_regression",
+			Title:            "Run CPU maintenance-style regression with an approved window",
+			Reason:           "CPU maintenance must prove notify, maintenance window, stop/change/start if needed, completion or rollback, and inventory refresh.",
+			Command:          "arena-broker --mode host-maintenance-draft-cached --limit 5",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+			RelatedItems:     []string{"known_manual_gaps"},
+		})
+		steps = append(steps, V0RecommendedStep{
+			ID:               "disk_maintenance_regression",
+			Title:            "Run disk maintenance-style regression with an approved window",
+			Reason:           "Disk maintenance must prove notify, maintenance window, stop/change/start if needed, completion or rollback, and inventory refresh.",
+			Command:          "arena-broker --mode host-maintenance-draft-cached --limit 5",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+			RelatedItems:     []string{"known_manual_gaps"},
+		})
+		steps = append(steps, V0RecommendedStep{
+			ID:               "checkpoint_cleanup_apply_regression",
+			Title:            "Run checkpoint cleanup apply regression after dry-run review",
+			Reason:           "Checkpoint cleanup apply is intentionally not automated and must prove protected baseline/self snapshots are preserved.",
 			Command:          "arena-broker --mode checkpoint-cleanup --resident jade --keep 2",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+			RelatedItems:     []string{"known_manual_gaps"},
+		})
+		steps = append(steps, V0RecommendedStep{
+			ID:               "final_acceptance_manual_pass",
+			Title:            "Perform final manual acceptance pass after validation gaps close",
+			Reason:           "v0 should only be declared after automatic checks pass and approved manual validation evidence is recorded.",
+			Command:          "arena-broker --mode v0-acceptance-cached --limit 5",
 			RequiresApproval: true,
 			BlocksRelease:    true,
 			RelatedItems:     []string{"known_manual_gaps"},
