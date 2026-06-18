@@ -3,6 +3,8 @@ package broker
 import (
 	"testing"
 	"time"
+
+	"ai-arena/internal/worldstate"
 )
 
 func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
@@ -12,6 +14,12 @@ func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
 		RuntimeMemoryObservationResidents: 1,
 		MemoryResidentReviewQueue:         3,
 		PendingChatResidents:              1,
+		TopPendingChats: []worldstate.HostFollowup{
+			{Kind: "chat_reply", Resident: "onyx", TargetID: "msg-1", Preview: "pending chat preview", Status: worldstate.StatusPending},
+		},
+		TopHostInterventions: []worldstate.HostFollowup{
+			{Kind: "host_intervention", Resident: "onyx", TargetID: "host-1", Title: "Planned maintenance", Preview: "maintenance preview", Status: "in_progress", Maintenance: map[string]string{"maintenance_state": "in_progress"}},
+		},
 		MaintenanceInterventions: &MaintenanceInterventionSummary{
 			Total:      2,
 			InProgress: 1,
@@ -72,6 +80,9 @@ func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
 	if len(memoryDraft.ResidentIDs) != 1 || memoryDraft.ResidentIDs[0] != "jade" {
 		t.Fatalf("expected jade memory draft focus, got %#v", memoryDraft.ResidentIDs)
 	}
+	if len(memoryDraft.RelatedPendingChats) != 0 || len(memoryDraft.RelatedHostInterventions) != 0 {
+		t.Fatalf("operator-only memory draft should not carry world followup context: %#v", memoryDraft)
+	}
 
 	maintenanceDraft := findDraft(out.Drafts, "maintenance_state_review")
 	if maintenanceDraft.ID == "" {
@@ -89,6 +100,9 @@ func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
 	if maintenanceDraft.Reason == "" {
 		t.Fatalf("expected maintenance state draft reason: %#v", maintenanceDraft)
 	}
+	if len(maintenanceDraft.RelatedHostInterventions) != 1 || maintenanceDraft.RelatedHostInterventions[0].TargetID != "host-1" {
+		t.Fatalf("expected maintenance draft to carry related intervention context: %#v", maintenanceDraft.RelatedHostInterventions)
+	}
 
 	chatDraft := findDraft(out.Drafts, "chat_reply")
 	if chatDraft.ID == "" {
@@ -96,6 +110,9 @@ func TestBuildHostMaintenanceDraftIsDryRunOnly(t *testing.T) {
 	}
 	if chatDraft.RequiresMaintenanceWindow || chatDraft.RequiresStopStart {
 		t.Fatalf("chat follow-up should not be a maintenance operation: %#v", chatDraft)
+	}
+	if len(chatDraft.RelatedPendingChats) != 1 || chatDraft.RelatedPendingChats[0].Preview != "pending chat preview" {
+		t.Fatalf("expected chat draft to carry related pending chat preview: %#v", chatDraft.RelatedPendingChats)
 	}
 }
 

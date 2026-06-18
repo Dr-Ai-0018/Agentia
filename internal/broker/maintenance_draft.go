@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"ai-arena/internal/worldstate"
 )
 
 const maintenanceDraftPolicy = "draft_only_no_world_or_resource_side_effects: review manually; live mode may refresh inventory, but this command never executes resource/environment changes, creates tickets, sends notices, or updates interventions. Use an explicit maintenance notice, approved window, stop/change/start when needed, completion notice, and inventory refresh before any real change."
@@ -60,6 +62,7 @@ func maintenanceDraftForAction(action HostSuggestedAction, decision HostDecision
 		NextSteps:                 draftNextSteps(kind),
 	}
 	draft.ResidentIDs = residentIDsForAction(kind, decision)
+	attachDraftContext(&draft, kind, decision)
 	switch kind {
 	case "capacity_review", "drift_review", "runtime_memory_observation":
 		draft.RequiresMaintenanceWindow = true
@@ -70,6 +73,20 @@ func maintenanceDraftForAction(action HostSuggestedAction, decision HostDecision
 		draft.RequiresMaintenanceWindow = true
 	}
 	return draft, true
+}
+
+func attachDraftContext(draft *HostMaintenanceDraft, actionKind string, decision HostDecisionAssist) {
+	if draft == nil {
+		return
+	}
+	switch actionKind {
+	case "chat_reply":
+		draft.RelatedPendingChats = filterHostFollowupsByResident(decision.TopPendingChats, draft.ResidentIDs)
+	case "ticket_review":
+		draft.RelatedOpenTickets = filterTicketsByResident(decision.TopOpenTickets, draft.ResidentIDs)
+	case "maintenance_state_review", "intervention_followup":
+		draft.RelatedHostInterventions = filterHostFollowupsByResident(decision.TopHostInterventions, draft.ResidentIDs)
+	}
 }
 
 func draftKind(actionKind string) string {
@@ -241,6 +258,51 @@ func residentIDsForAction(actionKind string, decision HostDecisionAssist) []stri
 				seen[focus.ResidentID] = struct{}{}
 				out = append(out, focus.ResidentID)
 			}
+		}
+	}
+	return out
+}
+
+func filterHostFollowupsByResident(items []worldstate.HostFollowup, residentIDs []string) []worldstate.HostFollowup {
+	if len(items) == 0 {
+		return nil
+	}
+	if len(residentIDs) == 0 {
+		return append([]worldstate.HostFollowup(nil), items...)
+	}
+	allowed := residentSet(residentIDs)
+	out := []worldstate.HostFollowup{}
+	for _, item := range items {
+		if _, ok := allowed[item.Resident]; ok {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func filterTicketsByResident(items []worldstate.ResidentTicketSummary, residentIDs []string) []worldstate.ResidentTicketSummary {
+	if len(items) == 0 {
+		return nil
+	}
+	if len(residentIDs) == 0 {
+		return append([]worldstate.ResidentTicketSummary(nil), items...)
+	}
+	allowed := residentSet(residentIDs)
+	out := []worldstate.ResidentTicketSummary{}
+	for _, item := range items {
+		if _, ok := allowed[item.Resident]; ok {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func residentSet(residentIDs []string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, residentID := range residentIDs {
+		residentID = strings.TrimSpace(residentID)
+		if residentID != "" {
+			out[residentID] = struct{}{}
 		}
 	}
 	return out
