@@ -3,6 +3,7 @@ package broker
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,6 +88,19 @@ func TestRunV0AcceptanceEvidenceRejectsUnknownCheckID(t *testing.T) {
 	}
 }
 
+func TestV0AcceptanceEvidenceCommandTemplateUsesKnownCheckIDs(t *testing.T) {
+	cmd := v0AcceptanceEvidenceCommandTemplate("disk_maintenance_regression")
+	if cmd == "" {
+		t.Fatalf("expected template for known check id")
+	}
+	if want := "--check-id disk_maintenance_regression"; !containsAll(cmd, "--mode v0-acceptance-evidence", want, "--apply") {
+		t.Fatalf("unexpected command template: %q", cmd)
+	}
+	if got := v0AcceptanceEvidenceCommandTemplate("typo_manual_check"); got != "" {
+		t.Fatalf("expected no template for unknown check id, got %q", got)
+	}
+}
+
 func TestRunV0AcceptanceEvidenceApplyWritesRecord(t *testing.T) {
 	root := t.TempDir()
 	app := New(root)
@@ -144,4 +158,13 @@ func TestRunV0AcceptanceEvidenceList(t *testing.T) {
 
 func testEvidenceTime() time.Time {
 	return time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC)
+}
+
+func containsAll(s string, needles ...string) bool {
+	for _, needle := range needles {
+		if !strings.Contains(s, needle) {
+			return false
+		}
+	}
+	return true
 }

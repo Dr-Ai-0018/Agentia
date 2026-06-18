@@ -337,6 +337,7 @@ type V0AcceptanceCheck struct {
 	RequiresApproval bool     `json:"requires_approval"`
 	Evidence         []string `json:"evidence,omitempty"`
 	Command          string   `json:"command,omitempty"`
+	EvidenceCommand  string   `json:"evidence_command,omitempty"`
 }
 
 type V0AcceptanceEvidenceRecord struct {

@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,6 +33,15 @@ func TestBuildV0AcceptanceBlocksOnManualValidation(t *testing.T) {
 		!hasAcceptanceCheck(out, "checkpoint_cleanup_apply_regression", v0AcceptancePending) ||
 		!hasAcceptanceCheck(out, "final_acceptance_manual_pass", v0AcceptancePending) {
 		t.Fatalf("expected split manual validation pending checks: %#v", out.Checks)
+	}
+	check, ok := findAcceptanceCheck(out, "cpu_maintenance_regression")
+	if !ok {
+		t.Fatalf("expected cpu maintenance check")
+	}
+	if !strings.Contains(check.EvidenceCommand, "--mode v0-acceptance-evidence") ||
+		!strings.Contains(check.EvidenceCommand, "--check-id cpu_maintenance_regression") ||
+		!strings.Contains(check.EvidenceCommand, "--apply") {
+		t.Fatalf("expected record-evidence command template, got %#v", check.EvidenceCommand)
 	}
 }
 
@@ -120,10 +130,15 @@ func passedAcceptanceEvidence(checkID, recordedAt string) V0AcceptanceEvidenceRe
 }
 
 func hasAcceptanceCheck(out V0AcceptanceOutput, id, status string) bool {
+	check, ok := findAcceptanceCheck(out, id)
+	return ok && check.Status == status
+}
+
+func findAcceptanceCheck(out V0AcceptanceOutput, id string) (V0AcceptanceCheck, bool) {
 	for _, check := range out.Checks {
-		if check.ID == id && check.Status == status {
-			return true
+		if check.ID == id {
+			return check, true
 		}
 	}
-	return false
+	return V0AcceptanceCheck{}, false
 }

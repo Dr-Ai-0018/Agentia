@@ -106,6 +106,7 @@ func acceptanceCheckFromRecommendedStep(step V0RecommendedStep, evidence *V0Acce
 		RequiresApproval: step.RequiresApproval,
 		Evidence:         []string{step.Reason},
 		Command:          step.Command,
+		EvidenceCommand:  v0AcceptanceEvidenceCommandTemplate(step.ID),
 	}
 	if evidence != nil {
 		check.Status = v0AcceptancePass

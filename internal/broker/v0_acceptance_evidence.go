@@ -136,6 +136,15 @@ func isValidV0AcceptanceEvidenceCheck(checkID string) bool {
 	return ok
 }
 
+func v0AcceptanceEvidenceCommandTemplate(checkID string) string {
+	checkID = strings.TrimSpace(checkID)
+	if !isValidV0AcceptanceEvidenceCheck(checkID) {
+		return ""
+	}
+	return "arena-broker --mode v0-acceptance-evidence --check-id " + checkID +
+		" --status passed --operator <operator> --summary '<validated summary>' --body '<evidence lines>' --reason '<validation command or run id>' --apply"
+}
+
 func LoadRecentV0AcceptanceEvidence(root string, limit int) ([]V0AcceptanceEvidenceRecord, error) {
 	if limit <= 0 {
 		return nil, nil
