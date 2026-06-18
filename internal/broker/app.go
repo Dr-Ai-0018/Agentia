@@ -232,14 +232,15 @@ type HostMaintenanceDraftOutput struct {
 }
 
 type V0ReadinessOutput struct {
-	GeneratedAt string            `json:"generated_at"`
-	Source      string            `json:"source"`
-	Status      string            `json:"status"`
-	Passed      int               `json:"passed"`
-	Warnings    int               `json:"warnings"`
-	Failed      int               `json:"failed"`
-	Items       []V0ReadinessItem `json:"items"`
-	NextActions []string          `json:"next_actions,omitempty"`
+	GeneratedAt string              `json:"generated_at"`
+	Source      string              `json:"source"`
+	Status      string              `json:"status"`
+	Completion  V0CompletionSummary `json:"completion"`
+	Passed      int                 `json:"passed"`
+	Warnings    int                 `json:"warnings"`
+	Failed      int                 `json:"failed"`
+	Items       []V0ReadinessItem   `json:"items"`
+	NextActions []string            `json:"next_actions,omitempty"`
 }
 
 type V0ReadinessItem struct {
@@ -247,6 +248,25 @@ type V0ReadinessItem struct {
 	Title    string   `json:"title"`
 	Status   string   `json:"status"`
 	Required bool     `json:"required"`
+	Evidence []string `json:"evidence,omitempty"`
+}
+
+type V0CompletionSummary struct {
+	WeightedPercent      int                    `json:"weighted_percent"`
+	WeightedRange        string                 `json:"weighted_range"`
+	ChecklistPercent     int                    `json:"checklist_percent"`
+	ReleaseGate          string                 `json:"release_gate"`
+	Workstreams          []V0WorkstreamProgress `json:"workstreams"`
+	ManualValidationGaps []string               `json:"manual_validation_gaps,omitempty"`
+	CompletionNotes      []string               `json:"completion_notes,omitempty"`
+}
+
+type V0WorkstreamProgress struct {
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Weight   int      `json:"weight"`
+	Percent  int      `json:"percent"`
+	Status   string   `json:"status"`
 	Evidence []string `json:"evidence,omitempty"`
 }
 

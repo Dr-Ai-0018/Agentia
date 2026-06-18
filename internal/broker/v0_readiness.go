@@ -47,6 +47,7 @@ func BuildV0Readiness(summary HostInspectSummary, now time.Time, source string) 
 	addReadinessItem(&out, decisionBoundaryReadiness(decision))
 	addReadinessItem(&out, maintenanceDraftReadiness(draft))
 	addReadinessItem(&out, knownManualGapReadiness())
+	out.Completion = buildV0Completion(out.Items)
 	finalizeV0Readiness(&out)
 	return out
 }
@@ -208,4 +209,220 @@ func finalizeV0Readiness(out *V0ReadinessOutput) {
 			out.NextActions = append(out.NextActions, fmt.Sprintf("%s: %s", item.ID, item.Title))
 		}
 	}
+}
+
+func buildV0Completion(items []V0ReadinessItem) V0CompletionSummary {
+	byID := map[string]V0ReadinessItem{}
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	workstreams := []V0WorkstreamProgress{
+		v0FoundationProgress(byID),
+		v0OrchestratorProgress(byID),
+		v0HostDecisionProgress(byID),
+		v0MemoryProgress(byID),
+		v0FinalAcceptanceProgress(byID),
+	}
+	weighted := 0
+	totalWeight := 0
+	for _, item := range workstreams {
+		weighted += item.Weight * item.Percent
+		totalWeight += item.Weight
+	}
+	if totalWeight > 0 {
+		weighted = (weighted + totalWeight/2) / totalWeight
+	}
+	checklist := foldedReadinessPercent(items)
+	summary := V0CompletionSummary{
+		WeightedPercent:  weighted,
+		WeightedRange:    fmt.Sprintf("%d-%d%%", clampInt(weighted-2, 0, 100), clampInt(weighted+2, 0, 100)),
+		ChecklistPercent: checklist,
+		ReleaseGate:      "ready_with_warnings",
+		Workstreams:      workstreams,
+	}
+	for _, item := range items {
+		if item.ID == "known_manual_gaps" {
+			summary.ManualValidationGaps = append(summary.ManualValidationGaps, item.Evidence...)
+		}
+		if item.Status == v0ReadinessFail {
+			summary.ReleaseGate = "blocked_by_required_failures"
+		}
+	}
+	if summary.ReleaseGate != "blocked_by_required_failures" && weighted >= 90 {
+		summary.ReleaseGate = "release_candidate"
+	}
+	if summary.ReleaseGate != "blocked_by_required_failures" && weighted < 80 {
+		summary.ReleaseGate = "continue_development"
+	}
+	summary.CompletionNotes = append(summary.CompletionNotes,
+		"weighted_percent uses workstream weights, not raw checklist item count",
+		"manual CPU/disk/checkpoint apply validations are intentionally not auto-run by readiness",
+	)
+	return summary
+}
+
+func v0FoundationProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress {
+	progress := V0WorkstreamProgress{
+		ID:       "s0_s2_foundation",
+		Title:    "Broker state, host control, inventory, resource maintenance foundation",
+		Weight:   30,
+		Percent:  82,
+		Status:   "mostly_complete",
+		Evidence: evidenceFor(items, "inventory_facts", "capacity_headroom", "maintenance_state"),
+	}
+	if hasFailure(items, "inventory_facts", "capacity_headroom") {
+		progress.Percent = 55
+		progress.Status = "blocked"
+		return progress
+	}
+	if hasWarning(items, "inventory_facts", "capacity_headroom", "maintenance_state") {
+		progress.Percent = 78
+		progress.Status = "needs_validation"
+	}
+	return progress
+}
+
+func v0OrchestratorProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress {
+	progress := V0WorkstreamProgress{
+		ID:       "s3_orchestrator",
+		Title:    "Multi-resident runtime, pause/resume, run registry and reports",
+		Weight:   20,
+		Percent:  88,
+		Status:   "mostly_complete",
+		Evidence: evidenceFor(items, "orchestrator_registry"),
+	}
+	if hasFailure(items, "orchestrator_registry") {
+		progress.Percent = 45
+		progress.Status = "blocked"
+		return progress
+	}
+	if hasWarning(items, "orchestrator_registry") {
+		progress.Percent = 82
+		progress.Status = "needs_soak"
+	}
+	return progress
+}
+
+func v0HostDecisionProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress {
+	progress := V0WorkstreamProgress{
+		ID:       "s4_host_decision",
+		Title:    "Host inspect, decision assist, maintenance draft and world/operator boundary",
+		Weight:   18,
+		Percent:  76,
+		Status:   "usable_manual_assist",
+		Evidence: evidenceFor(items, "world_followups", "decision_boundaries", "maintenance_draft_safety"),
+	}
+	if hasFailure(items, "decision_boundaries", "maintenance_draft_safety") {
+		progress.Percent = 45
+		progress.Status = "blocked"
+		return progress
+	}
+	if hasWarning(items, "world_followups") {
+		progress.Percent = 74
+		progress.Status = "followups_pending"
+	}
+	return progress
+}
+
+func v0MemoryProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress {
+	progress := V0WorkstreamProgress{
+		ID:       "s5_memory",
+		Title:    "Memory governance, compaction, lifecycle and private/operator separation",
+		Weight:   16,
+		Percent:  90,
+		Status:   "mostly_complete",
+		Evidence: evidenceFor(items, "memory_governance"),
+	}
+	if hasFailure(items, "memory_governance") {
+		progress.Percent = 55
+		progress.Status = "blocked"
+		return progress
+	}
+	if hasWarning(items, "memory_governance") {
+		progress.Percent = 82
+		progress.Status = "review_queue_pending"
+	}
+	return progress
+}
+
+func v0FinalAcceptanceProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress {
+	progress := V0WorkstreamProgress{
+		ID:       "s6_acceptance",
+		Title:    "Final runbook, end-to-end regression and release declaration",
+		Weight:   16,
+		Percent:  35,
+		Status:   "not_closed",
+		Evidence: evidenceFor(items, "known_manual_gaps"),
+	}
+	if hasFailure(items, "inventory_facts", "capacity_headroom", "orchestrator_registry", "memory_governance", "decision_boundaries", "maintenance_draft_safety") {
+		progress.Percent = 20
+		progress.Status = "blocked"
+		return progress
+	}
+	if !hasWarning(items, "known_manual_gaps") {
+		progress.Percent = 80
+		progress.Status = "ready_for_final_review"
+	}
+	return progress
+}
+
+func foldedReadinessPercent(items []V0ReadinessItem) int {
+	if len(items) == 0 {
+		return 0
+	}
+	score := 0
+	for _, item := range items {
+		switch item.Status {
+		case v0ReadinessPass:
+			score += 100
+		case v0ReadinessWarn:
+			score += 50
+		}
+	}
+	return (score + len(items)/2) / len(items)
+}
+
+func hasFailure(items map[string]V0ReadinessItem, ids ...string) bool {
+	for _, id := range ids {
+		if items[id].Status == v0ReadinessFail {
+			return true
+		}
+	}
+	return false
+}
+
+func hasWarning(items map[string]V0ReadinessItem, ids ...string) bool {
+	for _, id := range ids {
+		if items[id].Status == v0ReadinessWarn {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceFor(items map[string]V0ReadinessItem, ids ...string) []string {
+	var evidence []string
+	for _, id := range ids {
+		item, ok := items[id]
+		if !ok {
+			continue
+		}
+		prefix := item.ID + "=" + item.Status
+		if len(item.Evidence) == 0 {
+			evidence = append(evidence, prefix)
+			continue
+		}
+		evidence = append(evidence, prefix+": "+strings.Join(item.Evidence, "; "))
+	}
+	return evidence
+}
+
+func clampInt(value, minValue, maxValue int) int {
+	if value < minValue {
+		return minValue
+	}
+	if value > maxValue {
+		return maxValue
+	}
+	return value
 }

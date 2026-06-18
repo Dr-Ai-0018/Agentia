@@ -22,6 +22,15 @@ func TestBuildV0ReadinessReportsWarningsForKnownGaps(t *testing.T) {
 	if out.Failed != 0 || out.Warnings == 0 || out.Passed == 0 {
 		t.Fatalf("unexpected readiness counts: %#v", out)
 	}
+	if out.Completion.WeightedPercent <= 0 || out.Completion.ChecklistPercent <= 0 {
+		t.Fatalf("expected completion percentages: %#v", out.Completion)
+	}
+	if out.Completion.ReleaseGate == "" {
+		t.Fatalf("expected release gate: %#v", out.Completion)
+	}
+	if len(out.Completion.Workstreams) != 5 {
+		t.Fatalf("expected five weighted workstreams: %#v", out.Completion.Workstreams)
+	}
 	if findReadinessItem(out, "maintenance_draft_safety").Status != v0ReadinessPass {
 		t.Fatalf("expected dry-run maintenance draft safety pass: %#v", out)
 	}
@@ -41,6 +50,9 @@ func TestBuildV0ReadinessFailsWhenRequiredStateMissing(t *testing.T) {
 	}
 	if out.Failed == 0 {
 		t.Fatalf("expected failed readiness items: %#v", out)
+	}
+	if out.Completion.ReleaseGate != "blocked_by_required_failures" {
+		t.Fatalf("expected blocked release gate: %#v", out.Completion)
 	}
 	if findReadinessItem(out, "inventory_facts").Status != v0ReadinessFail {
 		t.Fatalf("expected inventory failure: %#v", out)
@@ -65,6 +77,9 @@ func TestBuildV0ReadinessFailsOnDuplicateMemoryDebt(t *testing.T) {
 	}
 	if findReadinessItem(out, "memory_governance").Status != v0ReadinessFail {
 		t.Fatalf("expected memory governance failure: %#v", out)
+	}
+	if out.Completion.WeightedPercent >= 80 {
+		t.Fatalf("expected duplicate memory debt to reduce weighted completion: %#v", out.Completion)
 	}
 }
 
