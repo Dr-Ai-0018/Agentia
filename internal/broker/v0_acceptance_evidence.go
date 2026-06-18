@@ -29,6 +29,13 @@ type V0AcceptanceEvidenceOutput struct {
 	Path   string                     `json:"path,omitempty"`
 }
 
+type V0AcceptanceEvidenceListOutput struct {
+	GeneratedAt string                       `json:"generated_at"`
+	Limit       int                          `json:"limit"`
+	Count       int                          `json:"count"`
+	Records     []V0AcceptanceEvidenceRecord `json:"records"`
+}
+
 var validV0AcceptanceEvidenceChecks = map[string]struct{}{
 	"cpu_maintenance_regression":          {},
 	"disk_maintenance_regression":         {},
@@ -69,6 +76,22 @@ func (a *App) RunV0AcceptanceEvidence(input V0AcceptanceEvidenceInput, now time.
 	}
 	out.Path = path
 	return out, nil
+}
+
+func (a *App) RunV0AcceptanceEvidenceList(limit int, now time.Time) (V0AcceptanceEvidenceListOutput, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	records, err := LoadRecentV0AcceptanceEvidence(a.root, limit)
+	if err != nil {
+		return V0AcceptanceEvidenceListOutput{}, err
+	}
+	return V0AcceptanceEvidenceListOutput{
+		GeneratedAt: now.UTC().Format(time.RFC3339),
+		Limit:       limit,
+		Count:       len(records),
+		Records:     records,
+	}, nil
 }
 
 func buildV0AcceptanceEvidenceRecord(input V0AcceptanceEvidenceInput, now time.Time) (V0AcceptanceEvidenceRecord, error) {

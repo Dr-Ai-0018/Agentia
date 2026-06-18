@@ -118,6 +118,30 @@ func TestRunV0AcceptanceEvidenceApplyWritesRecord(t *testing.T) {
 	}
 }
 
+func TestRunV0AcceptanceEvidenceList(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	if _, err := app.RunV0AcceptanceEvidence(V0AcceptanceEvidenceInput{
+		CheckID:  "cpu_maintenance_regression",
+		Status:   "passed",
+		Operator: "tester",
+		Apply:    true,
+	}, testEvidenceTime()); err != nil {
+		t.Fatalf("write evidence: %v", err)
+	}
+
+	out, err := app.RunV0AcceptanceEvidenceList(8, testEvidenceTime())
+	if err != nil {
+		t.Fatalf("list evidence: %v", err)
+	}
+	if out.Count != 1 || len(out.Records) != 1 {
+		t.Fatalf("expected one listed evidence record: %#v", out)
+	}
+	if out.Records[0].CheckID != "cpu_maintenance_regression" {
+		t.Fatalf("unexpected evidence record: %#v", out.Records[0])
+	}
+}
+
 func testEvidenceTime() time.Time {
 	return time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC)
 }
