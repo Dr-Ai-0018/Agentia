@@ -281,6 +281,30 @@ type V0RecommendedStep struct {
 	RelatedItems     []string `json:"related_items,omitempty"`
 }
 
+type V0RunbookOutput struct {
+	GeneratedAt string             `json:"generated_at"`
+	Scope       string             `json:"scope"`
+	Policy      []string           `json:"policy"`
+	Sections    []V0RunbookSection `json:"sections"`
+}
+
+type V0RunbookSection struct {
+	ID      string          `json:"id"`
+	Title   string          `json:"title"`
+	Purpose string          `json:"purpose"`
+	Steps   []V0RunbookStep `json:"steps"`
+}
+
+type V0RunbookStep struct {
+	ID               string   `json:"id"`
+	Title            string   `json:"title"`
+	Command          string   `json:"command,omitempty"`
+	Notes            []string `json:"notes,omitempty"`
+	RequiresApproval bool     `json:"requires_approval"`
+	WritesWorldState bool     `json:"writes_world_state"`
+	WritesRuntime    bool     `json:"writes_runtime"`
+}
+
 type HostMaintenanceDraft struct {
 	ID                        string                             `json:"id"`
 	Kind                      string                             `json:"kind"`

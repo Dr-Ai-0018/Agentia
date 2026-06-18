@@ -190,7 +190,7 @@ func knownManualGapReadiness() V0ReadinessItem {
 		Evidence: []string{
 			"CPU and disk maintenance-style real regressions still require approved maintenance windows.",
 			"checkpoint cleanup apply is intentionally not run without explicit approval.",
-			"operator runbook and final acceptance checklist still need final docs pass.",
+			"final acceptance checklist still needs final docs pass.",
 		},
 	}
 }
@@ -343,10 +343,10 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 			RelatedItems:     []string{"known_manual_gaps"},
 		})
 		steps = append(steps, V0RecommendedStep{
-			ID:           "final_operator_runbook",
-			Title:        "Finish the operator runbook and final acceptance pass",
+			ID:           "review_operator_runbook",
+			Title:        "Review the operator runbook and final acceptance pass",
 			Reason:       "v0 needs a clear human operation path for start, long run, inspect, pause, resume, maintenance, rollback, and reports.",
-			Command:      "arena-broker --mode v0-readiness-cached --limit 5",
+			Command:      "arena-broker --mode v0-runbook",
 			RelatedItems: []string{"known_manual_gaps"},
 		})
 	}

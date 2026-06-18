@@ -1,0 +1,80 @@
+package broker
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestBuildV0RunbookIncludesOperatorOnlyPolicy(t *testing.T) {
+	out := BuildV0Runbook(time.Date(2026, 6, 18, 7, 10, 0, 0, time.UTC))
+
+	if out.Scope != "operator_only_v0" {
+		t.Fatalf("unexpected scope: %#v", out)
+	}
+	if len(out.Sections) < 6 {
+		t.Fatalf("expected core runbook sections: %#v", out.Sections)
+	}
+	if !policyContains(out.Policy, "operator-only") {
+		t.Fatalf("expected operator-only policy: %#v", out.Policy)
+	}
+	if !policyContains(out.Policy, "maintenance-window") {
+		t.Fatalf("expected maintenance-window policy: %#v", out.Policy)
+	}
+}
+
+func TestBuildV0RunbookMarksRiskySteps(t *testing.T) {
+	out := BuildV0Runbook(time.Date(2026, 6, 18, 7, 10, 0, 0, time.UTC))
+
+	assertStepFlags(t, out, "long_parallel_soak", true, false, true)
+	assertStepFlags(t, out, "checkpoint_cleanup_apply", true, false, true)
+	assertStepFlags(t, out, "world_reply", true, true, false)
+	assertStepFlags(t, out, "safe_lifecycle_apply", true, false, true)
+	assertStepFlags(t, out, "readiness_cached", false, false, false)
+}
+
+func TestBuildV0RunbookIncludesFinalAcceptance(t *testing.T) {
+	out := BuildV0Runbook(time.Date(2026, 6, 18, 7, 10, 0, 0, time.UTC))
+
+	if _, ok := findRunbookStep(out, "go_test_all"); !ok {
+		t.Fatalf("expected full test step: %#v", out.Sections)
+	}
+	step, ok := findRunbookStep(out, "final_readiness")
+	if !ok {
+		t.Fatalf("expected final readiness step: %#v", out.Sections)
+	}
+	if !strings.Contains(step.Command, "v0-readiness-cached") {
+		t.Fatalf("expected final readiness command, got %#v", step)
+	}
+}
+
+func policyContains(policy []string, needle string) bool {
+	for _, item := range policy {
+		if strings.Contains(item, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func assertStepFlags(t *testing.T, out V0RunbookOutput, id string, approval, worldWrite, runtimeWrite bool) {
+	t.Helper()
+	step, ok := findRunbookStep(out, id)
+	if !ok {
+		t.Fatalf("expected runbook step %s", id)
+	}
+	if step.RequiresApproval != approval || step.WritesWorldState != worldWrite || step.WritesRuntime != runtimeWrite {
+		t.Fatalf("unexpected flags for %s: %#v", id, step)
+	}
+}
+
+func findRunbookStep(out V0RunbookOutput, id string) (V0RunbookStep, bool) {
+	for _, section := range out.Sections {
+		for _, step := range section.Steps {
+			if step.ID == id {
+				return step, true
+			}
+		}
+	}
+	return V0RunbookStep{}, false
+}
