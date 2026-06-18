@@ -29,6 +29,14 @@ type V0AcceptanceEvidenceOutput struct {
 	Path   string                     `json:"path,omitempty"`
 }
 
+var validV0AcceptanceEvidenceChecks = map[string]struct{}{
+	"cpu_maintenance_regression":          {},
+	"disk_maintenance_regression":         {},
+	"checkpoint_cleanup_apply_regression": {},
+	"final_acceptance_manual_pass":        {},
+	"longer_orchestrator_soak":            {},
+}
+
 func (a *App) RunV0AcceptanceEvidence(input V0AcceptanceEvidenceInput, now time.Time) (V0AcceptanceEvidenceOutput, error) {
 	record, err := buildV0AcceptanceEvidenceRecord(input, now)
 	if err != nil {
@@ -68,6 +76,9 @@ func buildV0AcceptanceEvidenceRecord(input V0AcceptanceEvidenceInput, now time.T
 	if checkID == "" {
 		return V0AcceptanceEvidenceRecord{}, fmt.Errorf("check id is required")
 	}
+	if !isValidV0AcceptanceEvidenceCheck(checkID) {
+		return V0AcceptanceEvidenceRecord{}, fmt.Errorf("unknown v0 acceptance check id: %s", checkID)
+	}
 	status := strings.ToLower(strings.TrimSpace(input.Status))
 	if status == "" {
 		status = "passed"
@@ -95,6 +106,11 @@ func buildV0AcceptanceEvidenceRecord(input V0AcceptanceEvidenceInput, now time.T
 		Evidence:   evidence,
 		Command:    strings.TrimSpace(input.Command),
 	}, nil
+}
+
+func isValidV0AcceptanceEvidenceCheck(checkID string) bool {
+	_, ok := validV0AcceptanceEvidenceChecks[strings.TrimSpace(checkID)]
+	return ok
 }
 
 func LoadRecentV0AcceptanceEvidence(root string, limit int) ([]V0AcceptanceEvidenceRecord, error) {

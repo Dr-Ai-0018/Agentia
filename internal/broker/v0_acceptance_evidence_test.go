@@ -74,6 +74,19 @@ func TestRunV0AcceptanceEvidenceDryRunDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestRunV0AcceptanceEvidenceRejectsUnknownCheckID(t *testing.T) {
+	app := New(t.TempDir())
+
+	_, err := app.RunV0AcceptanceEvidence(V0AcceptanceEvidenceInput{
+		CheckID: "typo_manual_check",
+		Status:  "passed",
+		Apply:   false,
+	}, testEvidenceTime())
+	if err == nil {
+		t.Fatalf("expected unknown check id to fail")
+	}
+}
+
 func TestRunV0AcceptanceEvidenceApplyWritesRecord(t *testing.T) {
 	root := t.TempDir()
 	app := New(root)

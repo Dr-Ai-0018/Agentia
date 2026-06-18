@@ -37,6 +37,7 @@ func main() {
 	limit := flag.Int("limit", 8, "Message limit for messages mode")
 	status := flag.String("status", "", "Optional status filter for messages mode")
 	messageID := flag.String("message-id", "", "Target message ID for reply/ticket-reply/get-ticket modes")
+	checkID := flag.String("check-id", "", "V0 acceptance check ID for v0-acceptance-evidence mode")
 	memoryID := flag.String("memory-id", "", "Target memory ID for memory-review mode")
 	memoryAction := flag.String("memory-action", "", "Memory review action: mark|keep|rewrite|compress|demote|delete")
 	memoryLayer := flag.String("memory-layer", "", "Optional memory target layer for memory-review mode")
@@ -185,7 +186,7 @@ func main() {
 		printJSON(out)
 	case "v0-acceptance-evidence":
 		out, err := app.RunV0AcceptanceEvidence(broker.V0AcceptanceEvidenceInput{
-			CheckID:  *messageID,
+			CheckID:  firstNonEmpty(*checkID, *messageID),
 			Status:   *status,
 			Operator: *operator,
 			Summary:  *summary,
@@ -768,4 +769,14 @@ func splitEvidenceBody(body string) []string {
 		}
 	}
 	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
