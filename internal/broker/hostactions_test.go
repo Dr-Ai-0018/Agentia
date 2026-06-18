@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,6 +304,16 @@ func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) 
 	if !strings.Contains(interventions[0].LastPreview, "maintenance_completed=true") {
 		t.Fatalf("expected completion note in intervention preview, got %#v", interventions[0])
 	}
+	records := readMaintenanceRunRecords(t, root)
+	if len(records) != 2 {
+		t.Fatalf("expected planned and completed maintenance records, got %#v", records)
+	}
+	if records[0].State != "planned" || records[1].State != "completed" {
+		t.Fatalf("unexpected maintenance record states: %#v", records)
+	}
+	if records[1].CheckpointName != checkpointName || !records[1].InventoryRefreshed {
+		t.Fatalf("expected completion record checkpoint and inventory refresh: %#v", records[1])
+	}
 }
 
 func TestHostActionServiceStartResourceMaintenanceMarksInterventionInProgress(t *testing.T) {
@@ -512,6 +523,16 @@ func TestHostActionServiceRollbackResourceMaintenanceMarksInterventionRolledBack
 	if interventions[0].Status != "rolled_back" {
 		t.Fatalf("expected rolled_back intervention, got %#v", interventions[0])
 	}
+	records := readMaintenanceRunRecords(t, root)
+	if len(records) != 3 {
+		t.Fatalf("expected planned, in_progress, rolled_back maintenance records, got %#v", records)
+	}
+	if records[0].State != "planned" || records[1].State != "in_progress" || records[2].State != "rolled_back" {
+		t.Fatalf("unexpected maintenance record states: %#v", records)
+	}
+	if records[2].CheckpointName != checkpointName || !records[2].InventoryRefreshed {
+		t.Fatalf("expected rollback record checkpoint and inventory refresh: %#v", records[2])
+	}
 }
 
 func TestHostActionServiceApplyCPUAdjustment(t *testing.T) {
@@ -590,4 +611,32 @@ func TestHostActionServiceApplyDiskAdjustment(t *testing.T) {
 	if len(interventions) != 1 {
 		t.Fatalf("expected 1 host intervention, got %d", len(interventions))
 	}
+}
+
+func readMaintenanceRunRecords(t *testing.T, root string) []MaintenanceRunRecord {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(root, "operations", "maintenance-runs-*.jsonl"))
+	if err != nil {
+		t.Fatalf("glob maintenance records: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected one maintenance record file, got %#v", files)
+	}
+	raw, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("read maintenance records: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	records := make([]MaintenanceRunRecord, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var record MaintenanceRunRecord
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("decode maintenance record %q: %v", line, err)
+		}
+		records = append(records, record)
+	}
+	return records
 }

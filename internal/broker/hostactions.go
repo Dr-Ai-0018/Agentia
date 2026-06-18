@@ -1,7 +1,10 @@
 package broker
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +19,21 @@ type HostActionService struct {
 	history *world.History
 	app     *App
 	machine MachineControl
+}
+
+type MaintenanceRunRecord struct {
+	ID                 string `json:"id"`
+	CreatedAt          string `json:"created_at"`
+	State              string `json:"state"`
+	ResidentID         string `json:"resident_id"`
+	TicketID           string `json:"ticket_id"`
+	Resource           string `json:"resource"`
+	Amount             string `json:"amount"`
+	Window             string `json:"window,omitempty"`
+	Operator           string `json:"operator"`
+	CheckpointName     string `json:"checkpoint_name,omitempty"`
+	Note               string `json:"note,omitempty"`
+	InventoryRefreshed bool   `json:"inventory_refreshed,omitempty"`
 }
 
 type ResourceSettlementInput struct {
@@ -411,6 +429,46 @@ func defaultMaintenanceOperator(value string) string {
 	return value
 }
 
+func (s *HostActionService) writeMaintenanceRunRecord(record MaintenanceRunRecord) {
+	if s == nil || s.app == nil {
+		return
+	}
+	now := time.Now().UTC()
+	if strings.TrimSpace(record.CreatedAt) == "" {
+		record.CreatedAt = now.Format(time.RFC3339)
+	}
+	if strings.TrimSpace(record.ID) == "" {
+		record.ID = "maintenance-" + now.Format("20060102T150405.000000000Z")
+	}
+	record.State = strings.TrimSpace(record.State)
+	record.ResidentID = strings.TrimSpace(record.ResidentID)
+	record.TicketID = strings.TrimSpace(record.TicketID)
+	record.Resource = normalizeResource(record.Resource)
+	record.Amount = strings.TrimSpace(record.Amount)
+	record.Window = strings.TrimSpace(record.Window)
+	record.Operator = defaultMaintenanceOperator(record.Operator)
+	record.CheckpointName = strings.TrimSpace(record.CheckpointName)
+	record.Note = strings.TrimSpace(record.Note)
+	if record.State == "" || record.ResidentID == "" || record.TicketID == "" || record.Resource == "" || record.Amount == "" {
+		return
+	}
+	dir := filepath.Join(s.app.root, "operations")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	file := filepath.Join(dir, "maintenance-runs-"+now.Format("2006-01-02")+".jsonl")
+	f, err := os.OpenFile(file, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return
+	}
+	_, _ = f.Write(append(raw, '\n'))
+}
+
 func (s *HostActionService) PlanResourceMaintenance(input ResourceMaintenancePlanInput) (worldstate.Ticket, error) {
 	ticketID := strings.TrimSpace(input.TicketID)
 	residentID := strings.TrimSpace(input.Resident)
@@ -462,6 +520,17 @@ func (s *HostActionService) PlanResourceMaintenance(input ResourceMaintenancePla
 			return worldstate.Ticket{}, err
 		}
 	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:          "planned",
+		ResidentID:     residentID,
+		TicketID:       ticketID,
+		Resource:       resource,
+		Amount:         amount,
+		Window:         defaultMaintenanceWindow(input.Window),
+		Operator:       input.Operator,
+		CheckpointName: checkpointName,
+		Note:           input.Note,
+	})
 	return ticket, nil
 }
 
@@ -508,6 +577,16 @@ func (s *HostActionService) StartResourceMaintenance(input ResourceMaintenanceSt
 	); err != nil {
 		return worldstate.Ticket{}, err
 	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:          "in_progress",
+		ResidentID:     residentID,
+		TicketID:       ticketID,
+		Resource:       resource,
+		Amount:         amount,
+		Operator:       input.Operator,
+		CheckpointName: input.CheckpointName,
+		Note:           input.Note,
+	})
 	return ticket, nil
 }
 
@@ -556,6 +635,17 @@ func (s *HostActionService) CompleteResourceMaintenance(input ResourceMaintenanc
 	if _, _, err := s.app.RefreshInventorySnapshot(time.Now().UTC()); err != nil {
 		return worldstate.Ticket{}, fmt.Errorf("refresh inventory snapshot after maintenance: %w", err)
 	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:              "completed",
+		ResidentID:         residentID,
+		TicketID:           ticketID,
+		Resource:           resource,
+		Amount:             amount,
+		Operator:           input.Operator,
+		CheckpointName:     input.CheckpointName,
+		Note:               input.Note,
+		InventoryRefreshed: true,
+	})
 	return ticket, nil
 }
 
@@ -602,6 +692,16 @@ func (s *HostActionService) FailResourceMaintenance(input ResourceMaintenanceFai
 	); err != nil {
 		return worldstate.Ticket{}, err
 	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:          "failed",
+		ResidentID:     residentID,
+		TicketID:       ticketID,
+		Resource:       resource,
+		Amount:         amount,
+		Operator:       input.Operator,
+		CheckpointName: input.CheckpointName,
+		Note:           input.Note,
+	})
 	return ticket, nil
 }
 
@@ -651,6 +751,17 @@ func (s *HostActionService) RollbackResourceMaintenance(input ResourceMaintenanc
 	if _, _, err := s.app.RefreshInventorySnapshot(time.Now().UTC()); err != nil {
 		return worldstate.Ticket{}, fmt.Errorf("refresh inventory snapshot after maintenance rollback: %w", err)
 	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:              "rolled_back",
+		ResidentID:         residentID,
+		TicketID:           ticketID,
+		Resource:           resource,
+		Amount:             amount,
+		Operator:           input.Operator,
+		CheckpointName:     input.CheckpointName,
+		Note:               input.Note,
+		InventoryRefreshed: true,
+	})
 	return ticket, nil
 }
 
