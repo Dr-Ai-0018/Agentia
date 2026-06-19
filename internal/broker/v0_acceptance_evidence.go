@@ -36,6 +36,27 @@ type V0AcceptanceEvidenceListOutput struct {
 	Records     []V0AcceptanceEvidenceRecord `json:"records"`
 }
 
+type V0AcceptanceEvidenceTemplateOutput struct {
+	GeneratedAt string                         `json:"generated_at"`
+	Source      string                         `json:"source"`
+	Policy      []string                       `json:"policy"`
+	Count       int                            `json:"count"`
+	Templates   []V0AcceptanceEvidenceTemplate `json:"templates"`
+}
+
+type V0AcceptanceEvidenceTemplate struct {
+	CheckID            string   `json:"check_id"`
+	Title              string   `json:"title"`
+	Status             string   `json:"status"`
+	Required           bool     `json:"required"`
+	BlocksRelease      bool     `json:"blocks_release"`
+	RequiresApproval   bool     `json:"requires_approval"`
+	ValidationCommand  string   `json:"validation_command,omitempty"`
+	EvidenceCommand    string   `json:"evidence_command"`
+	ValidationEvidence []string `json:"validation_evidence,omitempty"`
+	Notes              []string `json:"notes,omitempty"`
+}
+
 var validV0AcceptanceEvidenceChecks = map[string]struct{}{
 	"cpu_maintenance_regression":          {},
 	"disk_maintenance_regression":         {},
@@ -92,6 +113,59 @@ func (a *App) RunV0AcceptanceEvidenceList(limit int, now time.Time) (V0Acceptanc
 		Count:       len(records),
 		Records:     records,
 	}, nil
+}
+
+func (a *App) RunV0AcceptanceEvidenceTemplate(limit int, now time.Time) (V0AcceptanceEvidenceTemplateOutput, error) {
+	acceptance, err := a.RunV0AcceptanceFromSnapshot(limit)
+	if err != nil {
+		return V0AcceptanceEvidenceTemplateOutput{}, err
+	}
+	return BuildV0AcceptanceEvidenceTemplate(acceptance, now), nil
+}
+
+func BuildV0AcceptanceEvidenceTemplate(acceptance V0AcceptanceOutput, now time.Time) V0AcceptanceEvidenceTemplateOutput {
+	out := V0AcceptanceEvidenceTemplateOutput{
+		GeneratedAt: now.UTC().Format(time.RFC3339),
+		Source:      acceptance.Source,
+		Policy: []string{
+			"template output is read-only and never records evidence",
+			"run the validation command first; use evidence_command only after real validation succeeds",
+			"approval-required checks must not be executed or recorded without explicit operator approval",
+		},
+	}
+	for _, check := range acceptance.Checks {
+		if check.Category != "manual" || strings.TrimSpace(check.EvidenceCommand) == "" {
+			continue
+		}
+		out.Templates = append(out.Templates, V0AcceptanceEvidenceTemplate{
+			CheckID:            check.ID,
+			Title:              check.Title,
+			Status:             check.Status,
+			Required:           check.Required,
+			BlocksRelease:      check.BlocksRelease,
+			RequiresApproval:   check.RequiresApproval,
+			ValidationCommand:  check.Command,
+			EvidenceCommand:    check.EvidenceCommand,
+			ValidationEvidence: append([]string(nil), check.Evidence...),
+			Notes:              v0AcceptanceEvidenceTemplateNotes(check),
+		})
+	}
+	out.Count = len(out.Templates)
+	return out
+}
+
+func v0AcceptanceEvidenceTemplateNotes(check V0AcceptanceCheck) []string {
+	notes := []string{"Evidence records document validation; they do not perform validation."}
+	if check.RequiresApproval {
+		notes = append(notes, "Requires explicit operator approval before validation or evidence recording.")
+	}
+	if check.BlocksRelease {
+		notes = append(notes, "Passing evidence for this check can clear a release blocker.")
+	}
+	if check.Status == v0AcceptancePass {
+		notes = append(notes, "Already has passing evidence in the current acceptance view.")
+	}
+	return notes
 }
 
 func buildV0AcceptanceEvidenceRecord(input V0AcceptanceEvidenceInput, now time.Time) (V0AcceptanceEvidenceRecord, error) {

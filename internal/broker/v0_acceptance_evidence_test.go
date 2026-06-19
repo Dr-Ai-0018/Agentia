@@ -156,8 +156,72 @@ func TestRunV0AcceptanceEvidenceList(t *testing.T) {
 	}
 }
 
+func TestRunV0AcceptanceEvidenceTemplateIsReadOnly(t *testing.T) {
+	root := t.TempDir()
+	acceptance := V0AcceptanceOutput{
+		Source: "test",
+		Checks: []V0AcceptanceCheck{
+			evidenceTemplateCheck("longer_orchestrator_soak", v0AcceptanceWarn, false, false),
+			evidenceTemplateCheck("cpu_maintenance_regression", v0AcceptancePending, true, true),
+			evidenceTemplateCheck("disk_maintenance_regression", v0AcceptancePending, true, true),
+			evidenceTemplateCheck("checkpoint_cleanup_apply_regression", v0AcceptancePending, true, true),
+			evidenceTemplateCheck("final_acceptance_manual_pass", v0AcceptancePending, true, true),
+			{ID: "operator_runbook", Category: "automatic", Status: v0AcceptancePass},
+		},
+	}
+
+	out := BuildV0AcceptanceEvidenceTemplate(acceptance, testEvidenceTime())
+	if out.Count != 5 || len(out.Templates) != 5 {
+		t.Fatalf("expected five manual evidence templates, got %#v", out)
+	}
+	cpu, ok := findEvidenceTemplate(out, "cpu_maintenance_regression")
+	if !ok {
+		t.Fatalf("expected cpu maintenance template: %#v", out.Templates)
+	}
+	if !cpu.BlocksRelease || !cpu.RequiresApproval || cpu.Status != v0AcceptancePending {
+		t.Fatalf("expected blocking approval template, got %#v", cpu)
+	}
+	if !containsAll(cpu.EvidenceCommand, "--mode v0-acceptance-evidence", "--check-id cpu_maintenance_regression", "--apply") {
+		t.Fatalf("unexpected evidence command: %q", cpu.EvidenceCommand)
+	}
+	if !containsAll(strings.Join(cpu.Notes, "\n"), "operator approval", "release blocker") {
+		t.Fatalf("expected approval and blocker notes: %#v", cpu.Notes)
+	}
+	records, err := LoadRecentV0AcceptanceEvidence(root, 8)
+	if err != nil {
+		t.Fatalf("load evidence: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("template command must not write evidence, got %#v", records)
+	}
+}
+
+func evidenceTemplateCheck(checkID, status string, required, blocks bool) V0AcceptanceCheck {
+	return V0AcceptanceCheck{
+		ID:               checkID,
+		Title:            "template " + checkID,
+		Category:         "manual",
+		Status:           status,
+		Required:         required,
+		BlocksRelease:    blocks,
+		RequiresApproval: true,
+		Evidence:         []string{"validation reason"},
+		Command:          "arena-broker --mode validation",
+		EvidenceCommand:  v0AcceptanceEvidenceCommandTemplate(checkID),
+	}
+}
+
 func testEvidenceTime() time.Time {
 	return time.Date(2026, 6, 18, 9, 0, 0, 0, time.UTC)
+}
+
+func findEvidenceTemplate(out V0AcceptanceEvidenceTemplateOutput, checkID string) (V0AcceptanceEvidenceTemplate, bool) {
+	for _, item := range out.Templates {
+		if item.CheckID == checkID {
+			return item, true
+		}
+	}
+	return V0AcceptanceEvidenceTemplate{}, false
 }
 
 func containsAll(s string, needles ...string) bool {
