@@ -73,14 +73,14 @@ type SparkGrantRequest struct {
 }
 
 type SparkGrantResponse struct {
-	ResidentID       string                 `json:"resident_id"`
-	Amount           float64                `json:"amount"`
-	Reason           string                 `json:"reason,omitempty"`
-	Entry            sparkledger.Entry      `json:"entry"`
-	BeforeStatus     ResidentStatus         `json:"before_status"`
-	AfterStatus      ResidentStatus         `json:"after_status"`
-	SnapshotPath     string                 `json:"snapshot_path"`
-	SnapshotRevision uint64                 `json:"snapshot_revision"`
+	ResidentID       string            `json:"resident_id"`
+	Amount           float64           `json:"amount"`
+	Reason           string            `json:"reason,omitempty"`
+	Entry            sparkledger.Entry `json:"entry"`
+	BeforeStatus     ResidentStatus    `json:"before_status"`
+	AfterStatus      ResidentStatus    `json:"after_status"`
+	SnapshotPath     string            `json:"snapshot_path"`
+	SnapshotRevision uint64            `json:"snapshot_revision"`
 }
 
 func NewBrokerService(sessions *SessionManager) *BrokerService {
@@ -188,6 +188,7 @@ func (s *BrokerService) GrantSpark(req SparkGrantRequest) (SparkGrantResponse, e
 	if err != nil {
 		return SparkGrantResponse{}, err
 	}
+	engine.ReconcileSparkDebt()
 	path, err := s.sessions.SaveResidentExpected(engine, revision, true)
 	if err != nil {
 		return SparkGrantResponse{}, err

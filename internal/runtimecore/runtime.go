@@ -67,6 +67,16 @@ func (e *Engine) SparkLedger() *sparkledger.Ledger {
 	return e.spark
 }
 
+func (e *Engine) ReconcileSparkDebt() {
+	if e.spark.Account().Balance < 0 {
+		e.state.DebtActive = true
+		e.state.DebtAmount = -e.spark.Account().Balance
+		return
+	}
+	e.state.DebtActive = false
+	e.state.DebtAmount = 0
+}
+
 func (e *Engine) State() ResidentState {
 	state := e.state
 	state.RecoveryMode = normalizeRecoveryMode(state.RecoveryMode)
@@ -145,13 +155,7 @@ func (e *Engine) ApplyCall(prepared PreparedCall, activity tokenledger.ActivityT
 	e.state.Quota = quotaUpdate.After
 	e.state.Fatigue += fatigue.FatigueGain
 	e.state.SleepDebt += sleepDebtGain(activity, fatigue.FatigueGain)
-	if e.spark.Account().Balance < 0 {
-		e.state.DebtActive = true
-		e.state.DebtAmount = -e.spark.Account().Balance
-	} else {
-		e.state.DebtActive = false
-		e.state.DebtAmount = 0
-	}
+	e.ReconcileSparkDebt()
 
 	return AppliedCall{
 		Quota:      quotaUpdate,

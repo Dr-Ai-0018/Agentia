@@ -184,6 +184,26 @@ func TestRecoveryPartiallyRepaysDebtInSparkLedger(t *testing.T) {
 	}
 }
 
+func TestReconcileSparkDebtClearsDebtAfterGrant(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{TokenPolicy: tokenledger.DefaultConfig()}, "jade", tokenledger.QuotaState{Window6HCap: 4000}, start)
+
+	if _, err := engine.SparkLedger().DebitAllowDebt("charge", 1.0, "test debt", start); err != nil {
+		t.Fatalf("seed debt: %v", err)
+	}
+	engine.ReconcileSparkDebt()
+	if !engine.State().DebtActive || engine.State().DebtAmount != 1.0 {
+		t.Fatalf("expected active debt before grant: %#v", engine.State())
+	}
+	if _, err := engine.SparkLedger().Credit("grant", 1.25, "test allowance", start.Add(time.Minute)); err != nil {
+		t.Fatalf("grant spark: %v", err)
+	}
+	engine.ReconcileSparkDebt()
+	if engine.State().DebtActive || engine.State().DebtAmount != 0 {
+		t.Fatalf("expected debt cleared after positive grant: %#v", engine.State())
+	}
+}
+
 func TestSnapshotAndRestore(t *testing.T) {
 	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
 	cfg := Config{

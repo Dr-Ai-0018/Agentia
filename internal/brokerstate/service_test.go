@@ -119,6 +119,45 @@ func TestBrokerServiceResetResident(t *testing.T) {
 	}
 }
 
+func TestBrokerServiceSparkGrantClearsDebtWhenBalancePositive(t *testing.T) {
+	store := New(t.TempDir())
+	registry := NewRegistry(DefaultResidentProfiles())
+	manager := NewSessionManager(store, registry, DefaultRuntimeConfig())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+	manager.rootNow = func() time.Time { return now }
+	service := NewBrokerService(manager)
+
+	engine, _, _, err := manager.LoadResidentWithRevision("jade")
+	if err != nil {
+		t.Fatalf("load resident: %v", err)
+	}
+	if _, err := engine.SparkLedger().DebitAllowDebt("charge", 5.0, "test debt", now); err != nil {
+		t.Fatalf("seed debt: %v", err)
+	}
+	engine.ReconcileSparkDebt()
+	if _, err := manager.SaveResident(engine); err != nil {
+		t.Fatalf("save debt snapshot: %v", err)
+	}
+
+	resp, err := service.GrantSpark(SparkGrantRequest{
+		ResidentID: "jade",
+		Amount:     1.0,
+		Reason:     "test allowance",
+	})
+	if err != nil {
+		t.Fatalf("grant spark: %v", err)
+	}
+	if resp.BeforeStatus.DebtActive == false {
+		t.Fatalf("expected debt before grant: %#v", resp.BeforeStatus)
+	}
+	if resp.AfterStatus.DebtActive || resp.AfterStatus.DebtAmount != 0 {
+		t.Fatalf("expected debt cleared after grant: %#v", resp.AfterStatus)
+	}
+	if resp.AfterStatus.SparkBalance <= 0 {
+		t.Fatalf("expected positive spark balance after grant: %#v", resp.AfterStatus)
+	}
+}
+
 func TestBrokerServiceAdmitCall(t *testing.T) {
 	store := New(t.TempDir())
 	registry := NewRegistry(DefaultResidentProfiles())
