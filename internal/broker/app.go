@@ -968,6 +968,8 @@ func DefaultSpecForKind(callKind runtimeguard.CallKind, now time.Time) (CallSpec
 	switch callKind {
 	case runtimeguard.CallKindWork:
 		return DefaultWorkSpec(now, "resp_admit_work"), nil
+	case runtimeguard.CallKindAcceptance:
+		return DefaultAcceptanceSpec(now, "resp_admit_acceptance"), nil
 	case runtimeguard.CallKindFinalNotice:
 		return DefaultFinalNoticeSpec(now, "resp_admit_final"), nil
 	default:
@@ -990,6 +992,24 @@ func DefaultWorkSpec(start time.Time, responseID string) CallSpec {
 		},
 		Penalties: tokenledger.Penalties{ToolCallCount: 2},
 		Activity:  tokenledger.ActivityNormalWork,
+	}
+}
+
+func DefaultAcceptanceSpec(start time.Time, responseID string) CallSpec {
+	return CallSpec{
+		Kind: runtimeguard.CallKindAcceptance,
+		Usage: tokenledger.Usage{
+			InputTokens:  900,
+			CachedTokens: 300,
+			OutputTokens: 220,
+			TotalTokens:  1120,
+			Model:        "gpt-5.4",
+			ResponseID:   responseID,
+			StartedAt:    start,
+			FinishedAt:   start.Add(3 * time.Second),
+		},
+		Penalties: tokenledger.Penalties{},
+		Activity:  tokenledger.ActivityLightWork,
 	}
 }
 

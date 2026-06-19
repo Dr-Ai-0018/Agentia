@@ -28,7 +28,7 @@ func main() {
 	resetWindow6HUsed := flag.Bool("reset-window-6h-used", false, "Reset 6h quota usage for test-allowance-card mode")
 	resetDayUsed := flag.Bool("reset-day-used", false, "Reset day quota usage for test-allowance-card mode")
 	resetWeekUsed := flag.Bool("reset-week-used", false, "Reset week quota usage for test-allowance-card mode")
-	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
+	kind := flag.String("kind", "work", "Call kind for admit mode: work|acceptance|final_notice")
 	apply := flag.Bool("apply", false, "Whether admit mode should actually apply the call")
 	model := flag.String("model", "", "Optional model override for admit mode")
 	inputTokens := flag.Int("input-tokens", -1, "Optional input tokens for admit mode")
@@ -318,7 +318,7 @@ func main() {
 		printJSON(out)
 	case "admit":
 		callKind := runtimeguard.CallKind(*kind)
-		if callKind != runtimeguard.CallKindWork && callKind != runtimeguard.CallKindFinalNotice {
+		if callKind != runtimeguard.CallKindWork && callKind != runtimeguard.CallKindAcceptance && callKind != runtimeguard.CallKindFinalNotice {
 			exitf("unknown admit kind: %s", *kind)
 		}
 		now := time.Now().UTC()

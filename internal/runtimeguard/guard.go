@@ -6,6 +6,7 @@ type CallKind string
 
 const (
 	CallKindWork        CallKind = "work"
+	CallKindAcceptance  CallKind = "acceptance"
 	CallKindFinalNotice CallKind = "final_notice"
 )
 
@@ -62,7 +63,7 @@ func Evaluate(state State, req Request) Decision {
 		}
 	}
 
-	if req.Kind == CallKindWork {
+	if req.Kind == CallKindWork || req.Kind == CallKindAcceptance {
 		if state.SparkBalance <= 0 {
 			decision.Reasons = append(decision.Reasons, "spark_exhausted")
 			return decision
@@ -79,10 +80,10 @@ func Evaluate(state State, req Request) Decision {
 		decision.AllowDebt = decision.WouldEnterDebt
 		decision.LockAfterThisCall = decision.WouldEnterDebt || decision.WouldExceedQuota
 		if decision.WouldEnterDebt {
-			decision.Reasons = append(decision.Reasons, "work_allowed_to_enter_debt")
+			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_allowed_to_enter_debt")
 		}
 		if decision.WouldExceedQuota {
-			decision.Reasons = append(decision.Reasons, "work_allowed_to_exceed_quota")
+			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_allowed_to_exceed_quota")
 		}
 		return decision
 	}

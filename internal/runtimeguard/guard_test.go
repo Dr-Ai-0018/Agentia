@@ -76,6 +76,52 @@ func TestDebtBlocksFurtherWork(t *testing.T) {
 	}
 }
 
+func TestAcceptanceIgnoresPriorFinalNoticeWhenNotInDebt(t *testing.T) {
+	state := State{
+		SparkBalance:    2,
+		FinalNoticeUsed: true,
+		Quota: tokenledger.QuotaState{
+			Window6HCap:  1000,
+			Window6HUsed: 100,
+		},
+	}
+
+	got := Evaluate(state, Request{
+		Kind:       CallKindAcceptance,
+		SparkCost:  0.1,
+		StrainCost: 10,
+	})
+
+	if !got.Allowed {
+		t.Fatalf("expected normal acceptance to ignore prior final notice state: %#v", got)
+	}
+}
+
+func TestAcceptanceBlockedDuringDebt(t *testing.T) {
+	state := State{
+		SparkBalance: -0.15,
+		DebtActive:   true,
+		DebtAmount:   0.15,
+		Quota: tokenledger.QuotaState{
+			Window6HCap:  1000,
+			Window6HUsed: 100,
+		},
+	}
+
+	got := Evaluate(state, Request{
+		Kind:       CallKindAcceptance,
+		SparkCost:  0.1,
+		StrainCost: 10,
+	})
+
+	if got.Allowed {
+		t.Fatalf("expected acceptance to be blocked during active debt: %#v", got)
+	}
+	if len(got.Reasons) != 1 || got.Reasons[0] != "spark_debt_active" {
+		t.Fatalf("unexpected reasons: %#v", got.Reasons)
+	}
+}
+
 func TestExhaustedBalanceBlocksWork(t *testing.T) {
 	state := State{
 		SparkBalance: 0,

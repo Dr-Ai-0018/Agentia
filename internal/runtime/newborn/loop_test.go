@@ -718,6 +718,18 @@ func TestRunnerStopsAfterResidentNoop(t *testing.T) {
 	if requests != 2 {
 		t.Fatalf("expected decision plus acceptance requests only, got %d", requests)
 	}
+	if report.AcceptanceBroker == nil || !report.AcceptanceBroker.Applied {
+		t.Fatalf("expected applied acceptance broker settlement, got %#v", report.AcceptanceBroker)
+	}
+	if report.AcceptanceBroker.ApplyReason != "acceptance call via gpt-5.4-mini" {
+		t.Fatalf("expected acceptance charge reason, got %q", report.AcceptanceBroker.ApplyReason)
+	}
+	if report.AcceptanceBroker.AfterStatus == nil {
+		t.Fatalf("expected acceptance after status")
+	}
+	if report.AcceptanceBroker.AfterStatus.FinalNoticeUsed {
+		t.Fatalf("normal acceptance must not consume final notice state")
+	}
 }
 
 func renderSSECompleted(t *testing.T, response map[string]any) string {

@@ -127,10 +127,7 @@ func (e *Engine) ApplyCall(prepared PreparedCall, activity tokenledger.ActivityT
 
 	var entry sparkledger.Entry
 	if prepared.Kind == runtimeguard.CallKindFinalNotice || prepared.Decision.AllowDebt {
-		reason := fmt.Sprintf("work call via %s", prepared.Usage.Model)
-		if prepared.Kind == runtimeguard.CallKindFinalNotice {
-			reason = fmt.Sprintf("final notice via %s", prepared.Usage.Model)
-		}
+		reason := chargeReason(prepared.Kind, prepared.Usage.Model)
 		entry, err = e.spark.DebitAllowDebt(
 			sparkledger.EntryCharge,
 			prepared.Cost.SparkCost,
@@ -144,7 +141,7 @@ func (e *Engine) ApplyCall(prepared PreparedCall, activity tokenledger.ActivityT
 		entry, err = e.spark.Debit(
 			sparkledger.EntryCharge,
 			prepared.Cost.SparkCost,
-			fmt.Sprintf("work call via %s", prepared.Usage.Model),
+			chargeReason(prepared.Kind, prepared.Usage.Model),
 			prepared.Usage.FinishedAt,
 		)
 	}
@@ -163,6 +160,17 @@ func (e *Engine) ApplyCall(prepared PreparedCall, activity tokenledger.ActivityT
 		SparkEntry: entry,
 		State:      e.state,
 	}, nil
+}
+
+func chargeReason(kind runtimeguard.CallKind, model string) string {
+	switch kind {
+	case runtimeguard.CallKindAcceptance:
+		return fmt.Sprintf("acceptance call via %s", model)
+	case runtimeguard.CallKindFinalNotice:
+		return fmt.Sprintf("final notice via %s", model)
+	default:
+		return fmt.Sprintf("work call via %s", model)
+	}
 }
 
 func (e *Engine) TickRecovery(now time.Time) recovery.TickResult {

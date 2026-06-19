@@ -157,6 +157,51 @@ func TestWorkCallCanEnterDebtAndLocksFurtherWork(t *testing.T) {
 	}
 }
 
+func TestAcceptanceDoesNotConsumeFinalNotice(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{
+		TokenPolicy: tokenledger.DefaultConfig(),
+		RecoveryPolicy: recovery.Policy{
+			SparkRecoveryPerHour:  0.2,
+			StrainRecoveryPerHour: 100,
+		},
+	}, "jade", tokenledger.QuotaState{
+		Window6HCap: 4000,
+		DayCap:      20000,
+		WeekCap:     150000,
+	}, start)
+
+	_, err := engine.SparkLedger().Credit("grant", 2, "allowance", start)
+	if err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+
+	prepared, err := engine.PrepareCall(runtimeguard.CallKindAcceptance, tokenledger.Usage{
+		InputTokens:  300,
+		CachedTokens: 100,
+		OutputTokens: 120,
+		Model:        "gpt-5.4-mini",
+		FinishedAt:   start.Add(time.Minute),
+	}, tokenledger.Penalties{})
+	if err != nil {
+		t.Fatalf("prepare acceptance: %v", err)
+	}
+	if !prepared.Decision.Allowed {
+		t.Fatalf("acceptance should be allowed: %#v", prepared.Decision)
+	}
+
+	applied, err := engine.ApplyCall(prepared, tokenledger.ActivityLightWork)
+	if err != nil {
+		t.Fatalf("apply acceptance: %v", err)
+	}
+	if applied.State.FinalNoticeUsed {
+		t.Fatalf("normal acceptance must not consume final notice state")
+	}
+	if applied.SparkEntry.Reason != "acceptance call via gpt-5.4-mini" {
+		t.Fatalf("unexpected charge reason: %q", applied.SparkEntry.Reason)
+	}
+}
+
 func TestRecoveryPartiallyRepaysDebtInSparkLedger(t *testing.T) {
 	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
 	engine := New(Config{

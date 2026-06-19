@@ -866,7 +866,7 @@ func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message
 	if err != nil {
 		return "", nil, fmt.Errorf("acceptance request failed: %w", err)
 	}
-	brokerLog, err := r.budget.Settle(profile, result, time.Now().UTC(), runtimeguard.CallKindFinalNotice, tokenledger.ActivityLightWork)
+	brokerLog, err := r.budget.Settle(profile, result, time.Now().UTC(), runtimeguard.CallKindAcceptance, tokenledger.ActivityLightWork)
 	if err != nil {
 		return "", nil, fmt.Errorf("acceptance broker settlement failed: %w", err)
 	}
