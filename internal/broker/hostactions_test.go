@@ -158,6 +158,40 @@ func TestHostActionServiceApplyMemoryAdjustment(t *testing.T) {
 	}
 }
 
+func TestHostActionServiceResolveHostIntervention(t *testing.T) {
+	root := t.TempDir()
+	service := NewHostActionService(root)
+	created, err := service.CreateHostIntervention(HostInterventionInput{
+		Resident: "amber",
+		Kind:     "notice",
+		Title:    "Host intervention smoke test",
+		Body:     "This is a smoke test.",
+		Operator: "chenglin",
+	})
+	if err != nil {
+		t.Fatalf("create host intervention: %v", err)
+	}
+
+	resolved, err := service.ResolveHostIntervention(HostInterventionResolveInput{
+		InterventionID: created.ID,
+		Body:           "Smoke test closed.",
+		Operator:       "chenglin",
+	})
+	if err != nil {
+		t.Fatalf("resolve host intervention: %v", err)
+	}
+	if resolved.Status != "completed" || resolved.Body != "Smoke test closed." {
+		t.Fatalf("unexpected resolved intervention: %#v", resolved)
+	}
+	followups, err := worldstate.New(root).ReadHostFollowups(10)
+	if err != nil {
+		t.Fatalf("read host followups: %v", err)
+	}
+	if len(followups) != 0 {
+		t.Fatalf("expected resolved intervention to leave followups, got %#v", followups)
+	}
+}
+
 func TestHostActionServicePlanResourceMaintenanceForDisk(t *testing.T) {
 	root := t.TempDir()
 	store := worldstate.New(root)

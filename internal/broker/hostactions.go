@@ -126,6 +126,12 @@ type HostInterventionInput struct {
 	Operator string `json:"operator"`
 }
 
+type HostInterventionResolveInput struct {
+	InterventionID string `json:"intervention_id"`
+	Body           string `json:"body"`
+	Operator       string `json:"operator"`
+}
+
 func NewHostActionService(root string) *HostActionService {
 	return &HostActionService{
 		world:   worldstate.New(root),
@@ -190,6 +196,46 @@ func (s *HostActionService) CreateHostIntervention(input HostInterventionInput) 
 			"kind":            item.Kind,
 			"title":           item.Title,
 			"status":          item.Status,
+			"operator":        item.Operator,
+		},
+	})
+	return item, nil
+}
+
+func (s *HostActionService) ResolveHostIntervention(input HostInterventionResolveInput) (worldstate.HostIntervention, error) {
+	interventionID := strings.TrimSpace(input.InterventionID)
+	if interventionID == "" {
+		return worldstate.HostIntervention{}, fmt.Errorf("intervention id is required")
+	}
+	body := strings.TrimSpace(input.Body)
+	if body == "" {
+		body = "Host intervention has been resolved."
+	}
+	item, err := s.world.ResolveHostIntervention(interventionID, body, input.Operator, time.Now().UTC())
+	if err != nil {
+		return worldstate.HostIntervention{}, err
+	}
+	_ = s.audit.Write(audit.Event{
+		Actor:      defaultMaintenanceOperator(input.Operator),
+		ResidentID: item.Resident,
+		Kind:       "host_intervention_resolve",
+		TargetID:   item.ID,
+		Summary:    fmt.Sprintf("Resolved host intervention %s for %s", item.Kind, item.Resident),
+		Metadata: map[string]any{
+			"kind":     item.Kind,
+			"title":    item.Title,
+			"status":   item.Status,
+			"operator": item.Operator,
+		},
+	})
+	_ = s.history.Write(world.HistoryEntry{
+		ResidentID: item.Resident,
+		Kind:       "host_intervention_resolve",
+		Summary:    fmt.Sprintf("Chenglin resolved %s intervention for %s", item.Kind, item.Resident),
+		Details: map[string]any{
+			"intervention_id": item.ID,
+			"kind":            item.Kind,
+			"title":           item.Title,
 			"operator":        item.Operator,
 		},
 	})
