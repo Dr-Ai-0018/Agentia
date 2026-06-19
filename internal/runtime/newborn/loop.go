@@ -122,6 +122,14 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 
 		result, err := openai.PostStream(r.client, r.baseURL, r.apiKey, buildDecisionToolPayload(profile, input, packet.PromptCacheKey(profile.Name)), verbose)
 		if err != nil {
+			if len(roundLogs) > 0 {
+				stoppedReason = fmt.Sprintf("upstream_request_failed: round_%d", round)
+				report, finalizeErr := r.finalizeRun(profile, duration, started, state, history, roundLogs, stoppedReason, outDir, verbose)
+				if finalizeErr != nil {
+					return FinalReport{}, finalizeErr
+				}
+				return report, &PartialRunError{Report: report, Err: fmt.Errorf("round %d request failed: %w", round, err)}
+			}
 			return FinalReport{}, fmt.Errorf("round %d request failed: %w", round, err)
 		}
 
@@ -197,16 +205,34 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 	}
 
+	report, err := r.finalizeRun(profile, duration, started, state, history, roundLogs, stoppedReason, outDir, verbose)
+	if err != nil {
+		return FinalReport{}, err
+	}
+	return report, nil
+}
+
+func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, history []openai.Message, roundLogs []RoundLog, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
 	var acceptanceBroker *BrokerUsageLog
-	if len(roundLogs) > 0 {
+	if len(roundLogs) > 0 && !strings.HasPrefix(stoppedReason, "upstream_request_failed:") {
 		value, brokerLog, err := r.runAcceptance(profile, history, roundLogs, verbose)
 		if err != nil {
-			return FinalReport{}, err
+			stoppedReason = appendStopReason(stoppedReason, "acceptance_failed")
+			acceptance = fallbackAcceptance(roundLogs, stoppedReason)
+			report, finalizeErr := r.writeFinalReport(profile, duration, started, state, roundLogs, stoppedReason, acceptance, nil, outDir)
+			if finalizeErr != nil {
+				return FinalReport{}, finalizeErr
+			}
+			return report, &PartialRunError{Report: report, Err: err}
 		}
 		acceptance = value
 		acceptanceBroker = brokerLog
 	}
+	return r.writeFinalReport(profile, duration, started, state, roundLogs, stoppedReason, acceptance, acceptanceBroker, outDir)
+}
+
+func (r *Runner) writeFinalReport(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, roundLogs []RoundLog, stoppedReason, acceptance string, acceptanceBroker *BrokerUsageLog, outDir string) (FinalReport, error) {
 	if err := r.closeRunHistoryGroup(profile, state, time.Now().UTC(), stoppedReason, len(roundLogs)); err != nil {
 		return FinalReport{}, fmt.Errorf("close run history group: %w", err)
 	}
@@ -228,6 +254,18 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		return FinalReport{}, err
 	}
 	return report, nil
+}
+
+func appendStopReason(current, next string) string {
+	current = strings.TrimSpace(current)
+	next = strings.TrimSpace(next)
+	if current == "" {
+		return next
+	}
+	if next == "" {
+		return current
+	}
+	return current + "; " + next
 }
 
 func (r *Runner) buildContextPacket(profile ResidentProfile, remaining int, state loopState) context.Packet {
@@ -866,6 +904,12 @@ func fallbackAcceptance(rounds []RoundLog, stoppedReason string) string {
 		default:
 			return "No live VM exploration occurred in this run. The resident did not reach a valid action round before the run stopped."
 		}
+	}
+	if strings.HasPrefix(stoppedReason, "upstream_request_failed:") {
+		return fmt.Sprintf("This run completed %d useful rounds before a retryable upstream request failure interrupted the next model call. The recorded round log is still valid evidence of what the resident observed and did before the interruption.", len(rounds))
+	}
+	if strings.Contains(stoppedReason, "acceptance_failed") {
+		return fmt.Sprintf("This run completed %d useful rounds, but the final acceptance call failed. Use the recorded round log as the source of truth for this partial report.", len(rounds))
 	}
 	return ""
 }

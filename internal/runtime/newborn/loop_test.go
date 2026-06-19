@@ -214,6 +214,10 @@ func TestFallbackAcceptance(t *testing.T) {
 	if got == "" {
 		t.Fatalf("expected fallback acceptance text")
 	}
+	partial := fallbackAcceptance([]RoundLog{{Round: 1}}, "upstream_request_failed: round_2")
+	if !strings.Contains(partial, "1 useful rounds") || !strings.Contains(partial, "upstream request failure") {
+		t.Fatalf("expected partial upstream fallback, got %q", partial)
+	}
 }
 
 func TestRenderAcceptanceRoundRecap(t *testing.T) {

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -432,6 +433,11 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 	runner := s.runnerFactory(s.client, s.baseURL, apiKey, profile.Name)
 	report, err := runner.Run(profile, input.Duration, input.OutDir, input.Verbose, input.ResetResident)
 	if err != nil {
+		var partial *newborn.PartialRunError
+		if errors.As(err, &partial) && partial.Report.Resident != "" {
+			report = partial.Report
+			run.Report = &report
+		}
 		if isTransientUpstreamError(err) {
 			run.Status = "transient_blocked"
 			run.Error = err.Error()

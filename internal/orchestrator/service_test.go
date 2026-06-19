@@ -500,6 +500,54 @@ func TestServiceClassifiesRetryableUpstreamErrorsAsTransientBlocked(t *testing.T
 	}
 }
 
+func TestServiceKeepsPartialReportForTransientBlockedRun(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
+		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+			report := newborn.FinalReport{
+				Resident:      profile.Name,
+				Model:         profile.Model,
+				Rounds:        3,
+				StoppedReason: "upstream_request_failed: round_4",
+			}
+			return report, &newborn.PartialRunError{
+				Report: report,
+				Err: &openai.APIError{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       "too many pending requests",
+					Retryable:  true,
+				},
+			}
+		})
+	}
+
+	out, err := service.Run(RunInput{
+		Residents: []string{"jade"},
+		Duration:  30 * time.Second,
+		OutDir:    filepath.Join(root, "out"),
+		Mode:      RunModeSequential,
+	})
+	if err != nil {
+		t.Fatalf("run orchestrator: %v", err)
+	}
+	if out.Runs[0].Status != "transient_blocked" || out.Runs[0].Report == nil || out.Runs[0].Report.Rounds != 3 {
+		t.Fatalf("expected transient run with partial report, got %#v", out.Runs[0])
+	}
+	if out.Assessment.UsefulRuns != 1 || out.Assessment.BudgetBlockedRuns != 0 {
+		t.Fatalf("expected partial report to count as useful, got %#v", out.Assessment)
+	}
+	report, err := service.ReadInspectionReport(out.RunID)
+	if err != nil {
+		t.Fatalf("read inspection report: %v", err)
+	}
+	if report.TransientBlocked != 1 || report.UsefulRuns != 1 || report.Residents[0].Rounds != 3 {
+		t.Fatalf("unexpected inspection report: %#v", report)
+	}
+}
+
 func TestRetryFailedRunIncludesTransientBlockedResidents(t *testing.T) {
 	root := t.TempDir()
 	app := broker.New(root)

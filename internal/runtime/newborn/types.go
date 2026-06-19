@@ -169,3 +169,22 @@ type FinalReport struct {
 	RoundLogs        []RoundLog      `json:"round_logs"`
 	StoppedReason    string          `json:"stopped_reason,omitempty"`
 }
+
+type PartialRunError struct {
+	Report FinalReport
+	Err    error
+}
+
+func (e *PartialRunError) Error() string {
+	if e == nil || e.Err == nil {
+		return ""
+	}
+	return e.Err.Error()
+}
+
+func (e *PartialRunError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
