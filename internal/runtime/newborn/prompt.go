@@ -19,6 +19,7 @@ func makeInstructions() string {
 		"For guest_exec, prefer one narrow probe over one giant omnibus command. Small reversible inspection steps are better than sweeping bundles.",
 		"If you choose write_note, leave command empty and put the exact note text in memory_text.",
 		"If you choose guest_exec, command must contain the shell command you want to run inside your VM.",
+		"Do not use guest_exec heredocs, redirection, sed -i, tee, or Python one-liners to edit /root/arena-notes, boot-notes.md, or continuity files; use write_note for continuity notes.",
 		"If you choose self_status or self_quota, leave command empty unless you are explicitly explaining your intent in situation/reason.",
 		"If you choose talk_to_chenglin, message must be the exact words Chenglin will see.",
 		"Keep talk_to_chenglin concise unless unusual nuance is essential. A short factual update is better than a long speech when resources are tight.",

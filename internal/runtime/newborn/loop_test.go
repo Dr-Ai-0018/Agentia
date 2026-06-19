@@ -198,6 +198,41 @@ func TestExecuteWriteNoteRejectsCommandOnlyDecisionWithRawOutput(t *testing.T) {
 	}
 }
 
+func TestValidateGuestExecRejectsRiskyContinuityHeredoc(t *testing.T) {
+	command := "cat >> /root/arena-notes/boot-notes.md <<'EOF'\nunsafe\nEOF"
+	result, denied := validateGuestExecCommand(command)
+	if !denied {
+		t.Fatalf("expected risky continuity heredoc to be denied")
+	}
+	if !result.Error || result.ErrorKind != "unsafe_continuity_write" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if !strings.Contains(result.Observation, "Use write_note") {
+		t.Fatalf("expected write_note guidance, got %q", result.Observation)
+	}
+	if !strings.Contains(result.RawOutput, "cat >> /root/arena-notes/boot-notes.md") {
+		t.Fatalf("expected raw command for debugging, got %q", result.RawOutput)
+	}
+}
+
+func TestValidateGuestExecAllowsContinuityRead(t *testing.T) {
+	command := "cat /root/arena-notes/boot-notes.md"
+	if result, denied := validateGuestExecCommand(command); denied {
+		t.Fatalf("expected continuity read to be allowed, got %#v", result)
+	}
+}
+
+func TestValidateGuestExecRejectsSedContinuityEdit(t *testing.T) {
+	command := "sed -i 's/old/new/' /root/arena-notes/boot-notes.md"
+	result, denied := validateGuestExecCommand(command)
+	if !denied {
+		t.Fatalf("expected sed continuity edit to be denied")
+	}
+	if result.ErrorKind != "unsafe_continuity_write" {
+		t.Fatalf("unexpected error kind: %s", result.ErrorKind)
+	}
+}
+
 func TestLimitRawOutputAddsTruncationMarker(t *testing.T) {
 	raw := strings.Repeat("x", actionRawOutputMax+10)
 	got := limitRawOutput(raw)

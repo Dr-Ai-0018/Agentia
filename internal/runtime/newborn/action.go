@@ -58,6 +58,9 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 		if strings.TrimSpace(decision.Command) == "" {
 			return actionError("guest_exec denied: command is required", "validation_error", "")
 		}
+		if result, denied := validateGuestExecCommand(decision.Command); denied {
+			return result
+		}
 		return guestCommand(profile.Instance, decision.Command, classifyGuestExecActivity(decision.Command))
 	case "self_status":
 		return ActionResult{Observation: e.executeSelfStatus(profile), Activity: tokenledger.ActivityStatusCheck}
@@ -263,6 +266,61 @@ func classifyGuestExecActivity(command string) tokenledger.ActivityType {
 		return tokenledger.ActivityLightWork
 	}
 	return tokenledger.ActivityNormalWork
+}
+
+func validateGuestExecCommand(command string) (ActionResult, bool) {
+	trimmed := strings.TrimSpace(command)
+	if trimmed == "" {
+		return actionError("guest_exec denied: command is required", "validation_error", command), true
+	}
+	if isRiskyContinuityShellWrite(trimmed) {
+		return actionError(
+			"guest_exec denied: risky continuity-note shell write detected. Use write_note with plain memory_text instead of heredoc, redirection, sed -i, or complex quoting against /root/arena-notes or continuity files.",
+			"unsafe_continuity_write",
+			command,
+		), true
+	}
+	return ActionResult{}, false
+}
+
+func isRiskyContinuityShellWrite(command string) bool {
+	lower := strings.ToLower(command)
+	if !targetsContinuitySurface(lower) {
+		return false
+	}
+	if strings.Contains(lower, "<<") || strings.Contains(lower, ">>") || strings.Contains(lower, ">") {
+		return true
+	}
+	for _, token := range []string{
+		"sed -i",
+		"perl -pi",
+		"tee ",
+		"python -",
+		"python3 -",
+		"cat <<",
+		"cat >",
+		"cat >>",
+		"truncate ",
+	} {
+		if strings.Contains(lower, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func targetsContinuitySurface(command string) bool {
+	for _, token := range []string{
+		"/root/arena-notes",
+		"arena-notes/",
+		"boot-notes.md",
+		"continuity",
+	} {
+		if strings.Contains(command, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func isNarrowProbeCommand(command string) bool {
