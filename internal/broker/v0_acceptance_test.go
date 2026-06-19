@@ -22,8 +22,11 @@ func TestBuildV0AcceptanceBlocksOnManualValidation(t *testing.T) {
 	if out.Gate != "blocked_by_manual_validation" {
 		t.Fatalf("expected manual validation blocker, got %#v", out)
 	}
-	if out.Summary.ManualBlocking != 4 || out.Summary.ApprovalRequired != 4 {
+	if out.Summary.ManualBlocking != 4 || out.Summary.ApprovalRequired != 5 {
 		t.Fatalf("expected manual blocking approval summary: %#v", out.Summary)
+	}
+	if !hasAcceptanceCheck(out, "host_only_maintenance_smoke", v0AcceptanceWarn) {
+		t.Fatalf("expected host-only maintenance smoke warning check: %#v", out.Checks)
 	}
 	if !hasAcceptanceCheck(out, "operator_runbook", v0AcceptancePass) {
 		t.Fatalf("expected operator runbook pass: %#v", out.Checks)

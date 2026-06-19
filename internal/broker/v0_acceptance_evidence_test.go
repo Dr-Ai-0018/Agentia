@@ -162,6 +162,7 @@ func TestRunV0AcceptanceEvidenceTemplateIsReadOnly(t *testing.T) {
 		Source: "test",
 		Checks: []V0AcceptanceCheck{
 			evidenceTemplateCheck("longer_orchestrator_soak", v0AcceptanceWarn, false, false),
+			evidenceTemplateCheck("host_only_maintenance_smoke", v0AcceptanceWarn, false, false),
 			evidenceTemplateCheck("cpu_maintenance_regression", v0AcceptancePending, true, true),
 			evidenceTemplateCheck("disk_maintenance_regression", v0AcceptancePending, true, true),
 			evidenceTemplateCheck("checkpoint_cleanup_apply_regression", v0AcceptancePending, true, true),
@@ -171,8 +172,8 @@ func TestRunV0AcceptanceEvidenceTemplateIsReadOnly(t *testing.T) {
 	}
 
 	out := BuildV0AcceptanceEvidenceTemplate(acceptance, "", testEvidenceTime())
-	if out.Count != 5 || len(out.Templates) != 5 {
-		t.Fatalf("expected five manual evidence templates, got %#v", out)
+	if out.Count != 6 || len(out.Templates) != 6 {
+		t.Fatalf("expected six manual evidence templates, got %#v", out)
 	}
 	cpu, ok := findEvidenceTemplate(out, "cpu_maintenance_regression")
 	if !ok {

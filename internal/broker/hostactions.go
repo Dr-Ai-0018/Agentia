@@ -365,20 +365,38 @@ func buildMaintenanceCompletionNoteWithOperator(note, operator string) string {
 }
 
 func buildMaintenanceCompletionNoteWithCheckpoint(note, operator, checkpointName string) string {
+	return buildMaintenanceCompletionNoteWithCheckpointForAmount(note, operator, checkpointName, "")
+}
+
+func buildMaintenanceCompletionNoteWithCheckpointForAmount(note, operator, checkpointName, amount string) string {
 	lines := []string{}
 	if trimmed := strings.TrimSpace(note); trimmed != "" {
 		lines = append(lines, trimmed)
 	}
+	result := "host_stop_change_start_finished"
+	expectation := "approved resource change has been applied; VM service has been brought back after maintenance."
+	if isNoopMaintenanceCompletion(note, amount) {
+		result = "host_noop_validation_finished"
+		expectation = "maintenance validation is complete; no VM resource configuration was changed."
+	}
 	lines = append(lines,
 		"maintenance_completed=true",
-		"maintenance_result=host_stop_change_start_finished",
+		fmt.Sprintf("maintenance_result=%s", result),
 		fmt.Sprintf("operator=%s", defaultMaintenanceOperator(operator)),
-		"resident_expectation=approved resource change has been applied; VM service has been brought back after maintenance.",
+		fmt.Sprintf("resident_expectation=%s", expectation),
 	)
 	if checkpointName != "" {
 		lines = append(lines, fmt.Sprintf("maintenance_checkpoint=%s", checkpointName))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func isNoopMaintenanceCompletion(note, amount string) bool {
+	text := strings.ToLower(strings.TrimSpace(amount) + "\n" + strings.TrimSpace(note))
+	return strings.Contains(text, "smoke-noop") ||
+		strings.Contains(text, "no resource change") ||
+		strings.Contains(text, "no vm resource change") ||
+		strings.Contains(text, "no resource configuration")
 }
 
 func buildMaintenanceStartNote(note, operator, checkpointName string) string {
@@ -675,7 +693,7 @@ func (s *HostActionService) CompleteHostResourceMaintenance(input HostResourceMa
 	if err != nil {
 		return HostResourceMaintenanceOutput{}, err
 	}
-	completionNote := buildMaintenanceCompletionNoteWithCheckpoint(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	completionNote := buildMaintenanceCompletionNoteWithCheckpointForAmount(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName), amount)
 	body := buildHostMaintenanceBody(resource, amount, completionNote)
 	intervention, err := s.world.ResolveHostIntervention(interventionID, body, input.Operator, time.Now().UTC())
 	if err != nil {
@@ -826,7 +844,7 @@ func (s *HostActionService) CompleteResourceMaintenance(input ResourceMaintenanc
 	if _, ok := s.app.Binding(residentID); !ok {
 		return worldstate.Ticket{}, fmt.Errorf("unknown resident binding: %s", residentID)
 	}
-	completionNote := buildMaintenanceCompletionNoteWithCheckpoint(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	completionNote := buildMaintenanceCompletionNoteWithCheckpointForAmount(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName), amount)
 	ticket, err := s.SettleResourceTicket(ResourceSettlementInput{
 		TicketID: ticketID,
 		Resource: resource,

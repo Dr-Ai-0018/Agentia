@@ -334,6 +334,15 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 	}
 	if hasWarning(items, "known_manual_gaps") {
 		steps = append(steps, V0RecommendedStep{
+			ID:               "host_only_maintenance_smoke",
+			Title:            "Run host-only maintenance notice lifecycle smoke test",
+			Reason:           "Host-only maintenance should prove plan/start/fail-or-complete notices, intervention status updates, and maintenance run records without requiring a resident ticket or real VM resource change.",
+			Command:          "arena-broker --mode host-plan-maintenance --resident amber --resource memory --amount smoke-noop --window '<test window>' --operator <operator> --body '<smoke notice>'; then host-start-maintenance and host-fail-maintenance for the returned intervention id",
+			RequiresApproval: true,
+			BlocksRelease:    false,
+			RelatedItems:     []string{"known_manual_gaps"},
+		})
+		steps = append(steps, V0RecommendedStep{
 			ID:               "cpu_maintenance_regression",
 			Title:            "Run CPU maintenance-style regression with an approved window",
 			Reason:           "CPU maintenance must prove host-plan/start/complete or rollback, approved window, stop/change/start if needed, resident-facing notices, maintenance run record, and inventory refresh.",

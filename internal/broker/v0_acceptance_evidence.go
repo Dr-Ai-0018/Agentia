@@ -58,6 +58,7 @@ type V0AcceptanceEvidenceTemplate struct {
 }
 
 var validV0AcceptanceEvidenceChecks = map[string]struct{}{
+	"host_only_maintenance_smoke":         {},
 	"cpu_maintenance_regression":          {},
 	"disk_maintenance_regression":         {},
 	"checkpoint_cleanup_apply_regression": {},

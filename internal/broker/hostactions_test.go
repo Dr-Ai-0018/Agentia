@@ -297,6 +297,10 @@ func TestHostActionServiceHostOnlyMaintenanceLifecycle(t *testing.T) {
 	if !strings.Contains(completed.Intervention.Body, "maintenance_completed=true") {
 		t.Fatalf("expected completion marker, got %q", completed.Intervention.Body)
 	}
+	if !strings.Contains(completed.Intervention.Body, "maintenance_result=host_stop_change_start_finished") ||
+		!strings.Contains(completed.Intervention.Body, "approved resource change has been applied") {
+		t.Fatalf("expected real maintenance completion wording, got %q", completed.Intervention.Body)
+	}
 	records := readMaintenanceRunRecords(t, root)
 	if len(records) != 3 {
 		t.Fatalf("expected planned, in_progress, completed records, got %#v", records)
@@ -309,6 +313,61 @@ func TestHostActionServiceHostOnlyMaintenanceLifecycle(t *testing.T) {
 	}
 	if !records[2].InventoryRefreshed {
 		t.Fatalf("expected completion record inventory refresh: %#v", records[2])
+	}
+}
+
+func TestHostActionServiceHostOnlyNoopMaintenanceCompletionWording(t *testing.T) {
+	root := t.TempDir()
+	service := NewHostActionService(root)
+	service.app.inventoryCollector = func(cfg Config, now time.Time) (InventorySnapshot, error) {
+		return InventorySnapshot{
+			CollectedAt: now.Format(time.RFC3339),
+			Residents: []ResidentInventoryFact{{
+				ResidentID:     "amber",
+				InstanceName:   "amber",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           1,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        12,
+				UpdatedAt:      now.Format(time.RFC3339),
+			}},
+		}, nil
+	}
+	service.app.inventorySaver = func(root string, snapshot InventorySnapshot) (string, error) {
+		return filepath.Join(root, "inventory", "incus-inventory.json"), nil
+	}
+
+	planned, err := service.PlanHostResourceMaintenance(HostResourceMaintenanceInput{
+		Resident: "amber",
+		Resource: "memory",
+		Amount:   "smoke-noop",
+		Note:     "Host-only lifecycle smoke. No VM resource change will be performed.",
+		Window:   "safe smoke window",
+		Operator: "codex",
+	})
+	if err != nil {
+		t.Fatalf("plan host maintenance: %v", err)
+	}
+	completed, err := service.CompleteHostResourceMaintenance(HostResourceMaintenanceInput{
+		InterventionID: planned.Intervention.ID,
+		Resident:       "amber",
+		Resource:       "memory",
+		Amount:         "smoke-noop",
+		Note:           "Smoke validation complete with no resource configuration change.",
+		Operator:       "codex",
+	})
+	if err != nil {
+		t.Fatalf("complete noop host maintenance: %v", err)
+	}
+	if !strings.Contains(completed.Intervention.Body, "maintenance_result=host_noop_validation_finished") {
+		t.Fatalf("expected noop maintenance completion result, got %q", completed.Intervention.Body)
+	}
+	if strings.Contains(completed.Intervention.Body, "approved resource change has been applied") {
+		t.Fatalf("noop completion must not claim a resource change was applied: %q", completed.Intervention.Body)
+	}
+	if !strings.Contains(completed.Intervention.Body, "no VM resource configuration was changed") {
+		t.Fatalf("expected explicit no-resource-change resident expectation, got %q", completed.Intervention.Body)
 	}
 }
 

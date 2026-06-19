@@ -3,6 +3,7 @@ package broker
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"ai-arena/internal/worldstate"
 )
@@ -269,7 +270,15 @@ func addFocusWorldCandidateReason(focus *ResidentDecisionFocus, value string) {
 }
 
 func maintenanceRunsNeedingReview(records []MaintenanceRunRecord) (count int, staleInventory int) {
+	latestByChain := map[string]MaintenanceRunRecord{}
 	for _, record := range records {
+		key := maintenanceRunChainKey(record)
+		current, ok := latestByChain[key]
+		if !ok || record.CreatedAt > current.CreatedAt || (record.CreatedAt == current.CreatedAt && record.ID > current.ID) {
+			latestByChain[key] = record
+		}
+	}
+	for _, record := range latestByChain {
 		stale := (record.State == "completed" || record.State == "rolled_back") && !record.InventoryRefreshed
 		switch record.State {
 		case "in_progress", "failed", "rolled_back", "unknown":
@@ -286,6 +295,22 @@ func maintenanceRunsNeedingReview(records []MaintenanceRunRecord) (count int, st
 		}
 	}
 	return count, staleInventory
+}
+
+func maintenanceRunChainKey(record MaintenanceRunRecord) string {
+	if record.InterventionID != "" {
+		return "intervention:" + record.InterventionID
+	}
+	if record.TicketID != "" {
+		return "ticket:" + record.TicketID
+	}
+	return strings.Join([]string{
+		"resource",
+		record.ResidentID,
+		record.Resource,
+		record.Amount,
+		record.Window,
+	}, ":")
 }
 
 func sortDecisionAssist(out *HostDecisionAssist) {

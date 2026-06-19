@@ -263,6 +263,53 @@ func TestBuildHostDecisionAssistCarriesCategorizedFollowupPreviews(t *testing.T)
 	}
 }
 
+func TestMaintenanceRunsNeedingReviewUsesLatestRecordPerChain(t *testing.T) {
+	records := []MaintenanceRunRecord{
+		{
+			ID:             "maintenance-20260619T032818Z",
+			CreatedAt:      "2026-06-19T03:28:18Z",
+			State:          "planned",
+			ResidentID:     "amber",
+			InterventionID: "host-amber-smoke",
+			Resource:       "memory",
+			Amount:         "smoke-noop",
+		},
+		{
+			ID:             "maintenance-20260619T032826Z",
+			CreatedAt:      "2026-06-19T03:28:26Z",
+			State:          "in_progress",
+			ResidentID:     "amber",
+			InterventionID: "host-amber-smoke",
+			Resource:       "memory",
+			Amount:         "smoke-noop",
+		},
+		{
+			ID:                 "maintenance-20260619T032832Z",
+			CreatedAt:          "2026-06-19T03:28:32Z",
+			State:              "completed",
+			ResidentID:         "amber",
+			InterventionID:     "host-amber-smoke",
+			Resource:           "memory",
+			Amount:             "smoke-noop",
+			InventoryRefreshed: true,
+		},
+		{
+			ID:             "maintenance-20260619T033000Z",
+			CreatedAt:      "2026-06-19T03:30:00Z",
+			State:          "completed",
+			ResidentID:     "jade",
+			InterventionID: "host-jade-stale",
+			Resource:       "disk",
+			Amount:         "36GiB",
+		},
+	}
+
+	count, stale := maintenanceRunsNeedingReview(records)
+	if count != 1 || stale != 1 {
+		t.Fatalf("expected only latest stale completed chain to need review, got count=%d stale=%d", count, stale)
+	}
+}
+
 func TestSortDecisionAssistUsesStableActionOrder(t *testing.T) {
 	out := HostDecisionAssist{
 		Actions: []HostSuggestedAction{
