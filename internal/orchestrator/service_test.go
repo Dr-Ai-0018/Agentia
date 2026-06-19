@@ -500,6 +500,41 @@ func TestServiceClassifiesRetryableUpstreamErrorsAsTransientBlocked(t *testing.T
 	}
 }
 
+func TestServiceClassifiesInsufficientAccountBalanceAsTransientBlocked(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
+		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+			return newborn.FinalReport{}, &openai.APIError{
+				StatusCode: http.StatusForbidden,
+				Body:       `{"error":{"message":"Insufficient account balance"}}`,
+			}
+		})
+	}
+
+	out, err := service.Run(RunInput{
+		Residents: []string{"jade"},
+		Duration:  30 * time.Second,
+		OutDir:    filepath.Join(root, "out"),
+		Mode:      RunModeSequential,
+	})
+	if err != nil {
+		t.Fatalf("run orchestrator: %v", err)
+	}
+	if out.Runs[0].Status != "transient_blocked" {
+		t.Fatalf("expected transient_blocked run, got %#v", out.Runs[0])
+	}
+	report, err := service.ReadInspectionReport(out.RunID)
+	if err != nil {
+		t.Fatalf("read inspection report: %v", err)
+	}
+	if report.ResidentsErrored != 0 || report.TransientBlocked != 1 {
+		t.Fatalf("unexpected inspection report: %#v", report)
+	}
+}
+
 func TestServiceKeepsPartialReportForTransientBlockedRun(t *testing.T) {
 	root := t.TempDir()
 	app := broker.New(root)

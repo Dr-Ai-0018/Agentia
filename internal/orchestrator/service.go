@@ -557,7 +557,11 @@ func hasTransientBlocks(runs []ResidentRun) bool {
 }
 
 func isTransientUpstreamError(err error) bool {
-	return openai.IsRetryableError(err)
+	if openai.IsRetryableError(err) {
+		return true
+	}
+	text := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(text, "insufficient account balance")
 }
 
 func (s *Service) waitIfPaused(runID string, current *RunStatus) error {
