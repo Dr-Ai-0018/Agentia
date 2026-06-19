@@ -650,6 +650,72 @@ func TestRunnerReportRecordsActionFailureRawOutput(t *testing.T) {
 	}
 }
 
+func TestRunnerStopsAfterResidentNoop(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		header := http.Header{}
+		header.Set("Content-Type", "text/event-stream")
+		header.Set("x-request-id", fmt.Sprintf("req-%d", requests))
+		var body string
+		switch requests {
+		case 1:
+			body = renderSSECompleted(t, map[string]any{
+				"id": "resp-decision",
+				"usage": map[string]any{
+					"input_tokens":  100,
+					"output_tokens": 40,
+				},
+				"output": []map[string]any{
+					{
+						"type":      "function_call",
+						"name":      "decide_next_action",
+						"arguments": `{"situation":"Baseline is stable and waiting is better than probing.","next_action":"noop","reason":"Pause until there is new information.","command":"","message":"","ticket_title":"","ticket_body":"","ticket_priority":"","memory_id":"","memory_action":"","memory_summary":"","memory_text":"","memory_layer":"","memory_reason":""}`,
+					},
+				},
+			})
+		case 2:
+			body = renderSSECompleted(t, map[string]any{
+				"id":          "resp-acceptance",
+				"output_text": "I chose to pause after confirming that no immediate action was useful.",
+				"usage": map[string]any{
+					"input_tokens":  80,
+					"output_tokens": 20,
+				},
+			})
+		default:
+			t.Fatalf("unexpected request %d after resident noop", requests)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})}
+
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = fakeActionExecutor{result: ActionResult{Observation: "no operation executed", Activity: tokenledger.ActivityStatusCheck}}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4-mini", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if report.Rounds != 1 || len(report.RoundLogs) != 1 {
+		t.Fatalf("expected one noop round, got %#v", report)
+	}
+	if report.StoppedReason != "resident_noop" {
+		t.Fatalf("expected resident_noop stop, got %q", report.StoppedReason)
+	}
+	if requests != 2 {
+		t.Fatalf("expected decision plus acceptance requests only, got %d", requests)
+	}
+}
+
 func renderSSECompleted(t *testing.T, response map[string]any) string {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{

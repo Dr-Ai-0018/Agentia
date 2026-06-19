@@ -191,6 +191,10 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			OutputTokens: result.OutputTokens,
 			Broker:       brokerLog,
 		})
+		if decision.NextAction == "noop" {
+			stoppedReason = "resident_noop"
+			break
+		}
 	}
 
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
