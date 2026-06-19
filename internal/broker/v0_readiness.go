@@ -336,8 +336,8 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 		steps = append(steps, V0RecommendedStep{
 			ID:               "cpu_maintenance_regression",
 			Title:            "Run CPU maintenance-style regression with an approved window",
-			Reason:           "CPU maintenance must prove notify, maintenance window, stop/change/start if needed, completion or rollback, and inventory refresh.",
-			Command:          "arena-broker --mode host-maintenance-draft-cached --limit 5",
+			Reason:           "CPU maintenance must prove host-plan/start/complete or rollback, approved window, stop/change/start if needed, resident-facing notices, maintenance run record, and inventory refresh.",
+			Command:          "arena-broker --mode v0-runbook",
 			RequiresApproval: true,
 			BlocksRelease:    true,
 			RelatedItems:     []string{"known_manual_gaps"},
@@ -345,8 +345,8 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 		steps = append(steps, V0RecommendedStep{
 			ID:               "disk_maintenance_regression",
 			Title:            "Run disk maintenance-style regression with an approved window",
-			Reason:           "Disk maintenance must prove notify, maintenance window, stop/change/start if needed, completion or rollback, and inventory refresh.",
-			Command:          "arena-broker --mode host-maintenance-draft-cached --limit 5",
+			Reason:           "Disk maintenance must prove host-plan/start/complete or rollback, approved window, stop/change/start if needed, resident-facing notices, maintenance run record, and inventory refresh.",
+			Command:          "arena-broker --mode v0-runbook",
 			RequiresApproval: true,
 			BlocksRelease:    true,
 			RelatedItems:     []string{"known_manual_gaps"},

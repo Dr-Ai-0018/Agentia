@@ -43,6 +43,12 @@ func TestBuildV0AcceptanceBlocksOnManualValidation(t *testing.T) {
 		!strings.Contains(check.EvidenceCommand, "--apply") {
 		t.Fatalf("expected record-evidence command template, got %#v", check.EvidenceCommand)
 	}
+	if check.Command != "arena-broker --mode v0-runbook" {
+		t.Fatalf("expected cpu maintenance validation command to point at runbook, got %#v", check.Command)
+	}
+	if !strings.Contains(strings.Join(check.Evidence, "\n"), "host-plan/start/complete") {
+		t.Fatalf("expected cpu maintenance evidence to mention host-only lifecycle, got %#v", check.Evidence)
+	}
 }
 
 func TestBuildV0AcceptanceBlocksOnAutomaticFailure(t *testing.T) {

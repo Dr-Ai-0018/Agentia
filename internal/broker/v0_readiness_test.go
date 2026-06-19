@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,6 +40,16 @@ func TestBuildV0ReadinessReportsWarningsForKnownGaps(t *testing.T) {
 		!hasRecommendedStep(out, "checkpoint_cleanup_apply_regression") ||
 		!hasRecommendedStep(out, "final_acceptance_manual_pass") {
 		t.Fatalf("expected split manual validation steps: %#v", out.Completion.RecommendedSteps)
+	}
+	cpuStep, ok := findRecommendedStep(out, "cpu_maintenance_regression")
+	if !ok {
+		t.Fatalf("expected cpu maintenance regression step")
+	}
+	if cpuStep.Command != "arena-broker --mode v0-runbook" {
+		t.Fatalf("expected cpu regression to point at host-only runbook path, got %#v", cpuStep)
+	}
+	if !strings.Contains(cpuStep.Reason, "host-plan/start/complete") {
+		t.Fatalf("expected cpu regression reason to mention host-only lifecycle, got %#v", cpuStep)
 	}
 	if findReadinessItem(out, "maintenance_draft_safety").Status != v0ReadinessPass {
 		t.Fatalf("expected dry-run maintenance draft safety pass: %#v", out)
