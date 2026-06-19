@@ -158,6 +158,61 @@ func TestBrokerServiceSparkGrantClearsDebtWhenBalancePositive(t *testing.T) {
 	}
 }
 
+func TestBrokerServiceTestAllowanceCardClearsDebtAndBoostsQuota(t *testing.T) {
+	store := New(t.TempDir())
+	registry := NewRegistry(DefaultResidentProfiles())
+	manager := NewSessionManager(store, registry, DefaultRuntimeConfig())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+	manager.rootNow = func() time.Time { return now }
+	service := NewBrokerService(manager)
+
+	engine, _, _, err := manager.LoadResidentWithRevision("onyx")
+	if err != nil {
+		t.Fatalf("load resident: %v", err)
+	}
+	if _, err := engine.SparkLedger().DebitAllowDebt("charge", 3.5, "test debt", now); err != nil {
+		t.Fatalf("seed debt: %v", err)
+	}
+	engine.ReconcileSparkDebt()
+	if _, err := manager.SaveResident(engine); err != nil {
+		t.Fatalf("save debt snapshot: %v", err)
+	}
+
+	resp, err := service.GrantTestAllowanceCard(TestAllowanceCardRequest{
+		ResidentID:        "onyx",
+		SparkAmount:       10,
+		Window6HDelta:     1000,
+		DayDelta:          2000,
+		WeekDelta:         3000,
+		ResetWindow6HUsed: true,
+		ResetDayUsed:      true,
+		ResetWeekUsed:     true,
+		Reason:            "temporary_test_allowance",
+		Operator:          "test",
+	})
+	if err != nil {
+		t.Fatalf("grant allowance card: %v", err)
+	}
+	if !resp.BeforeStatus.DebtActive {
+		t.Fatalf("expected debt before card")
+	}
+	if resp.AfterStatus.DebtActive || resp.AfterStatus.DebtAmount != 0 {
+		t.Fatalf("expected card to clear debt: %#v", resp.AfterStatus)
+	}
+	if resp.AfterStatus.Window6HCap != resp.BeforeStatus.Window6HCap+1000 {
+		t.Fatalf("expected 6h cap boost")
+	}
+	if resp.AfterStatus.Window6HUsed != 0 || resp.AfterStatus.DayUsed != 0 || resp.AfterStatus.WeekUsed != 0 {
+		t.Fatalf("expected quota usage reset: %#v", resp.AfterStatus)
+	}
+	if !resp.Quota.WorkAllowedNow {
+		t.Fatalf("expected work allowed after card: %#v", resp.Quota)
+	}
+	if resp.RevertQuotaGrant.Window6HDelta != -1000 || resp.RevertQuotaGrant.DayDelta != -2000 || resp.RevertQuotaGrant.WeekDelta != -3000 {
+		t.Fatalf("unexpected revert grant: %#v", resp.RevertQuotaGrant)
+	}
+}
+
 func TestBrokerServiceAdmitCall(t *testing.T) {
 	store := New(t.TempDir())
 	registry := NewRegistry(DefaultResidentProfiles())

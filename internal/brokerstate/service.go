@@ -83,6 +83,39 @@ type SparkGrantResponse struct {
 	SnapshotRevision uint64            `json:"snapshot_revision"`
 }
 
+type TestAllowanceCardRequest struct {
+	ResidentID        string  `json:"resident_id"`
+	SparkAmount       float64 `json:"spark_amount"`
+	Window6HDelta     int     `json:"window_6h_delta,omitempty"`
+	DayDelta          int     `json:"day_delta,omitempty"`
+	WeekDelta         int     `json:"week_delta,omitempty"`
+	ResetWindow6HUsed bool    `json:"reset_window_6h_used,omitempty"`
+	ResetDayUsed      bool    `json:"reset_day_used,omitempty"`
+	ResetWeekUsed     bool    `json:"reset_week_used,omitempty"`
+	Reason            string  `json:"reason,omitempty"`
+	Operator          string  `json:"operator,omitempty"`
+}
+
+type TestAllowanceCardResponse struct {
+	ResidentID        string             `json:"resident_id"`
+	SparkAmount       float64            `json:"spark_amount"`
+	Window6HDelta     int                `json:"window_6h_delta,omitempty"`
+	DayDelta          int                `json:"day_delta,omitempty"`
+	WeekDelta         int                `json:"week_delta,omitempty"`
+	ResetWindow6HUsed bool               `json:"reset_window_6h_used,omitempty"`
+	ResetDayUsed      bool               `json:"reset_day_used,omitempty"`
+	ResetWeekUsed     bool               `json:"reset_week_used,omitempty"`
+	Reason            string             `json:"reason,omitempty"`
+	Operator          string             `json:"operator,omitempty"`
+	SparkEntry        *sparkledger.Entry `json:"spark_entry,omitempty"`
+	BeforeStatus      ResidentStatus     `json:"before_status"`
+	AfterStatus       ResidentStatus     `json:"after_status"`
+	Quota             QuotaSnapshot      `json:"quota"`
+	RevertQuotaGrant  QuotaGrantRequest  `json:"revert_quota_grant,omitempty"`
+	SnapshotPath      string             `json:"snapshot_path"`
+	SnapshotRevision  uint64             `json:"snapshot_revision"`
+}
+
 func NewBrokerService(sessions *SessionManager) *BrokerService {
 	return &BrokerService{sessions: sessions}
 }
@@ -203,6 +236,75 @@ func (s *BrokerService) GrantSpark(req SparkGrantRequest) (SparkGrantResponse, e
 		AfterStatus:      after,
 		SnapshotPath:     path,
 		SnapshotRevision: revision + 1,
+	}, nil
+}
+
+func (s *BrokerService) GrantTestAllowanceCard(req TestAllowanceCardRequest) (TestAllowanceCardResponse, error) {
+	if req.ResidentID == "" {
+		return TestAllowanceCardResponse{}, fmt.Errorf("resident id is required")
+	}
+	if req.SparkAmount <= 0 && req.Window6HDelta == 0 && req.DayDelta == 0 && req.WeekDelta == 0 && !req.ResetWindow6HUsed && !req.ResetDayUsed && !req.ResetWeekUsed {
+		return TestAllowanceCardResponse{}, fmt.Errorf("spark amount or quota delta is required")
+	}
+	if req.SparkAmount < 0 {
+		return TestAllowanceCardResponse{}, fmt.Errorf("spark amount cannot be negative")
+	}
+
+	engine, before, revision, err := s.sessions.LoadResidentWithRevision(req.ResidentID)
+	if err != nil {
+		return TestAllowanceCardResponse{}, err
+	}
+
+	var sparkEntry *sparkledger.Entry
+	if req.SparkAmount > 0 {
+		entry, err := engine.SparkLedger().Credit(sparkledger.EntryGrant, req.SparkAmount, req.Reason, time.Now().UTC())
+		if err != nil {
+			return TestAllowanceCardResponse{}, err
+		}
+		sparkEntry = &entry
+		engine.ReconcileSparkDebt()
+	}
+	if req.Window6HDelta != 0 || req.DayDelta != 0 || req.WeekDelta != 0 {
+		engine.AdjustQuotaCaps(req.Window6HDelta, req.DayDelta, req.WeekDelta)
+	}
+	if req.ResetWindow6HUsed || req.ResetDayUsed || req.ResetWeekUsed {
+		engine.ResetQuotaUsage(req.ResetWindow6HUsed, req.ResetDayUsed, req.ResetWeekUsed)
+	}
+
+	path, err := s.sessions.SaveResidentExpected(engine, revision, true)
+	if err != nil {
+		return TestAllowanceCardResponse{}, err
+	}
+	after := BuildResidentStatus(engine, true, path)
+	quota := BuildQuotaSnapshot(after)
+	revert := QuotaGrantRequest{
+		ResidentID:    req.ResidentID,
+		Window6HDelta: -req.Window6HDelta,
+		DayDelta:      -req.DayDelta,
+		WeekDelta:     -req.WeekDelta,
+		Reason:        "revert " + req.Reason,
+	}
+	if req.Window6HDelta == 0 && req.DayDelta == 0 && req.WeekDelta == 0 {
+		revert = QuotaGrantRequest{}
+	}
+	return TestAllowanceCardResponse{
+		ResidentID:        req.ResidentID,
+		SparkAmount:       req.SparkAmount,
+		Window6HDelta:     req.Window6HDelta,
+		DayDelta:          req.DayDelta,
+		WeekDelta:         req.WeekDelta,
+		ResetWindow6HUsed: req.ResetWindow6HUsed,
+		ResetDayUsed:      req.ResetDayUsed,
+		ResetWeekUsed:     req.ResetWeekUsed,
+		Reason:            req.Reason,
+		Operator:          req.Operator,
+		SparkEntry:        sparkEntry,
+		BeforeStatus:      before,
+		AfterStatus:       after,
+		Quota:             quota,
+		RevertQuotaGrant:  revert,
+		SnapshotPath:      path,
+		SnapshotRevision:  revision + 1,
 	}, nil
 }
 

@@ -207,6 +207,18 @@ func (e *Engine) AdjustQuotaCaps(window6HDelta, dayDelta, weekDelta int) {
 	e.state.Quota.WeekCap = maxInt(0, e.state.Quota.WeekCap+weekDelta)
 }
 
+func (e *Engine) ResetQuotaUsage(resetWindow6H, resetDay, resetWeek bool) {
+	if resetWindow6H {
+		e.state.Quota.Window6HUsed = 0
+	}
+	if resetDay {
+		e.state.Quota.DayUsed = 0
+	}
+	if resetWeek {
+		e.state.Quota.WeekUsed = 0
+	}
+}
+
 func normalizeRecoveryMode(mode string) string {
 	switch mode {
 	case "rest", "idle", "normal", "deep":

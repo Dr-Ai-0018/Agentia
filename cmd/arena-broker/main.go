@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|host-maintenance-draft|host-maintenance-draft-cached|v0-readiness|v0-readiness-cached|v0-runbook|v0-acceptance|v0-acceptance-cached|v0-acceptance-evidence|v0-acceptance-evidence-list|v0-acceptance-evidence-template|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-review|recover|recover-all|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|host-resolve-intervention|host-plan-maintenance|host-start-maintenance|host-complete-maintenance|host-fail-maintenance|host-rollback-maintenance|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|test-allowance-card|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|host-maintenance-draft|host-maintenance-draft-cached|v0-readiness|v0-readiness-cached|v0-runbook|v0-acceptance|v0-acceptance-cached|v0-acceptance-evidence|v0-acceptance-evidence-list|v0-acceptance-evidence-template|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-review|recover|recover-all|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|host-resolve-intervention|host-plan-maintenance|host-start-maintenance|host-complete-maintenance|host-fail-maintenance|host-rollback-maintenance|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -25,6 +25,9 @@ func main() {
 	dayDelta := flag.Int("day-delta", 0, "day quota cap delta for quota-grant mode")
 	weekDelta := flag.Int("week-delta", 0, "week quota cap delta for quota-grant mode")
 	sparkAmount := flag.Float64("spark-amount", 0, "Spark amount for spark-grant mode")
+	resetWindow6HUsed := flag.Bool("reset-window-6h-used", false, "Reset 6h quota usage for test-allowance-card mode")
+	resetDayUsed := flag.Bool("reset-day-used", false, "Reset day quota usage for test-allowance-card mode")
+	resetWeekUsed := flag.Bool("reset-week-used", false, "Reset week quota usage for test-allowance-card mode")
 	kind := flag.String("kind", "work", "Call kind for admit mode: work|final_notice")
 	apply := flag.Bool("apply", false, "Whether admit mode should actually apply the call")
 	model := flag.String("model", "", "Optional model override for admit mode")
@@ -94,6 +97,12 @@ func main() {
 		printJSON(out)
 	case "spark-grant":
 		out, err := app.RunSparkGrant(*residentID, *sparkAmount, *reason)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "test-allowance-card":
+		out, err := app.RunTestAllowanceCard(splitResidentIDs(*residentID), *sparkAmount, *window6HDelta, *dayDelta, *weekDelta, *resetWindow6HUsed, *resetDayUsed, *resetWeekUsed, *reason, *operator, time.Now().UTC())
 		if err != nil {
 			exitf("%v", err)
 		}
@@ -872,6 +881,17 @@ func splitEvidenceBody(body string) []string {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func splitResidentIDs(raw string) []string {
+	var out []string
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
 		}
 	}
 	return out

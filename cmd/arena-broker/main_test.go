@@ -25,6 +25,13 @@ func TestAdmitArgsHasCustomUsage(t *testing.T) {
 	}
 }
 
+func TestSplitResidentIDs(t *testing.T) {
+	got := splitResidentIDs(" jade,amber, , onyx ")
+	if len(got) != 3 || got[0] != "jade" || got[1] != "amber" || got[2] != "onyx" {
+		t.Fatalf("unexpected resident ids: %#v", got)
+	}
+}
+
 func TestRunAdmitRejectsInvalidCachedTokens(t *testing.T) {
 	app := broker.New(t.TempDir())
 	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)

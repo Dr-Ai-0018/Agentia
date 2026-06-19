@@ -127,6 +127,28 @@ func TestAppRunAdmitSpecUsesProvidedUsage(t *testing.T) {
 	}
 }
 
+func TestAppRunTestAllowanceCardBatch(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	out, err := app.RunTestAllowanceCard([]string{"jade", "amber"}, 2.5, 100, 200, 300, true, true, true, "temporary_test_allowance", "tester", now)
+	if err != nil {
+		t.Fatalf("run test allowance card: %v", err)
+	}
+	if out.ResidentCount != 2 || len(out.Residents) != 2 {
+		t.Fatalf("unexpected resident count: %#v", out)
+	}
+	if len(out.RevertNotes) != 2 {
+		t.Fatalf("expected revert notes: %#v", out.RevertNotes)
+	}
+	if out.Residents[0].AfterStatus.SparkBalance <= out.Residents[0].BeforeStatus.SparkBalance {
+		t.Fatalf("expected spark balance boost")
+	}
+	if out.Residents[1].AfterStatus.Window6HCap != out.Residents[1].BeforeStatus.Window6HCap+100 {
+		t.Fatalf("expected quota boost")
+	}
+}
+
 func TestAppRunPrepareSpec(t *testing.T) {
 	app := New(t.TempDir())
 	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)

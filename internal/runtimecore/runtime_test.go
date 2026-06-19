@@ -282,3 +282,24 @@ func TestAdjustQuotaCaps(t *testing.T) {
 		t.Fatalf("quota caps should not go below zero: %#v", state.Quota)
 	}
 }
+
+func TestResetQuotaUsage(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{}, "jade", tokenledger.QuotaState{
+		Window6HCap:  4000,
+		Window6HUsed: 3000,
+		DayCap:       20000,
+		DayUsed:      12000,
+		WeekCap:      150000,
+		WeekUsed:     90000,
+	}, start)
+
+	engine.ResetQuotaUsage(true, false, true)
+	state := engine.State()
+	if state.Quota.Window6HUsed != 0 || state.Quota.DayUsed != 12000 || state.Quota.WeekUsed != 0 {
+		t.Fatalf("unexpected quota usage reset: %#v", state.Quota)
+	}
+	if state.Quota.Window6HCap != 4000 || state.Quota.DayCap != 20000 || state.Quota.WeekCap != 150000 {
+		t.Fatalf("quota caps should be unchanged: %#v", state.Quota)
+	}
+}

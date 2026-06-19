@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"ai-arena/internal/brokerstate"
@@ -68,6 +70,23 @@ type ResetOutput struct {
 type QuotaOutput struct {
 	Status brokerstate.ResidentStatus `json:"status"`
 	Quota  brokerstate.QuotaSnapshot  `json:"quota"`
+}
+
+type TestAllowanceCardBatchOutput struct {
+	IssuedAt      string                                  `json:"issued_at"`
+	ResidentCount int                                     `json:"resident_count"`
+	Reason        string                                  `json:"reason,omitempty"`
+	Operator      string                                  `json:"operator,omitempty"`
+	Residents     []brokerstate.TestAllowanceCardResponse `json:"residents"`
+	RevertNotes   []TestAllowanceCardRevertCommand        `json:"revert_notes,omitempty"`
+}
+
+type TestAllowanceCardRevertCommand struct {
+	ResidentID       string `json:"resident_id"`
+	Window6HDelta    int    `json:"window_6h_delta,omitempty"`
+	DayDelta         int    `json:"day_delta,omitempty"`
+	WeekDelta        int    `json:"week_delta,omitempty"`
+	SuggestedCommand string `json:"suggested_command"`
 }
 
 type CapacityOutput struct {
@@ -832,6 +851,49 @@ func (a *App) RunSparkGrant(residentID string, amount float64, reason string) (b
 	})
 }
 
+func (a *App) RunTestAllowanceCard(residentIDs []string, sparkAmount float64, window6HDelta, dayDelta, weekDelta int, resetWindow6HUsed, resetDayUsed, resetWeekUsed bool, reason, operator string, now time.Time) (TestAllowanceCardBatchOutput, error) {
+	out := TestAllowanceCardBatchOutput{
+		IssuedAt:  now.UTC().Format(time.RFC3339),
+		Reason:    reason,
+		Operator:  operator,
+		Residents: make([]brokerstate.TestAllowanceCardResponse, 0, len(residentIDs)),
+	}
+	service := a.service(false)
+	for _, residentID := range residentIDs {
+		residentID = strings.TrimSpace(residentID)
+		if residentID == "" {
+			continue
+		}
+		resp, err := service.GrantTestAllowanceCard(brokerstate.TestAllowanceCardRequest{
+			ResidentID:        residentID,
+			SparkAmount:       sparkAmount,
+			Window6HDelta:     window6HDelta,
+			DayDelta:          dayDelta,
+			WeekDelta:         weekDelta,
+			ResetWindow6HUsed: resetWindow6HUsed,
+			ResetDayUsed:      resetDayUsed,
+			ResetWeekUsed:     resetWeekUsed,
+			Reason:            reason,
+			Operator:          operator,
+		})
+		if err != nil {
+			return TestAllowanceCardBatchOutput{}, err
+		}
+		out.Residents = append(out.Residents, resp)
+		if window6HDelta != 0 || dayDelta != 0 || weekDelta != 0 {
+			out.RevertNotes = append(out.RevertNotes, TestAllowanceCardRevertCommand{
+				ResidentID:       residentID,
+				Window6HDelta:    -window6HDelta,
+				DayDelta:         -dayDelta,
+				WeekDelta:        -weekDelta,
+				SuggestedCommand: quotaRevertCommand(residentID, -window6HDelta, -dayDelta, -weekDelta, "revert "+reason),
+			})
+		}
+	}
+	out.ResidentCount = len(out.Residents)
+	return out, nil
+}
+
 func (a *App) RunReset(residentID string, now time.Time) (ResetOutput, error) {
 	status, path, err := a.service(false).ResetResident(residentID, now)
 	if err != nil {
@@ -957,4 +1019,19 @@ func join(parts ...string) string {
 		out += "/" + part
 	}
 	return out
+}
+
+func quotaRevertCommand(residentID string, window6HDelta, dayDelta, weekDelta int, reason string) string {
+	return "arena-broker --mode quota-grant --resident " + residentID +
+		" --window-6h-delta " + strconv.Itoa(window6HDelta) +
+		" --day-delta " + strconv.Itoa(dayDelta) +
+		" --week-delta " + strconv.Itoa(weekDelta) +
+		" --reason " + shellQuote(reason)
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
