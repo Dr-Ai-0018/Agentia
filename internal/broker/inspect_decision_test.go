@@ -30,6 +30,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 			RunID:             "orchestrator-20260616T082449.311075354Z",
 			ResidentsErrored:  1,
 			BudgetBlockedRuns: 1,
+			TransientBlocked:  1,
 		},
 		RecentRunsNeedingAttention: 2,
 		RecentMaintenanceRuns: []MaintenanceRunRecord{
@@ -42,7 +43,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 			Failed:     1,
 		},
 		ResidentRisk: []ResidentInspectRisk{
-			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, MemoryAttention: 2, MemoryOperatorDecayCandidates: 1, MemoryResidentReviewQueue: 1, MemoryOperatorReviewRequired: 1, MemoryDuplicateHistoryGroups: 3, MemoryRecommendedAction: "lifecycle_then_compaction_dry_run", OrchestratorBudgetBlocked: true, OrchestratorStoppedReason: "broker_preflight_denied: effective_window_exhausted", NeedsAttention: true, Status: "Running"},
+			{ResidentID: "amber", DriftFields: []string{"memory"}, HasOpenTicket: true, HasIntervention: true, MemoryAttention: 2, MemoryOperatorDecayCandidates: 1, MemoryResidentReviewQueue: 1, MemoryOperatorReviewRequired: 1, MemoryDuplicateHistoryGroups: 3, MemoryRecommendedAction: "lifecycle_then_compaction_dry_run", OrchestratorBudgetBlocked: true, OrchestratorTransientBlocked: true, OrchestratorStoppedReason: "broker_preflight_denied: effective_window_exhausted", NeedsAttention: true, Status: "Running"},
 			{ResidentID: "onyx", NeedsAttention: true, Status: "", HostRSSHighGuestUsageLow: true, HostQEMURSSMiB: 2225, IncusMemoryCurrentMiB: 134, GuestMemAvailableMiB: 1806},
 		},
 	})
@@ -71,6 +72,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	foundMemoryOperatorReviewAction := false
 	foundOrchestratorBudgetAction := false
 	foundOrchestratorFailureAction := false
+	foundOrchestratorTransientAction := false
 	foundRuntimeMemoryAction := false
 	foundMaintenanceRunAction := false
 	foundMaintenanceStateAction := false
@@ -116,6 +118,12 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 			foundOrchestratorFailureAction = true
 			if action.Visibility != decisionVisibilityOperatorOnly {
 				t.Fatalf("expected orchestrator failure action to be operator-only, got %#v", action)
+			}
+		}
+		if action.Kind == "orchestrator_transient_retry_review" {
+			foundOrchestratorTransientAction = true
+			if action.Visibility != decisionVisibilityOperatorOnly {
+				t.Fatalf("expected orchestrator transient action to be operator-only, got %#v", action)
 			}
 		}
 		if action.Kind == "runtime_memory_observation" {
@@ -164,6 +172,9 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	if !foundOrchestratorFailureAction {
 		t.Fatalf("expected orchestrator failure action, got %#v", out.Actions)
 	}
+	if !foundOrchestratorTransientAction {
+		t.Fatalf("expected orchestrator transient retry action, got %#v", out.Actions)
+	}
 	if !foundRuntimeMemoryAction {
 		t.Fatalf("expected runtime memory observation action, got %#v", out.Actions)
 	}
@@ -197,6 +208,7 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 	}
 	foundAmberTicketCandidate := false
 	foundAmberResidentReviewOperatorOnly := false
+	foundAmberTransientOperatorOnly := false
 	for _, reason := range amber.WorldEventCandidates {
 		if strings.Contains(reason, "open ticket") {
 			foundAmberTicketCandidate = true
@@ -206,12 +218,18 @@ func TestBuildHostDecisionAssist(t *testing.T) {
 		if strings.Contains(reason, "resident self-review") {
 			foundAmberResidentReviewOperatorOnly = true
 		}
+		if strings.Contains(reason, "retryable upstream/API") {
+			foundAmberTransientOperatorOnly = true
+		}
 	}
 	if !foundAmberTicketCandidate {
 		t.Fatalf("expected amber ticket follow-up to be a world event candidate, got %#v", amber)
 	}
 	if !foundAmberResidentReviewOperatorOnly {
 		t.Fatalf("expected amber resident memory self-review to remain operator-only, got %#v", amber)
+	}
+	if !foundAmberTransientOperatorOnly {
+		t.Fatalf("expected amber transient upstream reason to remain operator-only, got %#v", amber)
 	}
 }
 

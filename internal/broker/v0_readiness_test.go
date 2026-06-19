@@ -113,11 +113,15 @@ func TestBuildV0ReadinessMarksLongSoakAsApprovalRequired(t *testing.T) {
 		Capacity:                      HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "cpu", AllocatableTotal: 8, AllocatableFree: 4, Unit: "vcpu"}}},
 		RecentRunsNeedingAttention:    1,
 		LatestRunNeedsAttention:       true,
-		LatestOrchestrator:            &OrchestratorInspectionDigest{RunID: "orchestrator-budget-blocked", BudgetBlockedRuns: 1},
+		LatestOrchestrator:            &OrchestratorInspectionDigest{RunID: "orchestrator-budget-blocked", BudgetBlockedRuns: 1, TransientBlocked: 1},
 		MemoryDuplicateHistoryGroups:  0,
 		MemoryOperatorDecayCandidates: 0,
 	}, time.Date(2026, 6, 18, 6, 30, 0, 0, time.UTC), "test")
 
+	item := findReadinessItem(out, "orchestrator_registry")
+	if !strings.Contains(strings.Join(item.Evidence, " "), "latest_transient_blocked=1") {
+		t.Fatalf("expected transient block evidence, got %#v", item)
+	}
 	step, ok := findRecommendedStep(out, "longer_orchestrator_soak")
 	if !ok {
 		t.Fatalf("expected longer orchestrator soak step: %#v", out.Completion.RecommendedSteps)

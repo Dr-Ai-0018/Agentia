@@ -41,6 +41,34 @@ type StreamResult struct {
 	RequestID              string
 }
 
+type APIError struct {
+	StatusCode int
+	Body       string
+	Retryable  bool
+}
+
+func (e *APIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.StatusCode == 0 {
+		return strings.TrimSpace(e.Body)
+	}
+	body := strings.TrimSpace(e.Body)
+	if body == "" {
+		return fmt.Sprintf("unexpected status %d", e.StatusCode)
+	}
+	return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, body)
+}
+
+func IsRetryableError(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Retryable
+	}
+	return false
+}
+
 type ResponseTool struct {
 	Type        string         `json:"type"`
 	Name        string         `json:"name"`
@@ -156,7 +184,11 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			raw, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+			lastErr = &APIError{
+				StatusCode: resp.StatusCode,
+				Body:       strings.TrimSpace(string(raw)),
+				Retryable:  shouldRetryHTTPStatus(resp.StatusCode),
+			}
 			if shouldRetryHTTPStatus(resp.StatusCode) && attempt < 4 {
 				time.Sleep(retryDelay(attempt))
 				continue

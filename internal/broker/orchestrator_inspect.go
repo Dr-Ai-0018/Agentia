@@ -18,19 +18,21 @@ type OrchestratorInspectionDigest struct {
 	ResidentsPlanned  []string                               `json:"residents_planned,omitempty"`
 	ResidentsFinished int                                    `json:"residents_finished"`
 	ResidentsErrored  int                                    `json:"residents_errored"`
+	TransientBlocked  int                                    `json:"transient_blocked"`
 	UsefulRuns        int                                    `json:"useful_runs"`
 	BudgetBlockedRuns int                                    `json:"budget_blocked_runs"`
 	Residents         []OrchestratorResidentInspectionDigest `json:"residents,omitempty"`
 }
 
 type OrchestratorResidentInspectionDigest struct {
-	Resident        string `json:"resident"`
-	Status          string `json:"status"`
-	Rounds          int    `json:"rounds,omitempty"`
-	StoppedReason   string `json:"stopped_reason,omitempty"`
-	BudgetBlocked   bool   `json:"budget_blocked,omitempty"`
-	CompletedUseful bool   `json:"completed_useful,omitempty"`
-	Error           string `json:"error,omitempty"`
+	Resident         string `json:"resident"`
+	Status           string `json:"status"`
+	Rounds           int    `json:"rounds,omitempty"`
+	StoppedReason    string `json:"stopped_reason,omitempty"`
+	BudgetBlocked    bool   `json:"budget_blocked,omitempty"`
+	CompletedUseful  bool   `json:"completed_useful,omitempty"`
+	TransientBlocked bool   `json:"transient_blocked,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 func LoadLatestOrchestratorInspection(root string) (*OrchestratorInspectionDigest, error) {

@@ -157,6 +157,13 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 			addOperatorAction(&out, "runtime_budget_review", "medium", "Review resident quota, spark, debt, and recovery state before starting another long run.")
 			addOperatorObservation(&out, reason)
 		}
+		if latest.TransientBlocked > 0 {
+			raiseSeverity(&out, "medium")
+			reason := fmt.Sprintf("latest orchestrator run %s ended with %d transient upstream-blocked residents", latest.RunID, latest.TransientBlocked)
+			out.Reasons = append(out.Reasons, reason)
+			addOperatorAction(&out, "orchestrator_transient_retry_review", "medium", "Review upstream 429/5xx error text, then use retry-failed when quota and provider pressure look safe.")
+			addOperatorObservation(&out, reason)
+		}
 	}
 	if summary.RecentRunsNeedingAttention > 1 {
 		raiseSeverity(&out, "medium")
@@ -214,6 +221,9 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		}
 		if item.OrchestratorBudgetBlocked {
 			addFocusOperatorReason(&focus, "latest orchestrator run was budget-blocked")
+		}
+		if item.OrchestratorTransientBlocked {
+			addFocusOperatorReason(&focus, "latest orchestrator run was blocked by a retryable upstream/API condition")
 		}
 		if item.OrchestratorStoppedReason != "" {
 			addFocusOperatorReason(&focus, fmt.Sprintf("latest orchestrator stopped: %s", item.OrchestratorStoppedReason))

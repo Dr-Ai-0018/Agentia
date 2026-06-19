@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"ai-arena/internal/broker"
+	"ai-arena/internal/openai"
 	"ai-arena/internal/runtime/newborn"
 )
 
@@ -44,10 +45,11 @@ type ResidentRun struct {
 }
 
 type ResidentRunStatus struct {
-	Resident  string `json:"resident"`
-	Status    string `json:"status"`
-	UpdatedAt string `json:"updated_at"`
-	Error     string `json:"error,omitempty"`
+	Resident         string `json:"resident"`
+	Status           string `json:"status"`
+	UpdatedAt        string `json:"updated_at"`
+	Error            string `json:"error,omitempty"`
+	TransientBlocked bool   `json:"transient_blocked,omitempty"`
 }
 
 type RunEvent struct {
@@ -85,13 +87,14 @@ type RunSummary struct {
 }
 
 type InspectionResidentReport struct {
-	Resident        string `json:"resident"`
-	Status          string `json:"status"`
-	Rounds          int    `json:"rounds,omitempty"`
-	StoppedReason   string `json:"stopped_reason,omitempty"`
-	BudgetBlocked   bool   `json:"budget_blocked,omitempty"`
-	CompletedUseful bool   `json:"completed_useful,omitempty"`
-	Error           string `json:"error,omitempty"`
+	Resident         string `json:"resident"`
+	Status           string `json:"status"`
+	Rounds           int    `json:"rounds,omitempty"`
+	StoppedReason    string `json:"stopped_reason,omitempty"`
+	BudgetBlocked    bool   `json:"budget_blocked,omitempty"`
+	CompletedUseful  bool   `json:"completed_useful,omitempty"`
+	TransientBlocked bool   `json:"transient_blocked,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 type InspectionReport struct {
@@ -101,6 +104,7 @@ type InspectionReport struct {
 	ResidentsPlanned  []string                   `json:"residents_planned"`
 	ResidentsFinished int                        `json:"residents_finished"`
 	ResidentsErrored  int                        `json:"residents_errored"`
+	TransientBlocked  int                        `json:"transient_blocked"`
 	UsefulRuns        int                        `json:"useful_runs"`
 	BudgetBlockedRuns int                        `json:"budget_blocked_runs"`
 	StartedAt         string                     `json:"started_at"`
@@ -306,6 +310,8 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 	runStatus.FinishedAt = runStatus.UpdatedAt
 	if hasRunErrors(runs) {
 		runStatus.Status = "finished_with_errors"
+	} else if hasTransientBlocks(runs) {
+		runStatus.Status = "finished_with_transient_blocks"
 	}
 	if current, err := s.ReadRunStatus(contract.RunID); err == nil {
 		runStatus.PausedAt = current.PausedAt
@@ -335,7 +341,7 @@ func (s *Service) RetryFailedRun(runID string) (RunSummary, error) {
 	}
 	failed := make([]string, 0, len(summary.Runs))
 	for _, item := range summary.Runs {
-		if item.Status == "error" {
+		if item.Status == "error" || item.Status == "transient_blocked" {
 			failed = append(failed, item.Resident)
 		}
 	}
@@ -426,6 +432,12 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 	runner := s.runnerFactory(s.client, s.baseURL, apiKey, profile.Name)
 	report, err := runner.Run(profile, input.Duration, input.OutDir, input.Verbose, input.ResetResident)
 	if err != nil {
+		if isTransientUpstreamError(err) {
+			run.Status = "transient_blocked"
+			run.Error = err.Error()
+			s.updateResidentStatus(runStatus, statusMu, resident, "transient_blocked", run.Error)
+			return run
+		}
 		run.Status = "error"
 		run.Error = err.Error()
 		s.updateResidentStatus(runStatus, statusMu, resident, "error", run.Error)
@@ -503,6 +515,7 @@ func (s *Service) updateResidentStatus(runStatus *RunStatus, statusMu *sync.Mute
 		previousResidentStatus := runStatus.Residents[i].Status
 		runStatus.Residents[i].Status = state
 		runStatus.Residents[i].Error = errText
+		runStatus.Residents[i].TransientBlocked = state == "transient_blocked"
 		runStatus.Residents[i].UpdatedAt = now
 		runStatus.UpdatedAt = now
 		runStatus.Status = latestStatus
@@ -526,6 +539,19 @@ func hasRunErrors(runs []ResidentRun) bool {
 		}
 	}
 	return false
+}
+
+func hasTransientBlocks(runs []ResidentRun) bool {
+	for _, item := range runs {
+		if item.Status == "transient_blocked" {
+			return true
+		}
+	}
+	return false
+}
+
+func isTransientUpstreamError(err error) bool {
+	return openai.IsRetryableError(err)
 }
 
 func (s *Service) waitIfPaused(runID string, current *RunStatus) error {

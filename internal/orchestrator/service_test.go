@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ai-arena/internal/broker"
+	"ai-arena/internal/openai"
 	"ai-arena/internal/runtime/newborn"
 )
 
@@ -453,6 +454,92 @@ func TestRetryFailedRun(t *testing.T) {
 	}
 	if !foundRetry {
 		t.Fatalf("expected retry lineage in list output, got %#v", items)
+	}
+}
+
+func TestServiceClassifiesRetryableUpstreamErrorsAsTransientBlocked(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
+		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+			return newborn.FinalReport{}, &openai.APIError{
+				StatusCode: http.StatusTooManyRequests,
+				Body:       `{"error":{"message":"Too many pending requests"}}`,
+				Retryable:  true,
+			}
+		})
+	}
+
+	out, err := service.Run(RunInput{
+		Residents: []string{"jade"},
+		Duration:  30 * time.Second,
+		OutDir:    filepath.Join(root, "out"),
+		Mode:      RunModeSequential,
+	})
+	if err != nil {
+		t.Fatalf("run orchestrator: %v", err)
+	}
+	if out.Runs[0].Status != "transient_blocked" {
+		t.Fatalf("expected transient_blocked run, got %#v", out.Runs[0])
+	}
+	status, err := service.ReadRunStatus(out.RunID)
+	if err != nil {
+		t.Fatalf("read run status: %v", err)
+	}
+	if status.Status != "finished_with_transient_blocks" || !status.Residents[0].TransientBlocked {
+		t.Fatalf("unexpected transient status: %#v", status)
+	}
+	report, err := service.ReadInspectionReport(out.RunID)
+	if err != nil {
+		t.Fatalf("read inspection report: %v", err)
+	}
+	if report.ResidentsErrored != 0 || report.TransientBlocked != 1 || !report.Residents[0].TransientBlocked {
+		t.Fatalf("unexpected inspection report: %#v", report)
+	}
+}
+
+func TestRetryFailedRunIncludesTransientBlockedResidents(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+
+	shouldFail := true
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
+		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+			if shouldFail {
+				return newborn.FinalReport{}, &openai.APIError{
+					StatusCode: http.StatusTooManyRequests,
+					Body:       "too many pending requests",
+					Retryable:  true,
+				}
+			}
+			return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, Rounds: 2}, nil
+		})
+	}
+
+	first, err := service.Run(RunInput{
+		Residents: []string{"jade"},
+		Duration:  30 * time.Second,
+		OutDir:    filepath.Join(root, "out"),
+		Mode:      RunModeSequential,
+	})
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if first.Runs[0].Status != "transient_blocked" {
+		t.Fatalf("expected transient block, got %#v", first.Runs)
+	}
+
+	shouldFail = false
+	retried, err := service.RetryFailedRun(first.RunID)
+	if err != nil {
+		t.Fatalf("retry transient blocked run: %v", err)
+	}
+	if retried.Contract.RetryOf != first.RunID || len(retried.Runs) != 1 || retried.Runs[0].Status != "ok" {
+		t.Fatalf("unexpected retry output: %#v", retried)
 	}
 }
 

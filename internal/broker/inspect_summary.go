@@ -29,14 +29,17 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 		latest.Residents = append([]OrchestratorResidentInspectionDigest(nil), out.LatestOrchestrator.Residents...)
 		latest.ResidentsPlanned = append([]string(nil), out.LatestOrchestrator.ResidentsPlanned...)
 		summary.LatestOrchestrator = &latest
-		summary.LatestRunNeedsAttention = latest.ResidentsErrored > 0 || latest.BudgetBlockedRuns > 0
+		summary.LatestRunNeedsAttention = latest.ResidentsErrored > 0 || latest.BudgetBlockedRuns > 0 || latest.TransientBlocked > 0
 	}
 	for _, item := range out.RecentOrchestrators {
 		copyItem := item
 		copyItem.Residents = append([]OrchestratorResidentInspectionDigest(nil), item.Residents...)
 		copyItem.ResidentsPlanned = append([]string(nil), item.ResidentsPlanned...)
 		summary.RecentOrchestrators = append(summary.RecentOrchestrators, copyItem)
-		if copyItem.ResidentsErrored > 0 || copyItem.BudgetBlockedRuns > 0 {
+		if copyItem.TransientBlocked > 0 {
+			summary.RecentTransientBlockedRuns++
+		}
+		if copyItem.ResidentsErrored > 0 || copyItem.BudgetBlockedRuns > 0 || copyItem.TransientBlocked > 0 {
 			summary.RecentRunsNeedingAttention++
 		}
 	}
@@ -167,6 +170,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			risk.OrchestratorStatus = run.Status
 			risk.OrchestratorStoppedReason = run.StoppedReason
 			risk.OrchestratorBudgetBlocked = run.BudgetBlocked
+			risk.OrchestratorTransientBlocked = run.TransientBlocked
 			risk.OrchestratorError = run.Error
 		}
 		if strings.EqualFold(strings.TrimSpace(item.Status), "running") {
@@ -190,8 +194,10 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			risk.HostRSSHighGuestUsageLow ||
 			strings.TrimSpace(risk.LiveMetricsError) != "" ||
 			risk.OrchestratorBudgetBlocked ||
+			risk.OrchestratorTransientBlocked ||
 			strings.TrimSpace(risk.OrchestratorError) != "" ||
 			strings.EqualFold(strings.TrimSpace(risk.OrchestratorStatus), "error") ||
+			strings.EqualFold(strings.TrimSpace(risk.OrchestratorStatus), "transient_blocked") ||
 			strings.TrimSpace(item.Status) == ""
 		risks = append(risks, risk)
 	}
@@ -270,6 +276,7 @@ func inspectRiskRank(item ResidentInspectRisk) int {
 		item.HostRSSHighGuestUsageLow ||
 		strings.TrimSpace(item.LiveMetricsError) != "" ||
 		item.OrchestratorBudgetBlocked ||
+		item.OrchestratorTransientBlocked ||
 		strings.TrimSpace(item.OrchestratorError) != "":
 		return 1
 	default:

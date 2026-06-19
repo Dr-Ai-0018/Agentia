@@ -29,14 +29,15 @@ func TestSummarizeHostInspect(t *testing.T) {
 			RunID:             "orchestrator-20260616T082449.311075354Z",
 			ResidentsErrored:  1,
 			BudgetBlockedRuns: 1,
+			TransientBlocked:  1,
 			Residents: []OrchestratorResidentInspectionDigest{
 				{Resident: "amber", Status: "ok", StoppedReason: "broker_preflight_denied: effective_window_exhausted", BudgetBlocked: true},
-				{Resident: "onyx", Status: "error", Error: "model parse failure"},
+				{Resident: "onyx", Status: "transient_blocked", Error: "unexpected status 429", TransientBlocked: true},
 			},
 		},
 		RecentOrchestrators: []OrchestratorInspectionDigest{
 			{RunID: "orchestrator-20260616T082449.311075354Z", BudgetBlockedRuns: 1},
-			{RunID: "orchestrator-20260616T074926.897967380Z"},
+			{RunID: "orchestrator-20260616T074926.897967380Z", TransientBlocked: 1},
 		},
 		RecentMaintenanceRuns: []MaintenanceRunRecord{
 			{ID: "maintenance-1", State: "completed", ResidentID: "amber", TicketID: "ticket-1", Resource: "cpu", Amount: "2", InventoryRefreshed: true},
@@ -109,7 +110,7 @@ func TestSummarizeHostInspect(t *testing.T) {
 	if !summary.LatestRunNeedsAttention {
 		t.Fatalf("expected latest run to need attention: %#v", summary)
 	}
-	if len(summary.RecentOrchestrators) != 2 || summary.RecentRunsNeedingAttention != 1 {
+	if len(summary.RecentOrchestrators) != 2 || summary.RecentRunsNeedingAttention != 2 || summary.RecentTransientBlockedRuns != 1 {
 		t.Fatalf("unexpected recent orchestrator summary: %#v", summary)
 	}
 	if len(summary.RecentMaintenanceRuns) != 1 || summary.RecentMaintenanceRuns[0].State != "completed" {
@@ -127,6 +128,9 @@ func TestSummarizeHostInspect(t *testing.T) {
 	}
 	if amber.MemoryAttention != 2 {
 		t.Fatalf("expected amber memory attention, got %#v", amber)
+	}
+	if !onyx.OrchestratorTransientBlocked {
+		t.Fatalf("expected onyx transient orchestrator block, got %#v", onyx)
 	}
 	if amber.MemoryDuplicateHistoryGroups != 3 {
 		t.Fatalf("expected amber duplicate history groups, got %#v", amber)

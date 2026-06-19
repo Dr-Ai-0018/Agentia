@@ -16,9 +16,10 @@ func BuildInspectionReport(summary RunSummary) InspectionReport {
 	}
 	for _, item := range summary.Runs {
 		report := InspectionResidentReport{
-			Resident: item.Resident,
-			Status:   item.Status,
-			Error:    item.Error,
+			Resident:         item.Resident,
+			Status:           item.Status,
+			Error:            item.Error,
+			TransientBlocked: item.Status == "transient_blocked",
 		}
 		if item.Report != nil {
 			report.Rounds = item.Report.Rounds
@@ -37,6 +38,9 @@ func BuildInspectionReport(summary RunSummary) InspectionReport {
 		}
 		if item.Status == "error" {
 			out.ResidentsErrored++
+		}
+		if item.Status == "transient_blocked" {
+			out.TransientBlocked++
 		}
 		out.Residents = append(out.Residents, report)
 	}

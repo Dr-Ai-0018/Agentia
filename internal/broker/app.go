@@ -155,6 +155,7 @@ type HostInspectSummary struct {
 	LatestOrchestrator                *OrchestratorInspectionDigest      `json:"latest_orchestrator,omitempty"`
 	RecentOrchestrators               []OrchestratorInspectionDigest     `json:"recent_orchestrators,omitempty"`
 	RecentMaintenanceRuns             []MaintenanceRunRecord             `json:"recent_maintenance_runs,omitempty"`
+	RecentTransientBlockedRuns        int                                `json:"recent_transient_blocked_runs,omitempty"`
 	RecentRunsNeedingAttention        int                                `json:"recent_runs_needing_attention,omitempty"`
 	LatestRunNeedsAttention           bool                               `json:"latest_run_needs_attention,omitempty"`
 	FollowupCount                     int                                `json:"followup_count"`
@@ -201,6 +202,7 @@ type ResidentInspectRisk struct {
 	OrchestratorStatus            string   `json:"orchestrator_status,omitempty"`
 	OrchestratorStoppedReason     string   `json:"orchestrator_stopped_reason,omitempty"`
 	OrchestratorBudgetBlocked     bool     `json:"orchestrator_budget_blocked,omitempty"`
+	OrchestratorTransientBlocked  bool     `json:"orchestrator_transient_blocked,omitempty"`
 	OrchestratorError             string   `json:"orchestrator_error,omitempty"`
 	NeedsAttention                bool     `json:"needs_attention"`
 }

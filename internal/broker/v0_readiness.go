@@ -109,9 +109,9 @@ func orchestratorReadiness(summary HostInspectSummary) V0ReadinessItem {
 	}
 	item.Status = v0ReadinessPass
 	item.Evidence = append(item.Evidence, fmt.Sprintf("latest run %s", summary.LatestOrchestrator.RunID))
-	if summary.LatestOrchestrator.ResidentsErrored > 0 || summary.LatestOrchestrator.BudgetBlockedRuns > 0 || summary.RecentRunsNeedingAttention > 0 {
+	if summary.LatestOrchestrator.ResidentsErrored > 0 || summary.LatestOrchestrator.BudgetBlockedRuns > 0 || summary.LatestOrchestrator.TransientBlocked > 0 || summary.RecentRunsNeedingAttention > 0 {
 		item.Status = v0ReadinessWarn
-		item.Evidence = append(item.Evidence, fmt.Sprintf("recent runs needing attention=%d latest errors=%d latest budget_blocked=%d", summary.RecentRunsNeedingAttention, summary.LatestOrchestrator.ResidentsErrored, summary.LatestOrchestrator.BudgetBlockedRuns))
+		item.Evidence = append(item.Evidence, fmt.Sprintf("recent runs needing attention=%d latest errors=%d latest budget_blocked=%d latest_transient_blocked=%d", summary.RecentRunsNeedingAttention, summary.LatestOrchestrator.ResidentsErrored, summary.LatestOrchestrator.BudgetBlockedRuns, summary.LatestOrchestrator.TransientBlocked))
 	}
 	return item
 }
