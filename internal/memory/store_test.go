@@ -507,6 +507,31 @@ func TestCompactResidentWithReportDryRunDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestCompactResidentWithReportIgnoresNormalizationOnlyChanges(t *testing.T) {
+	root := t.TempDir()
+	store := NewFileStore(root)
+	now := time.Date(2026, 6, 2, 18, 0, 0, 0, time.UTC)
+
+	if err := store.UpsertHistoryGroup(HistoryGroup{
+		GroupUUID:    "group-a",
+		Resident:     "onyx",
+		CreatedAt:    now,
+		SourceKind:   "dialogue_window",
+		EventCount:   2,
+		RawEventRefs: []string{"evt-1", "evt-2"},
+	}); err != nil {
+		t.Fatalf("upsert group: %v", err)
+	}
+
+	report, err := store.CompactResidentWithReport("onyx", false)
+	if err != nil {
+		t.Fatalf("compact dry-run: %v", err)
+	}
+	if report.Changed || report.BeforeHistoryGroups != 1 || report.AfterHistoryGroups != 1 || len(report.MergeGroups) != 0 {
+		t.Fatalf("normalization-only compact should not report changed: %#v", report)
+	}
+}
+
 func TestLifecycleReportFlagsExpiredMemories(t *testing.T) {
 	root := t.TempDir()
 	store := NewFileStore(root)

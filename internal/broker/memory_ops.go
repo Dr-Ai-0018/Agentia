@@ -65,6 +65,86 @@ func (a *App) RunMemoryLifecycleSafeApply(residentID string, apply bool) (Memory
 	return out, nil
 }
 
+func (a *App) RunMemoryAutoMaintain(residentID string, apply bool) (MemoryAutoMaintainReport, error) {
+	residentID = strings.TrimSpace(residentID)
+	if residentID == "" {
+		return MemoryAutoMaintainReport{}, errors.New("resident id is required")
+	}
+	now := time.Now().UTC()
+	store := memory.NewFileStore(filepath.Join(a.root, "memory"))
+	out := MemoryAutoMaintainReport{
+		ResidentID: residentID,
+		Apply:      apply,
+		CheckedAt:  now.Format(time.RFC3339Nano),
+		Policy:     "auto-maintain only performs mechanical safe work: compact duplicate history groups, delete unprotected expired low-risk instant probes, decay unprotected safe lifecycle candidates, and refresh stale low-risk retain reviews; private/audit/operator/identity/rule/relationship/history memories are skipped.",
+	}
+
+	compact, err := store.CompactResidentWithReport(residentID, apply)
+	if err != nil {
+		return MemoryAutoMaintainReport{}, err
+	}
+	out.Compact = compact
+	out.CompactionChanged = compact.Changed
+	out.CompactionApplied = apply && compact.Changed
+
+	lifecycle, err := store.LifecycleReport(residentID, now, memory.DefaultPolicy())
+	if err != nil {
+		return MemoryAutoMaintainReport{}, err
+	}
+	out.LifecycleBefore = lifecycle
+
+	for _, item := range lifecycle.Items {
+		if !item.NeedsAttention {
+			continue
+		}
+		record, ok, err := store.GetAbstractMemory(residentID, item.ID)
+		if err != nil {
+			return MemoryAutoMaintainReport{}, err
+		}
+		if !ok {
+			out.Skipped = append(out.Skipped, MemoryAutoMaintainSkip{MemoryID: item.ID, Reason: "memory_not_found", Summary: item.Summary})
+			continue
+		}
+		action, reason, safe := autoMaintainDecision(item, record, now)
+		if !safe {
+			out.Skipped = append(out.Skipped, MemoryAutoMaintainSkip{MemoryID: item.ID, Reason: reason, Summary: item.Summary})
+			continue
+		}
+		candidate := MemoryAutoMaintainAction{
+			MemoryID: item.ID,
+			Action:   action,
+			Reason:   reason,
+			Summary:  item.Summary,
+		}
+		out.Candidates = append(out.Candidates, candidate)
+		out.CandidateCount++
+		if !apply {
+			continue
+		}
+		residentNote := "operator_auto_memory_maintenance"
+		if action == memory.ActionReview {
+			residentNote = ""
+		}
+		if _, err := store.ReviewAbstractMemory(residentID, item.ID, now, memory.MemoryReviewRequest{
+			Action:       action,
+			ReasonNote:   "operator_auto_memory_maintenance:" + reason,
+			ResidentNote: residentNote,
+			Reviewer:     "operator",
+		}); err != nil {
+			return MemoryAutoMaintainReport{}, err
+		}
+		out.Applied = append(out.Applied, candidate)
+		out.AppliedCount++
+	}
+	out.SkippedCount = len(out.Skipped)
+	post, err := store.LifecycleReport(residentID, now, memory.DefaultPolicy())
+	if err != nil {
+		return MemoryAutoMaintainReport{}, err
+	}
+	out.LifecycleAfter = post
+	return out, nil
+}
+
 func (a *App) RunMemoryReview(input MemoryReviewInput) (MemoryReviewReport, error) {
 	input.ResidentID = strings.TrimSpace(input.ResidentID)
 	input.MemoryID = strings.TrimSpace(input.MemoryID)
@@ -228,13 +308,89 @@ func safeLifecycleDecayCandidate(item memory.LifecycleItem, now time.Time) bool 
 		item.ExpiresAt.After(now)
 }
 
+func autoMaintainDecision(item memory.LifecycleItem, record memory.AbstractMemory, now time.Time) (memory.Action, string, bool) {
+	if !autoMaintainSafeRecordBoundary(record) {
+		return "", "manual_review_required_boundary_memory", false
+	}
+	if autoMaintainSensitiveSummary(record.EffectiveSummary()) {
+		return "", "manual_review_required_sensitive_summary", false
+	}
+	if item.Layer == memory.LayerInstant && item.Action == memory.ActionDelete && containsTrimmed(item.ReasonCodes, "instant_expired") {
+		if autoMaintainProtectedFrom(record, "host_delete") {
+			if autoMaintainHostCanMark(record) {
+				return memory.ActionReview, "mark_protected_delete_for_resident_review", true
+			}
+			return "", "manual_review_required_protected_from_host_delete", false
+		}
+		return memory.ActionDelete, "safe_expired_instant_delete", true
+	}
+	if safeLifecycleDecayCandidate(item, now) {
+		if autoMaintainProtectedFrom(record, "host_rewrite") {
+			if autoMaintainHostCanMark(record) {
+				return memory.ActionReview, "mark_protected_demote_for_resident_review", true
+			}
+			return "", "manual_review_required_protected_from_host_demote", false
+		}
+		return memory.ActionDecay, "safe_lifecycle_decay", true
+	}
+	if item.Action == memory.ActionRetain && item.RecommendedOperatorAction == "retain" {
+		return memory.ActionRetain, "safe_stale_retain_review_refresh", true
+	}
+	return "", "manual_review_required_non_mechanical_lifecycle_action", false
+}
+
+func autoMaintainSafeRecordBoundary(record memory.AbstractMemory) bool {
+	switch memory.NormalizeVisibility(record.Visibility) {
+	case memory.VisibilityPublic, memory.VisibilityResidentPrivate:
+	default:
+		return false
+	}
+	switch record.Domain {
+	case memory.DomainLessons, memory.DomainResources, memory.DomainWorking:
+		return true
+	default:
+		return false
+	}
+}
+
+func autoMaintainProtectedFrom(record memory.AbstractMemory, marker string) bool {
+	return containsTrimmed(record.Governance.ProtectedFrom, marker)
+}
+
+func autoMaintainHostCanMark(record memory.AbstractMemory) bool {
+	return len(record.Governance.HostMay) == 0 || containsTrimmed(record.Governance.HostMay, "mark")
+}
+
+func autoMaintainSensitiveSummary(summary string) bool {
+	summary = strings.ToLower(strings.TrimSpace(summary))
+	for _, marker := range []string{
+		"chenglin",
+		"world-facing thread",
+		"relationship",
+		"policy",
+		"continuity",
+		"ticket",
+		"private",
+		"audit",
+		"certificate",
+		"agent.crt",
+		"private key",
+		"-----begin",
+	} {
+		if strings.Contains(summary, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) RunMemoryMaintenanceSummary() MemoryMaintenanceSummary {
 	now := time.Now().UTC()
 	residents := a.buildMemoryMaintenanceReportsAt(now)
 	out := MemoryMaintenanceSummary{
 		CheckedAt:      now.Format(time.RFC3339Nano),
 		ApplyMode:      "dry_run_only",
-		OperatorPolicy: "v0 memory maintenance is operator-only: inspect lifecycle first, then apply per resident only after reviewing dry-run output; no automatic scheduler is enabled.",
+		OperatorPolicy: "v0 memory maintenance is boundary-safe: auto-maintain handles mechanical cleanup and protected-memory marking; residents handle their own marked memory review in-world.",
 		Residents:      residents,
 		ResidentCount:  len(a.cfg.Residents),
 	}
@@ -279,7 +435,8 @@ func (a *App) buildMemoryMaintenanceReportsAt(now time.Time) []ResidentMemoryMai
 		item := ResidentMemoryMaintenance{ResidentID: resident.ResidentID}
 		if report, err := store.LifecycleReport(resident.ResidentID, now, memory.DefaultPolicy()); err == nil {
 			item.LifecycleAttention = report.NeedsAttention
-			item.OperatorDecayCandidates, item.ResidentReviewQueue, item.OperatorReviewRequired, item.StaleReviewItems = classifyLifecycleAttention(report.Items, now)
+			records, _ := store.ListAbstractMemories(resident.ResidentID)
+			item.OperatorDecayCandidates, item.ResidentReviewQueue, item.OperatorReviewRequired, item.StaleReviewItems = classifyLifecycleAttentionWithRecords(report.Items, records, now)
 		}
 		if report, err := store.CompactResidentWithReport(resident.ResidentID, false); err == nil {
 			item.BeforeHistoryGroups = report.BeforeHistoryGroups
@@ -318,17 +475,35 @@ func memoryMaintenanceRecommendation(item ResidentMemoryMaintenance) (string, st
 }
 
 func classifyLifecycleAttention(items []memory.LifecycleItem, now time.Time) (operatorDecayCandidates int, residentReviewQueue int, operatorReviewRequired int, staleReviewItems int) {
+	return classifyLifecycleAttentionWithRecords(items, nil, now)
+}
+
+func classifyLifecycleAttentionWithRecords(items []memory.LifecycleItem, records []memory.AbstractMemory, now time.Time) (operatorDecayCandidates int, residentReviewQueue int, operatorReviewRequired int, staleReviewItems int) {
+	byID := map[string]memory.AbstractMemory{}
+	for _, record := range records {
+		byID[record.ID] = record
+	}
 	for _, item := range items {
 		if !item.NeedsAttention {
 			continue
 		}
 		if safeLifecycleDecayCandidate(item, now) {
-			operatorDecayCandidates++
+			if record, ok := byID[item.ID]; ok && autoMaintainProtectedFrom(record, "host_rewrite") && autoMaintainHostCanMark(record) {
+				residentReviewQueue++
+			} else {
+				operatorDecayCandidates++
+			}
 			continue
 		}
 		if item.RecommendedOperatorAction == "review_for_promotion_or_rewrite" {
 			residentReviewQueue++
 			continue
+		}
+		if item.Action == memory.ActionDelete {
+			if record, ok := byID[item.ID]; ok && autoMaintainProtectedFrom(record, "host_delete") && autoMaintainHostCanMark(record) {
+				residentReviewQueue++
+				continue
+			}
 		}
 		if item.Action == memory.ActionRetain && item.RecommendedOperatorAction == "retain" {
 			staleReviewItems++

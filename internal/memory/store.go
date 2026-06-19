@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -509,6 +508,7 @@ func (s *FileStore) CompactResidentWithReport(resident string, apply bool) (Comp
 	}
 	compactedGroups, groupIDMap := compactHistoryGroups(groups)
 	compactedRecords := remapAbstractMemoryGroups(bundle.AbstractMemories, groupIDMap)
+	mergeGroups := buildCompactMergeGroups(groups, groupIDMap)
 	report := CompactReport{
 		Resident:              strings.TrimSpace(resident),
 		Apply:                 apply,
@@ -516,8 +516,8 @@ func (s *FileStore) CompactResidentWithReport(resident string, apply bool) (Comp
 		AfterHistoryGroups:    len(compactedGroups),
 		BeforeSourceGroupRefs: countSourceGroupRefs(bundle.AbstractMemories),
 		AfterSourceGroupRefs:  countSourceGroupRefs(compactedRecords),
-		Changed:               !reflect.DeepEqual(groups, compactedGroups) || !reflect.DeepEqual(bundle.AbstractMemories, compactedRecords),
-		MergeGroups:           buildCompactMergeGroups(groups, groupIDMap),
+		Changed:               len(mergeGroups) > 0 || countSourceGroupRefs(bundle.AbstractMemories) != countSourceGroupRefs(compactedRecords),
+		MergeGroups:           mergeGroups,
 	}
 	if !apply {
 		return report, nil
@@ -834,6 +834,14 @@ func applyMemoryReview(now time.Time, record AbstractMemory, review MemoryReview
 		})
 		record.Governance.ReviewState = "resolved"
 		record.Governance.ReviewReason = strings.TrimSpace(review.ReasonNote)
+	case ActionReview:
+		record.UpdatedAt = now
+		record.Governance.ReviewState = "needs_resident_review"
+		record.Governance.ReviewReason = strings.TrimSpace(review.ReasonNote)
+		if record.Governance.ReviewReason == "" {
+			record.Governance.ReviewReason = "This memory needs resident self-review."
+		}
+		record.Tags = append(record.Tags, "operator_marked_for_resident_review")
 	default:
 		return AbstractMemory{}, errors.New("unsupported resident memory review action")
 	}

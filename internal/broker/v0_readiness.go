@@ -286,10 +286,10 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 	}
 	if hasFailure(items, "memory_governance") {
 		steps = append(steps, V0RecommendedStep{
-			ID:            "resolve_memory_duplicate_debt",
-			Title:         "Resolve duplicate memory debt before release",
-			Reason:        "Duplicate history groups can bury useful resident memory and are treated as a required readiness failure.",
-			Command:       "arena-broker --mode memory-maintenance",
+			ID:            "run_memory_auto_maintenance",
+			Title:         "Run safe memory auto-maintenance before release",
+			Reason:        "Duplicate history groups or low-risk expired instant memories can bury useful resident memory; safe auto-maintenance handles mechanical cleanup while preserving protected and sensitive memories.",
+			Command:       "arena-broker --mode memory-auto-maintain --resident <resident>; review dry-run, then repeat with --apply",
 			BlocksRelease: true,
 			RelatedItems:  []string{"memory_governance"},
 		})
@@ -327,7 +327,7 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 		steps = append(steps, V0RecommendedStep{
 			ID:           "review_memory_governance_queue",
 			Title:        "Review memory governance queue without leaking operator-only context",
-			Reason:       "Memory governance has resident self-review or operator review work; v0 can continue, but the queue should stay visible.",
+			Reason:       "Memory governance has resident self-review or stale retain work; v0 can continue, but the queue should stay visible without host rewriting protected memories.",
 			Command:      "arena-broker --mode memory-maintenance",
 			RelatedItems: []string{"memory_governance"},
 		})

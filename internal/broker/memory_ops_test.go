@@ -218,6 +218,193 @@ func TestRunMemoryLifecycleSafeApplySettlesStaleDecayingReviewSchedule(t *testin
 	}
 }
 
+func TestRunMemoryAutoMaintainDryRunDoesNotMutate(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC()
+
+	seedAutoMaintainMemory(t, store, now)
+
+	report, err := app.RunMemoryAutoMaintain("amber", false)
+	if err != nil {
+		t.Fatalf("run auto maintain dry-run: %v", err)
+	}
+	if report.Apply || !report.CompactionChanged || report.CandidateCount != 2 || report.AppliedCount != 0 {
+		t.Fatalf("unexpected dry-run report: %#v", report)
+	}
+	groups, err := store.ListHistoryGroups("amber")
+	if err != nil {
+		t.Fatalf("list groups after dry-run: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("dry-run compacted groups: %#v", groups)
+	}
+	old, ok, err := store.GetAbstractMemory("amber", "amber-instant-old")
+	if err != nil || !ok {
+		t.Fatalf("get old memory after dry-run: ok=%v err=%v", ok, err)
+	}
+	if old.Status != memory.StatusActive {
+		t.Fatalf("dry-run mutated old memory: %#v", old.Record)
+	}
+}
+
+func TestRunMemoryAutoMaintainApplyOnlySafeMechanicalItems(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC()
+
+	seedAutoMaintainMemory(t, store, now)
+
+	report, err := app.RunMemoryAutoMaintain("amber", true)
+	if err != nil {
+		t.Fatalf("run auto maintain apply: %v", err)
+	}
+	if !report.Apply || !report.CompactionApplied || report.CandidateCount != 2 || report.AppliedCount != 2 {
+		t.Fatalf("unexpected apply report: %#v", report)
+	}
+	groups, err := store.ListHistoryGroups("amber")
+	if err != nil {
+		t.Fatalf("list groups after apply: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected duplicate groups compacted, got %#v", groups)
+	}
+	old, ok, err := store.GetAbstractMemory("amber", "amber-instant-old")
+	if err != nil || !ok {
+		t.Fatalf("get old memory after apply: ok=%v err=%v", ok, err)
+	}
+	if old.Status != memory.StatusDeleted {
+		t.Fatalf("expected expired instant memory deleted: %#v", old.Record)
+	}
+	stale, ok, err := store.GetAbstractMemory("amber", "amber-stale-retain")
+	if err != nil || !ok {
+		t.Fatalf("get stale memory after apply: ok=%v err=%v", ok, err)
+	}
+	if stale.Status != memory.StatusActive || !stale.ReviewAt.After(now) {
+		t.Fatalf("expected stale retain review refreshed: %#v", stale.Record)
+	}
+	relationship, ok, err := store.GetAbstractMemory("amber", "amber-relationship-old")
+	if err != nil || !ok {
+		t.Fatalf("get relationship memory after apply: ok=%v err=%v", ok, err)
+	}
+	if relationship.Status != memory.StatusActive || relationship.Layer != memory.LayerShort {
+		t.Fatalf("relationship memory should not be auto-mutated: %#v", relationship.Record)
+	}
+}
+
+func TestRunMemoryAutoMaintainMarksProtectedLifecycleForResidentReview(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	store := memory.NewFileStore(filepath.Join(root, "memory"))
+	now := time.Now().UTC()
+
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-protected-stale-retain",
+			Layer:          memory.LayerShort,
+			Domain:         memory.DomainLessons,
+			Status:         memory.StatusActive,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+			ReviewAt:       now.Add(-time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "local shell path is /root",
+		DecisionAction: memory.ActionCreate,
+		Governance: memory.GovernanceMeta{
+			ProtectedFrom: []string{"host_delete", "host_rewrite"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert protected stale retain: %v", err)
+	}
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-protected-instant-old",
+			Layer:          memory.LayerInstant,
+			Domain:         memory.DomainLessons,
+			Status:         memory.StatusActive,
+			CreatedAt:      now.Add(-8 * time.Hour),
+			UpdatedAt:      now.Add(-8 * time.Hour),
+			LastAccessedAt: now.Add(-8 * time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "temporary dns probe succeeded",
+		DecisionAction: memory.ActionCreate,
+		Governance: memory.GovernanceMeta{
+			ProtectedFrom: []string{"host_delete", "host_rewrite"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert protected expired instant: %v", err)
+	}
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-protected-short-old",
+			Layer:          memory.LayerShort,
+			Domain:         memory.DomainResources,
+			Status:         memory.StatusActive,
+			CreatedAt:      now.Add(-96 * time.Hour),
+			UpdatedAt:      now.Add(-96 * time.Hour),
+			LastAccessedAt: now.Add(-96 * time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "temporary apt probe succeeded",
+		DecisionAction: memory.ActionCreate,
+		Governance: memory.GovernanceMeta{
+			ProtectedFrom: []string{"host_delete", "host_rewrite"},
+		},
+	}); err != nil {
+		t.Fatalf("upsert protected old short memory: %v", err)
+	}
+
+	report, err := app.RunMemoryAutoMaintain("amber", true)
+	if err != nil {
+		t.Fatalf("run auto maintain protected apply: %v", err)
+	}
+	if !report.Apply || report.CandidateCount != 3 || report.AppliedCount != 3 || report.SkippedCount != 0 {
+		t.Fatalf("unexpected protected apply report: %#v", report)
+	}
+	applied := map[string]memory.Action{}
+	for _, item := range report.Applied {
+		applied[item.MemoryID] = item.Action
+	}
+	if applied["amber-protected-stale-retain"] != memory.ActionRetain ||
+		applied["amber-protected-instant-old"] != memory.ActionReview ||
+		applied["amber-protected-short-old"] != memory.ActionReview {
+		t.Fatalf("unexpected protected actions: %#v", applied)
+	}
+
+	retained, ok, err := store.GetAbstractMemory("amber", "amber-protected-stale-retain")
+	if err != nil || !ok {
+		t.Fatalf("get protected retained memory: ok=%v err=%v", ok, err)
+	}
+	if retained.Status != memory.StatusActive || !retained.ReviewAt.After(now) {
+		t.Fatalf("expected protected stale retain to be refreshed only: %#v", retained.Record)
+	}
+	expired, ok, err := store.GetAbstractMemory("amber", "amber-protected-instant-old")
+	if err != nil || !ok {
+		t.Fatalf("get protected expired memory: ok=%v err=%v", ok, err)
+	}
+	if expired.Status != memory.StatusActive {
+		t.Fatalf("protected expired instant memory should not be deleted: %#v", expired.Record)
+	}
+	if expired.Governance.ReviewState != "needs_resident_review" {
+		t.Fatalf("protected expired instant memory should be marked for resident review: %#v", expired.Governance)
+	}
+	decay, ok, err := store.GetAbstractMemory("amber", "amber-protected-short-old")
+	if err != nil || !ok {
+		t.Fatalf("get protected old short memory: ok=%v err=%v", ok, err)
+	}
+	if decay.Status != memory.StatusActive || decay.Layer != memory.LayerShort {
+		t.Fatalf("protected short memory should not be demoted: %#v", decay.Record)
+	}
+	if decay.Governance.ReviewState != "needs_resident_review" {
+		t.Fatalf("protected short memory should be marked for resident review: %#v", decay.Governance)
+	}
+}
+
 func TestRunMemoryReviewDryRunDoesNotMutate(t *testing.T) {
 	root := t.TempDir()
 	app := New(root)
@@ -259,6 +446,72 @@ func TestRunMemoryReviewDryRunDoesNotMutate(t *testing.T) {
 	}
 	if record.Summary != "A world-facing thread was opened." || record.Layer != memory.LayerShort {
 		t.Fatalf("dry-run mutated stored memory: %#v", record)
+	}
+}
+
+func seedAutoMaintainMemory(t *testing.T, store *memory.FileStore, now time.Time) {
+	t.Helper()
+	for _, id := range []string{"group-a", "group-b"} {
+		if err := store.UpsertHistoryGroup(memory.HistoryGroup{
+			GroupUUID:    id,
+			Resident:     "amber",
+			CreatedAt:    now.Add(-time.Hour),
+			SourceKind:   "dialogue_window",
+			State:        memory.HistoryGroupClosed,
+			EventCount:   2,
+			RawEventRefs: []string{"evt-1", "evt-2"},
+		}); err != nil {
+			t.Fatalf("upsert group %s: %v", id, err)
+		}
+	}
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-instant-old",
+			Layer:          memory.LayerInstant,
+			Domain:         memory.DomainLessons,
+			Status:         memory.StatusActive,
+			CreatedAt:      now.Add(-8 * time.Hour),
+			UpdatedAt:      now.Add(-8 * time.Hour),
+			LastAccessedAt: now.Add(-8 * time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "temporary dns probe succeeded",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert instant memory: %v", err)
+	}
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-stale-retain",
+			Layer:          memory.LayerShort,
+			Domain:         memory.DomainLessons,
+			Status:         memory.StatusActive,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastAccessedAt: now,
+			ReviewAt:       now.Add(-time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "root amber /root",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert stale retain memory: %v", err)
+	}
+	if err := store.UpsertAbstractMemory(memory.AbstractMemory{
+		Record: memory.Record{
+			ID:             "amber-relationship-old",
+			Layer:          memory.LayerShort,
+			Domain:         memory.DomainRelationships,
+			Status:         memory.StatusActive,
+			CreatedAt:      now.Add(-96 * time.Hour),
+			UpdatedAt:      now.Add(-96 * time.Hour),
+			LastAccessedAt: now.Add(-96 * time.Hour),
+		},
+		Resident:       "amber",
+		Summary:        "Chenglin confirmed continuity matters.",
+		DecisionAction: memory.ActionCreate,
+	}); err != nil {
+		t.Fatalf("upsert relationship memory: %v", err)
 	}
 }
 
@@ -547,5 +800,34 @@ func TestClassifyLifecycleAttentionSeparatesStaleRetain(t *testing.T) {
 	}, now)
 	if decay != 1 || residentQueue != 1 || operatorRequired != 1 || stale != 1 {
 		t.Fatalf("unexpected lifecycle classification: decay=%d resident=%d operator=%d stale=%d", decay, residentQueue, operatorRequired, stale)
+	}
+}
+
+func TestClassifyLifecycleAttentionTreatsProtectedDeleteAsResidentReview(t *testing.T) {
+	now := time.Date(2026, 6, 19, 9, 0, 0, 0, time.UTC)
+	decay, residentQueue, operatorRequired, stale := classifyLifecycleAttentionWithRecords([]memory.LifecycleItem{
+		{
+			ID:             "protected-delete",
+			NeedsAttention: true,
+			Action:         memory.ActionDelete,
+			ReasonCodes:    []string{"instant_expired"},
+		},
+		{
+			ID:             "unprotected-review",
+			NeedsAttention: true,
+			Action:         memory.ActionDelete,
+			ReasonCodes:    []string{"instant_expired"},
+		},
+	}, []memory.AbstractMemory{
+		{
+			Record: memory.Record{ID: "protected-delete"},
+			Governance: memory.GovernanceMeta{
+				HostMay:       []string{"mark"},
+				ProtectedFrom: []string{"host_delete", "host_rewrite"},
+			},
+		},
+	}, now)
+	if decay != 0 || residentQueue != 1 || operatorRequired != 1 || stale != 0 {
+		t.Fatalf("unexpected protected lifecycle classification: decay=%d resident=%d operator=%d stale=%d", decay, residentQueue, operatorRequired, stale)
 	}
 }

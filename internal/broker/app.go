@@ -158,6 +158,37 @@ type MemoryLifecycleSafeApplyReport struct {
 	PostLifecycleReport memory.LifecycleReport `json:"post_lifecycle_report,omitempty"`
 }
 
+type MemoryAutoMaintainReport struct {
+	ResidentID        string                     `json:"resident_id"`
+	Apply             bool                       `json:"apply"`
+	CheckedAt         string                     `json:"checked_at"`
+	Policy            string                     `json:"policy"`
+	Compact           memory.CompactReport       `json:"compact"`
+	LifecycleBefore   memory.LifecycleReport     `json:"lifecycle_before"`
+	LifecycleAfter    memory.LifecycleReport     `json:"lifecycle_after,omitempty"`
+	CandidateCount    int                        `json:"candidate_count"`
+	AppliedCount      int                        `json:"applied_count"`
+	SkippedCount      int                        `json:"skipped_count"`
+	Candidates        []MemoryAutoMaintainAction `json:"candidates,omitempty"`
+	Applied           []MemoryAutoMaintainAction `json:"applied,omitempty"`
+	Skipped           []MemoryAutoMaintainSkip   `json:"skipped,omitempty"`
+	CompactionChanged bool                       `json:"compaction_changed"`
+	CompactionApplied bool                       `json:"compaction_applied"`
+}
+
+type MemoryAutoMaintainAction struct {
+	MemoryID string        `json:"memory_id"`
+	Action   memory.Action `json:"action"`
+	Reason   string        `json:"reason"`
+	Summary  string        `json:"summary,omitempty"`
+}
+
+type MemoryAutoMaintainSkip struct {
+	MemoryID string `json:"memory_id"`
+	Reason   string `json:"reason"`
+	Summary  string `json:"summary,omitempty"`
+}
+
 type MemoryReviewInput struct {
 	ResidentID string `json:"resident_id"`
 	MemoryID   string `json:"memory_id"`
