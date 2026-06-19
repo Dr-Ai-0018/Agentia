@@ -292,3 +292,36 @@ func TestAppRunRecoverWithMode(t *testing.T) {
 		t.Fatalf("expected status recovery mode rest, got %s", out.Status.RecoveryMode)
 	}
 }
+
+func TestAppRunRecoverAllToNow(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+
+	for _, resident := range []string{"jade", "amber", "onyx"} {
+		if _, err := app.RunReset(resident, now); err != nil {
+			t.Fatalf("reset %s: %v", resident, err)
+		}
+	}
+
+	out, err := app.RunRecoverAllToNow(now.Add(45*time.Minute), "rest")
+	if err != nil {
+		t.Fatalf("recover all: %v", err)
+	}
+	if out.ResidentCount != 3 || len(out.Residents) != 3 {
+		t.Fatalf("expected three recovered residents, got %#v", out)
+	}
+	if out.RecoveryMode != "rest" {
+		t.Fatalf("expected rest recovery mode, got %q", out.RecoveryMode)
+	}
+	if out.WorkAllowedCount != 3 || out.BlockedCount != 0 {
+		t.Fatalf("expected all residents work-allowed after baseline recovery, got %#v", out)
+	}
+	for _, item := range out.Residents {
+		if item.Recovery.RecoveryMode != "rest" {
+			t.Fatalf("expected rest tick for %s, got %#v", item.ResidentID, item.Recovery)
+		}
+		if item.AfterWindow6HUsed > item.BeforeWindow6HUsed {
+			t.Fatalf("expected recovery not to increase 6h usage for %s: %#v", item.ResidentID, item)
+		}
+	}
+}

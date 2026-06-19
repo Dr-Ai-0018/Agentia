@@ -109,7 +109,7 @@ func (l *Ledger) append(kind EntryKind, spark float64, reason string, at time.Ti
 func (l *Ledger) appendWithPolicy(kind EntryKind, spark float64, reason string, at time.Time, allowDebt bool) (Entry, error) {
 	deltaUnits := toUnits(spark)
 	nextUnits := l.account.BalanceUnits + deltaUnits
-	if nextUnits < 0 && !allowDebt {
+	if deltaUnits < 0 && nextUnits < 0 && !allowDebt {
 		return Entry{}, fmt.Errorf("spark balance cannot go negative")
 	}
 

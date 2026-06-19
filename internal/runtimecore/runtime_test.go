@@ -157,6 +157,33 @@ func TestWorkCallCanEnterDebtAndLocksFurtherWork(t *testing.T) {
 	}
 }
 
+func TestRecoveryPartiallyRepaysDebtInSparkLedger(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{
+		TokenPolicy: tokenledger.DefaultConfig(),
+		RecoveryPolicy: recovery.Policy{
+			SparkRecoveryPerHour: 0.2,
+		},
+	}, "jade", tokenledger.QuotaState{Window6HCap: 4000}, start)
+
+	if _, err := engine.SparkLedger().DebitAllowDebt("charge", 1.0, "test debt", start); err != nil {
+		t.Fatalf("seed debt: %v", err)
+	}
+	engine.state.DebtActive = true
+	engine.state.DebtAmount = 1.0
+
+	tick := engine.TickRecovery(start.Add(time.Hour))
+	if tick.NewSparkBalance != -0.8 {
+		t.Fatalf("tick new balance = %.4f, want -0.8000", tick.NewSparkBalance)
+	}
+	if engine.SparkLedger().Account().Balance != tick.NewSparkBalance {
+		t.Fatalf("ledger balance %.4f does not match tick %.4f", engine.SparkLedger().Account().Balance, tick.NewSparkBalance)
+	}
+	if engine.State().DebtAmount != 0.8 || !engine.State().DebtActive {
+		t.Fatalf("unexpected debt state after partial recovery: %#v", engine.State())
+	}
+}
+
 func TestSnapshotAndRestore(t *testing.T) {
 	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
 	cfg := Config{

@@ -41,3 +41,18 @@ func TestLedgerAllowsDebtWhenExplicitlyRequested(t *testing.T) {
 		t.Fatalf("expected negative balance after debt debit")
 	}
 }
+
+func TestLedgerCreditCanPartiallyRepayDebt(t *testing.T) {
+	ledger := New("jade")
+	now := time.Now().UTC()
+	if _, err := ledger.DebitAllowDebt(EntryCharge, 1.0, "overdraft", now); err != nil {
+		t.Fatalf("debit into debt: %v", err)
+	}
+	entry, err := ledger.Credit(EntryGrant, 0.25, "recovery tick", now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("credit while still negative should repay debt: %v", err)
+	}
+	if entry.BalanceAfter != -0.75 {
+		t.Fatalf("balance after partial debt repayment = %.4f, want -0.7500", entry.BalanceAfter)
+	}
+}

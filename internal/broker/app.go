@@ -34,6 +34,32 @@ type RecoveryOutput struct {
 	SnapshotPath string                     `json:"snapshot_path"`
 }
 
+type RecoverAllOutput struct {
+	RecoveredAt      string                   `json:"recovered_at"`
+	RecoveryMode     string                   `json:"recovery_mode"`
+	ResidentCount    int                      `json:"resident_count"`
+	WorkAllowedCount int                      `json:"work_allowed_count"`
+	BlockedCount     int                      `json:"blocked_count"`
+	Residents        []ResidentRecoveryStatus `json:"residents"`
+}
+
+type ResidentRecoveryStatus struct {
+	ResidentID           string              `json:"resident_id"`
+	SnapshotPath         string              `json:"snapshot_path,omitempty"`
+	Recovery             recovery.TickResult `json:"recovery"`
+	BeforeSpark          float64             `json:"before_spark"`
+	AfterSpark           float64             `json:"after_spark"`
+	BeforeDebtActive     bool                `json:"before_debt_active"`
+	AfterDebtActive      bool                `json:"after_debt_active"`
+	BeforeDebtAmount     float64             `json:"before_debt_amount"`
+	AfterDebtAmount      float64             `json:"after_debt_amount"`
+	BeforeWindow6HUsed   int                 `json:"before_window_6h_used"`
+	AfterWindow6HUsed    int                 `json:"after_window_6h_used"`
+	WorkAllowedNow       bool                `json:"work_allowed_now"`
+	BlockingReason       string              `json:"blocking_reason,omitempty"`
+	Effective6HRemaining int                 `json:"effective_6h_remaining"`
+}
+
 type ResetOutput struct {
 	Status       brokerstate.ResidentStatus `json:"status"`
 	SnapshotPath string                     `json:"snapshot_path"`
@@ -485,6 +511,10 @@ func (a *App) Binding(residentID string) (ResidentBinding, bool) {
 	return a.registry.Binding(residentID)
 }
 
+func (a *App) ResidentBindings() []ResidentBinding {
+	return append([]ResidentBinding(nil), a.cfg.Residents...)
+}
+
 func (a *App) RunStatus(residentID string) (brokerstate.ResidentStatus, error) {
 	return a.service(false).SelfStatus(residentID)
 }
@@ -731,6 +761,53 @@ func (a *App) RunRecoverToNowWithMode(residentID string, now time.Time, mode str
 		Recovery:     tick,
 		SnapshotPath: path,
 	}, nil
+}
+
+func (a *App) RunRecoverAllToNow(now time.Time, mode string) (RecoverAllOutput, error) {
+	if mode == "" {
+		mode = "idle"
+	}
+	out := RecoverAllOutput{
+		RecoveredAt:  now.UTC().Format(time.RFC3339),
+		RecoveryMode: mode,
+		Residents:    make([]ResidentRecoveryStatus, 0, len(a.cfg.Residents)),
+	}
+	for _, binding := range a.cfg.Residents {
+		residentID := binding.ResidentID
+		before, err := a.RunStatus(residentID)
+		if err != nil {
+			return RecoverAllOutput{}, err
+		}
+		recovered, err := a.RunRecoverToNowWithMode(residentID, now, mode)
+		if err != nil {
+			return RecoverAllOutput{}, err
+		}
+		quota := brokerstate.BuildQuotaSnapshot(recovered.Status)
+		item := ResidentRecoveryStatus{
+			ResidentID:           residentID,
+			SnapshotPath:         recovered.SnapshotPath,
+			Recovery:             recovered.Recovery,
+			BeforeSpark:          before.SparkBalance,
+			AfterSpark:           recovered.Status.SparkBalance,
+			BeforeDebtActive:     before.DebtActive,
+			AfterDebtActive:      recovered.Status.DebtActive,
+			BeforeDebtAmount:     before.DebtAmount,
+			AfterDebtAmount:      recovered.Status.DebtAmount,
+			BeforeWindow6HUsed:   before.Window6HUsed,
+			AfterWindow6HUsed:    recovered.Status.Window6HUsed,
+			WorkAllowedNow:       quota.WorkAllowedNow,
+			BlockingReason:       quota.BlockingReason,
+			Effective6HRemaining: quota.EffectiveWindow6HRemaining,
+		}
+		if item.WorkAllowedNow {
+			out.WorkAllowedCount++
+		} else {
+			out.BlockedCount++
+		}
+		out.Residents = append(out.Residents, item)
+	}
+	out.ResidentCount = len(out.Residents)
+	return out, nil
 }
 
 func (a *App) RunQuotaGrant(residentID string, window6HDelta, dayDelta, weekDelta int, reason string) (brokerstate.QuotaGrantResponse, error) {
