@@ -27,6 +27,7 @@ type MaintenanceRunRecord struct {
 	State              string `json:"state"`
 	ResidentID         string `json:"resident_id"`
 	TicketID           string `json:"ticket_id"`
+	InterventionID     string `json:"intervention_id,omitempty"`
 	Resource           string `json:"resource"`
 	Amount             string `json:"amount"`
 	Window             string `json:"window,omitempty"`
@@ -97,6 +98,24 @@ type ResourceMaintenanceRollbackInput struct {
 	Close          bool   `json:"close"`
 	Operator       string `json:"operator"`
 	CheckpointName string `json:"checkpoint_name"`
+}
+
+type HostResourceMaintenanceInput struct {
+	InterventionID       string `json:"intervention_id,omitempty"`
+	Resident             string `json:"resident"`
+	Resource             string `json:"resource"`
+	Amount               string `json:"amount"`
+	Note                 string `json:"note"`
+	Window               string `json:"window,omitempty"`
+	Operator             string `json:"operator"`
+	CreateHostCheckpoint bool   `json:"create_host_checkpoint,omitempty"`
+	CheckpointName       string `json:"checkpoint_name,omitempty"`
+}
+
+type HostResourceMaintenanceOutput struct {
+	Intervention       worldstate.HostIntervention `json:"intervention"`
+	CheckpointName     string                      `json:"checkpoint_name,omitempty"`
+	InventoryRefreshed bool                        `json:"inventory_refreshed,omitempty"`
 }
 
 type HostInterventionInput struct {
@@ -443,13 +462,17 @@ func (s *HostActionService) writeMaintenanceRunRecord(record MaintenanceRunRecor
 	record.State = strings.TrimSpace(record.State)
 	record.ResidentID = strings.TrimSpace(record.ResidentID)
 	record.TicketID = strings.TrimSpace(record.TicketID)
+	record.InterventionID = strings.TrimSpace(record.InterventionID)
 	record.Resource = normalizeResource(record.Resource)
 	record.Amount = strings.TrimSpace(record.Amount)
 	record.Window = strings.TrimSpace(record.Window)
 	record.Operator = defaultMaintenanceOperator(record.Operator)
 	record.CheckpointName = strings.TrimSpace(record.CheckpointName)
 	record.Note = strings.TrimSpace(record.Note)
-	if record.State == "" || record.ResidentID == "" || record.TicketID == "" || record.Resource == "" || record.Amount == "" {
+	if record.State == "" || record.ResidentID == "" || record.Resource == "" || record.Amount == "" {
+		return
+	}
+	if record.TicketID == "" && record.InterventionID == "" {
 		return
 	}
 	dir := filepath.Join(s.app.root, "operations")
@@ -532,6 +555,199 @@ func (s *HostActionService) PlanResourceMaintenance(input ResourceMaintenancePla
 		Note:           input.Note,
 	})
 	return ticket, nil
+}
+
+func buildHostMaintenanceBody(resource, amount, note string) string {
+	lines := []string{
+		fmt.Sprintf("resource=%s", resource),
+		fmt.Sprintf("amount=%s", amount),
+	}
+	if trimmed := strings.TrimSpace(note); trimmed != "" {
+		lines = append(lines, trimmed)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *HostActionService) validateHostMaintenanceInput(input HostResourceMaintenanceInput, requireIntervention bool) (string, string, string, string, error) {
+	interventionID := strings.TrimSpace(input.InterventionID)
+	residentID := strings.TrimSpace(input.Resident)
+	resource := normalizeResource(input.Resource)
+	amount := strings.TrimSpace(input.Amount)
+	if requireIntervention && interventionID == "" {
+		return "", "", "", "", fmt.Errorf("intervention id is required")
+	}
+	if residentID == "" {
+		return "", "", "", "", fmt.Errorf("resident id is required")
+	}
+	if resource == "" {
+		return "", "", "", "", fmt.Errorf("resource is required")
+	}
+	if amount == "" {
+		return "", "", "", "", fmt.Errorf("amount is required")
+	}
+	if _, ok := s.app.Binding(residentID); !ok {
+		return "", "", "", "", fmt.Errorf("unknown resident binding: %s", residentID)
+	}
+	if requireIntervention {
+		items, err := s.world.ReadHostInterventions(residentID, "", 100)
+		if err != nil {
+			return "", "", "", "", err
+		}
+		found := false
+		for _, item := range items {
+			if item.ID == interventionID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", "", "", "", fmt.Errorf("host intervention %s not found for resident %s", interventionID, residentID)
+		}
+	}
+	return interventionID, residentID, resource, amount, nil
+}
+
+func (s *HostActionService) PlanHostResourceMaintenance(input HostResourceMaintenanceInput) (HostResourceMaintenanceOutput, error) {
+	_, residentID, resource, amount, err := s.validateHostMaintenanceInput(input, false)
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	checkpointName := ""
+	if input.CreateHostCheckpoint {
+		created, err := s.CreateHostCheckpoint(residentID, input.Operator, time.Now().UTC())
+		if err != nil {
+			return HostResourceMaintenanceOutput{}, err
+		}
+		checkpointName = created.Name
+	}
+	approvalNote := buildMaintenanceApprovalNoteWithCheckpoint(input.Note, input.Window, input.Operator, checkpointName)
+	body := buildHostMaintenanceBody(resource, amount, approvalNote)
+	intervention, err := s.CreateHostIntervention(HostInterventionInput{
+		Resident: residentID,
+		Kind:     "maintenance",
+		Title:    buildMaintenanceInterventionTitle(resource, amount),
+		Body:     body,
+		Operator: input.Operator,
+	})
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:          "planned",
+		ResidentID:     residentID,
+		InterventionID: intervention.ID,
+		Resource:       resource,
+		Amount:         amount,
+		Window:         defaultMaintenanceWindow(input.Window),
+		Operator:       input.Operator,
+		CheckpointName: checkpointName,
+		Note:           input.Note,
+	})
+	return HostResourceMaintenanceOutput{Intervention: intervention, CheckpointName: checkpointName}, nil
+}
+
+func (s *HostActionService) StartHostResourceMaintenance(input HostResourceMaintenanceInput) (HostResourceMaintenanceOutput, error) {
+	interventionID, residentID, resource, amount, err := s.validateHostMaintenanceInput(input, true)
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	startNote := buildMaintenanceStartNote(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	body := buildHostMaintenanceBody(resource, amount, startNote)
+	intervention, err := s.world.UpdateHostInterventionStatus(interventionID, "in_progress", body, input.Operator, time.Now().UTC())
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:          "in_progress",
+		ResidentID:     residentID,
+		InterventionID: intervention.ID,
+		Resource:       resource,
+		Amount:         amount,
+		Operator:       input.Operator,
+		CheckpointName: input.CheckpointName,
+		Note:           input.Note,
+	})
+	return HostResourceMaintenanceOutput{Intervention: intervention, CheckpointName: strings.TrimSpace(input.CheckpointName)}, nil
+}
+
+func (s *HostActionService) CompleteHostResourceMaintenance(input HostResourceMaintenanceInput) (HostResourceMaintenanceOutput, error) {
+	interventionID, residentID, resource, amount, err := s.validateHostMaintenanceInput(input, true)
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	completionNote := buildMaintenanceCompletionNoteWithCheckpoint(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	body := buildHostMaintenanceBody(resource, amount, completionNote)
+	intervention, err := s.world.ResolveHostIntervention(interventionID, body, input.Operator, time.Now().UTC())
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	if _, _, err := s.app.RefreshInventorySnapshot(time.Now().UTC()); err != nil {
+		return HostResourceMaintenanceOutput{}, fmt.Errorf("refresh inventory snapshot after host maintenance: %w", err)
+	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:              "completed",
+		ResidentID:         residentID,
+		InterventionID:     intervention.ID,
+		Resource:           resource,
+		Amount:             amount,
+		Operator:           input.Operator,
+		CheckpointName:     input.CheckpointName,
+		Note:               input.Note,
+		InventoryRefreshed: true,
+	})
+	return HostResourceMaintenanceOutput{Intervention: intervention, CheckpointName: strings.TrimSpace(input.CheckpointName), InventoryRefreshed: true}, nil
+}
+
+func (s *HostActionService) FailHostResourceMaintenance(input HostResourceMaintenanceInput) (HostResourceMaintenanceOutput, error) {
+	interventionID, residentID, resource, amount, err := s.validateHostMaintenanceInput(input, true)
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	failureNote := buildMaintenanceFailureNote(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	body := buildHostMaintenanceBody(resource, amount, failureNote)
+	intervention, err := s.world.UpdateHostInterventionStatus(interventionID, "failed", body, input.Operator, time.Now().UTC())
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:          "failed",
+		ResidentID:     residentID,
+		InterventionID: intervention.ID,
+		Resource:       resource,
+		Amount:         amount,
+		Operator:       input.Operator,
+		CheckpointName: input.CheckpointName,
+		Note:           input.Note,
+	})
+	return HostResourceMaintenanceOutput{Intervention: intervention, CheckpointName: strings.TrimSpace(input.CheckpointName)}, nil
+}
+
+func (s *HostActionService) RollbackHostResourceMaintenance(input HostResourceMaintenanceInput) (HostResourceMaintenanceOutput, error) {
+	interventionID, residentID, resource, amount, err := s.validateHostMaintenanceInput(input, true)
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	rollbackNote := buildMaintenanceRollbackNote(input.Note, input.Operator, strings.TrimSpace(input.CheckpointName))
+	body := buildHostMaintenanceBody(resource, amount, rollbackNote)
+	intervention, err := s.world.UpdateHostInterventionStatus(interventionID, "rolled_back", body, input.Operator, time.Now().UTC())
+	if err != nil {
+		return HostResourceMaintenanceOutput{}, err
+	}
+	if _, _, err := s.app.RefreshInventorySnapshot(time.Now().UTC()); err != nil {
+		return HostResourceMaintenanceOutput{}, fmt.Errorf("refresh inventory snapshot after host maintenance rollback: %w", err)
+	}
+	s.writeMaintenanceRunRecord(MaintenanceRunRecord{
+		State:              "rolled_back",
+		ResidentID:         residentID,
+		InterventionID:     intervention.ID,
+		Resource:           resource,
+		Amount:             amount,
+		Operator:           input.Operator,
+		CheckpointName:     input.CheckpointName,
+		Note:               input.Note,
+		InventoryRefreshed: true,
+	})
+	return HostResourceMaintenanceOutput{Intervention: intervention, CheckpointName: strings.TrimSpace(input.CheckpointName), InventoryRefreshed: true}, nil
 }
 
 func (s *HostActionService) StartResourceMaintenance(input ResourceMaintenanceStartInput) (worldstate.Ticket, error) {

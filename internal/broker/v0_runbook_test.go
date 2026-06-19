@@ -27,6 +27,10 @@ func TestBuildV0RunbookMarksRiskySteps(t *testing.T) {
 	out := BuildV0Runbook(time.Date(2026, 6, 18, 7, 10, 0, 0, time.UTC))
 
 	assertStepFlags(t, out, "long_parallel_soak", true, false, true)
+	assertStepFlags(t, out, "host_plan_maintenance", true, true, true)
+	assertStepFlags(t, out, "host_start_maintenance", true, true, false)
+	assertStepFlags(t, out, "host_complete_maintenance", true, true, true)
+	assertStepFlags(t, out, "host_fail_or_rollback", true, true, true)
 	assertStepFlags(t, out, "checkpoint_cleanup_apply", true, false, true)
 	assertStepFlags(t, out, "checkpoint_list", false, false, false)
 	assertStepFlags(t, out, "create_host_checkpoint", true, false, true)
@@ -54,6 +58,21 @@ func TestBuildV0RunbookIncludesBaselineRecoveryBoundary(t *testing.T) {
 	}
 	if !strings.Contains(operatorRestore.Command, "incus snapshot restore") || !stepNotesContain(operatorRestore, "Operator-only") {
 		t.Fatalf("expected operator-only baseline restore boundary, got %#v", operatorRestore)
+	}
+}
+
+func TestBuildV0RunbookPrefersHostOnlyMaintenancePath(t *testing.T) {
+	out := BuildV0Runbook(time.Date(2026, 6, 18, 7, 10, 0, 0, time.UTC))
+
+	step, ok := findRunbookStep(out, "host_plan_maintenance")
+	if !ok {
+		t.Fatalf("expected host-only maintenance plan step: %#v", out.Sections)
+	}
+	if !strings.Contains(step.Command, "host-plan-maintenance") || strings.Contains(step.Command, "ticket-plan-maintenance") {
+		t.Fatalf("expected host-only maintenance command, got %#v", step)
+	}
+	if !stepNotesContain(step, "independent of a resident-submitted ticket") {
+		t.Fatalf("expected host-only maintenance note, got %#v", step.Notes)
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|host-maintenance-draft|host-maintenance-draft-cached|v0-readiness|v0-readiness-cached|v0-runbook|v0-acceptance|v0-acceptance-cached|v0-acceptance-evidence|v0-acceptance-evidence-list|v0-acceptance-evidence-template|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-review|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|host-maintenance-draft|host-maintenance-draft-cached|v0-readiness|v0-readiness-cached|v0-runbook|v0-acceptance|v0-acceptance-cached|v0-acceptance-evidence|v0-acceptance-evidence-list|v0-acceptance-evidence-template|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-review|recover|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|host-plan-maintenance|host-start-maintenance|host-complete-maintenance|host-fail-maintenance|host-rollback-maintenance|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
@@ -37,6 +37,7 @@ func main() {
 	limit := flag.Int("limit", 8, "Message limit for messages mode")
 	status := flag.String("status", "", "Optional status filter for messages mode")
 	messageID := flag.String("message-id", "", "Target message ID for reply/ticket-reply/get-ticket modes")
+	interventionID := flag.String("intervention-id", "", "Target host intervention ID for host maintenance modes")
 	checkID := flag.String("check-id", "", "V0 acceptance check ID for v0-acceptance-evidence mode")
 	memoryID := flag.String("memory-id", "", "Target memory ID for memory-review mode")
 	memoryAction := flag.String("memory-action", "", "Memory review action: mark|keep|rewrite|compress|demote|delete")
@@ -536,6 +537,76 @@ func main() {
 			Title:    *title,
 			Body:     *body,
 			Operator: *operator,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-plan-maintenance":
+		out, err := host.PlanHostResourceMaintenance(broker.HostResourceMaintenanceInput{
+			Resident:             *residentID,
+			Resource:             *resource,
+			Amount:               *amount,
+			Note:                 *body,
+			Window:               *window,
+			Operator:             *operator,
+			CreateHostCheckpoint: *createCheckpoint,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-start-maintenance":
+		out, err := host.StartHostResourceMaintenance(broker.HostResourceMaintenanceInput{
+			InterventionID: *interventionID,
+			Resident:       *residentID,
+			Resource:       *resource,
+			Amount:         *amount,
+			Note:           *body,
+			Operator:       *operator,
+			CheckpointName: *checkpointName,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-complete-maintenance":
+		out, err := host.CompleteHostResourceMaintenance(broker.HostResourceMaintenanceInput{
+			InterventionID: *interventionID,
+			Resident:       *residentID,
+			Resource:       *resource,
+			Amount:         *amount,
+			Note:           *body,
+			Operator:       *operator,
+			CheckpointName: *checkpointName,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-fail-maintenance":
+		out, err := host.FailHostResourceMaintenance(broker.HostResourceMaintenanceInput{
+			InterventionID: *interventionID,
+			Resident:       *residentID,
+			Resource:       *resource,
+			Amount:         *amount,
+			Note:           *body,
+			Operator:       *operator,
+			CheckpointName: *checkpointName,
+		})
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-rollback-maintenance":
+		out, err := host.RollbackHostResourceMaintenance(broker.HostResourceMaintenanceInput{
+			InterventionID: *interventionID,
+			Resident:       *residentID,
+			Resource:       *resource,
+			Amount:         *amount,
+			Note:           *body,
+			Operator:       *operator,
+			CheckpointName: *checkpointName,
 		})
 		if err != nil {
 			exitf("%v", err)

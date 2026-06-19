@@ -178,6 +178,59 @@ func v0MaintenanceRunbookSection() V0RunbookSection {
 		Purpose: "Perform resource changes as explicit maintenance windows, not casual hot changes.",
 		Steps: []V0RunbookStep{
 			{
+				ID:               "host_plan_maintenance",
+				Title:            "Plan host-initiated maintenance without a resident ticket",
+				Command:          "go run ./cmd/arena-broker --mode host-plan-maintenance --resident <resident> --resource <cpu|memory|disk> --amount <amount> --window '<window>' --operator <operator> --body '<maintenance notice>' --create-checkpoint",
+				RequiresApproval: true,
+				WritesWorldState: true,
+				WritesRuntime:    true,
+				Notes: []string{
+					"Use when the host needs maintenance independent of a resident-submitted ticket.",
+					"Creates a host intervention and maintenance run record; it does not perform VM stop/change/start by itself.",
+				},
+			},
+			{
+				ID:               "host_start_maintenance",
+				Title:            "Mark host-initiated maintenance start",
+				Command:          "go run ./cmd/arena-broker --mode host-start-maintenance --intervention-id <host-intervention-id> --resident <resident> --resource <cpu|memory|disk> --amount <amount> --operator <operator> --checkpoint-name <checkpoint-name> --body '<start note>'",
+				RequiresApproval: true,
+				WritesWorldState: true,
+			},
+			{
+				ID:               "manual_stop_change_start",
+				Title:            "Manual VM stop/change/start maintenance window",
+				RequiresApproval: true,
+				WritesRuntime:    true,
+				Notes: []string{
+					"Execute with host Incus/KVM tooling during the announced maintenance window.",
+					"Do not treat KVM CPU/memory/disk changes as casual online hot changes.",
+					"After boot, refresh inventory before completing the maintenance record.",
+				},
+			},
+			{
+				ID:               "host_complete_maintenance",
+				Title:            "Complete host-initiated maintenance and notify resident",
+				Command:          "go run ./cmd/arena-broker --mode host-complete-maintenance --intervention-id <host-intervention-id> --resident <resident> --resource <cpu|memory|disk> --amount <amount> --operator <operator> --checkpoint-name <checkpoint-name> --body '<completion note>'",
+				RequiresApproval: true,
+				WritesWorldState: true,
+				WritesRuntime:    true,
+				Notes: []string{
+					"Updates the host intervention to completed and refreshes inventory.",
+				},
+			},
+			{
+				ID:               "host_fail_or_rollback",
+				Title:            "Fail or rollback host-initiated maintenance",
+				Command:          "go run ./cmd/arena-broker --mode host-rollback-maintenance --intervention-id <host-intervention-id> --resident <resident> --resource <cpu|memory|disk> --amount <amount> --operator <operator> --checkpoint-name <checkpoint-name> --body '<rollback note>'",
+				RequiresApproval: true,
+				WritesWorldState: true,
+				WritesRuntime:    true,
+				Notes: []string{
+					"Use host-fail-maintenance if no rollback happened.",
+					"Use host-rollback-maintenance only after an actual rollback or documented rollback procedure.",
+				},
+			},
+			{
 				ID:               "plan_ticket_maintenance",
 				Title:            "Plan approved ticket maintenance",
 				Command:          "go run ./cmd/arena-broker --mode ticket-plan-maintenance --resident <resident> --message-id <ticket-id> --window '<window>' --operator <operator> --create-checkpoint",
@@ -210,24 +263,6 @@ func v0MaintenanceRunbookSection() V0RunbookSection {
 				},
 			},
 			{
-				ID:               "start_maintenance",
-				Title:            "Mark maintenance start",
-				Command:          "go run ./cmd/arena-broker --mode ticket-start-maintenance --resident <resident> --message-id <ticket-id> --operator <operator> --checkpoint-name <checkpoint-name>",
-				RequiresApproval: true,
-				WritesWorldState: true,
-			},
-			{
-				ID:               "manual_stop_change_start",
-				Title:            "Manual VM stop/change/start maintenance window",
-				RequiresApproval: true,
-				WritesRuntime:    true,
-				Notes: []string{
-					"Execute with host Incus/KVM tooling during the announced maintenance window.",
-					"Do not treat KVM CPU/memory/disk changes as casual online hot changes.",
-					"After boot, refresh inventory before completing the maintenance record.",
-				},
-			},
-			{
 				ID:            "refresh_inventory",
 				Title:         "Refresh inventory after maintenance",
 				Command:       "go run ./cmd/arena-broker --mode inventory",
@@ -235,14 +270,14 @@ func v0MaintenanceRunbookSection() V0RunbookSection {
 			},
 			{
 				ID:               "complete_maintenance",
-				Title:            "Complete maintenance and notify resident",
+				Title:            "Complete ticket-based maintenance and notify resident",
 				Command:          "go run ./cmd/arena-broker --mode ticket-complete-maintenance --resident <resident> --message-id <ticket-id> --operator <operator> --checkpoint-name <checkpoint-name> --body '<completion note>' --close-ticket",
 				RequiresApproval: true,
 				WritesWorldState: true,
 			},
 			{
 				ID:               "fail_or_rollback",
-				Title:            "Fail or rollback maintenance if validation fails",
+				Title:            "Fail or rollback ticket-based maintenance if validation fails",
 				Command:          "go run ./cmd/arena-broker --mode ticket-rollback-maintenance --resident <resident> --message-id <ticket-id> --operator <operator> --body '<rollback note>'",
 				RequiresApproval: true,
 				WritesWorldState: true,

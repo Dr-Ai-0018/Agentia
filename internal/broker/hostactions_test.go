@@ -213,6 +213,105 @@ func TestHostActionServicePlanResourceMaintenanceForDisk(t *testing.T) {
 	}
 }
 
+func TestHostActionServiceHostOnlyMaintenanceLifecycle(t *testing.T) {
+	root := t.TempDir()
+	service := NewHostActionService(root)
+	fake := &fakeMachineControl{}
+	service.machine = fake
+	refreshed := false
+	service.app.inventoryCollector = func(cfg Config, now time.Time) (InventorySnapshot, error) {
+		refreshed = true
+		return InventorySnapshot{
+			CollectedAt: now.Format(time.RFC3339),
+			Residents: []ResidentInventoryFact{{
+				ResidentID:     "amber",
+				InstanceName:   "amber",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           1,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        12,
+				UpdatedAt:      now.Format(time.RFC3339),
+			}},
+		}, nil
+	}
+	service.app.inventorySaver = func(root string, snapshot InventorySnapshot) (string, error) {
+		return filepath.Join(root, "inventory", "incus-inventory.json"), nil
+	}
+
+	planned, err := service.PlanHostResourceMaintenance(HostResourceMaintenanceInput{
+		Resident:             "amber",
+		Resource:             "cpu",
+		Amount:               "2",
+		Note:                 "Host-initiated maintenance for approved capacity normalization.",
+		Window:               "2026-06-19T02:00Z/2026-06-19T02:15Z",
+		Operator:             "chenglin",
+		CreateHostCheckpoint: true,
+	})
+	if err != nil {
+		t.Fatalf("plan host maintenance: %v", err)
+	}
+	if planned.Intervention.ID == "" || planned.Intervention.Status != "planned" {
+		t.Fatalf("expected planned host intervention, got %#v", planned)
+	}
+	if !strings.Contains(planned.Intervention.Body, "approved_for_maintenance=true") ||
+		!strings.Contains(planned.Intervention.Body, "resource=cpu") ||
+		!strings.Contains(planned.Intervention.Body, "amount=2") {
+		t.Fatalf("unexpected host maintenance body: %q", planned.Intervention.Body)
+	}
+	if fake.snapshotInstance != "amber" || !strings.HasPrefix(fake.snapshotName, "checkpoint-amber-") {
+		t.Fatalf("expected host checkpoint creation, got fake=%#v", fake)
+	}
+
+	started, err := service.StartHostResourceMaintenance(HostResourceMaintenanceInput{
+		InterventionID: planned.Intervention.ID,
+		Resident:       "amber",
+		Resource:       "cpu",
+		Amount:         "2",
+		Note:           "Maintenance window has started.",
+		Operator:       "chenglin",
+		CheckpointName: planned.CheckpointName,
+	})
+	if err != nil {
+		t.Fatalf("start host maintenance: %v", err)
+	}
+	if started.Intervention.Status != "in_progress" || !strings.Contains(started.Intervention.Body, "maintenance_started=true") {
+		t.Fatalf("expected in-progress intervention, got %#v", started.Intervention)
+	}
+
+	completed, err := service.CompleteHostResourceMaintenance(HostResourceMaintenanceInput{
+		InterventionID: planned.Intervention.ID,
+		Resident:       "amber",
+		Resource:       "cpu",
+		Amount:         "2",
+		Note:           "Maintenance finished successfully.",
+		Operator:       "chenglin",
+		CheckpointName: planned.CheckpointName,
+	})
+	if err != nil {
+		t.Fatalf("complete host maintenance: %v", err)
+	}
+	if completed.Intervention.Status != "completed" || !completed.InventoryRefreshed || !refreshed {
+		t.Fatalf("expected completed intervention and inventory refresh, got %#v refreshed=%v", completed, refreshed)
+	}
+	if !strings.Contains(completed.Intervention.Body, "maintenance_completed=true") {
+		t.Fatalf("expected completion marker, got %q", completed.Intervention.Body)
+	}
+	records := readMaintenanceRunRecords(t, root)
+	if len(records) != 3 {
+		t.Fatalf("expected planned, in_progress, completed records, got %#v", records)
+	}
+	if records[0].TicketID != "" || records[0].InterventionID != planned.Intervention.ID {
+		t.Fatalf("expected host-only maintenance record without ticket id, got %#v", records[0])
+	}
+	if records[0].State != "planned" || records[1].State != "in_progress" || records[2].State != "completed" {
+		t.Fatalf("unexpected maintenance record states: %#v", records)
+	}
+	if !records[2].InventoryRefreshed {
+		t.Fatalf("expected completion record inventory refresh: %#v", records[2])
+	}
+}
+
 func TestHostActionServiceCompleteResourceMaintenanceClosesTicket(t *testing.T) {
 	root := t.TempDir()
 	store := worldstate.New(root)
