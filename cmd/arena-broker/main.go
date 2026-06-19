@@ -205,7 +205,7 @@ func main() {
 		}
 		printJSON(out)
 	case "v0-acceptance-evidence-template":
-		out, err := app.RunV0AcceptanceEvidenceTemplate(*limit, time.Now().UTC())
+		out, err := app.RunV0AcceptanceEvidenceTemplate(*limit, *checkID, time.Now().UTC())
 		if err != nil {
 			exitf("%v", err)
 		}

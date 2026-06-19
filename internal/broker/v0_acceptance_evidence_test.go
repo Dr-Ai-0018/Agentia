@@ -170,7 +170,7 @@ func TestRunV0AcceptanceEvidenceTemplateIsReadOnly(t *testing.T) {
 		},
 	}
 
-	out := BuildV0AcceptanceEvidenceTemplate(acceptance, testEvidenceTime())
+	out := BuildV0AcceptanceEvidenceTemplate(acceptance, "", testEvidenceTime())
 	if out.Count != 5 || len(out.Templates) != 5 {
 		t.Fatalf("expected five manual evidence templates, got %#v", out)
 	}
@@ -193,6 +193,24 @@ func TestRunV0AcceptanceEvidenceTemplateIsReadOnly(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("template command must not write evidence, got %#v", records)
+	}
+}
+
+func TestBuildV0AcceptanceEvidenceTemplateFiltersCheckID(t *testing.T) {
+	acceptance := V0AcceptanceOutput{
+		Source: "test",
+		Checks: []V0AcceptanceCheck{
+			evidenceTemplateCheck("cpu_maintenance_regression", v0AcceptancePending, true, true),
+			evidenceTemplateCheck("disk_maintenance_regression", v0AcceptancePending, true, true),
+		},
+	}
+
+	out := BuildV0AcceptanceEvidenceTemplate(acceptance, "disk_maintenance_regression", testEvidenceTime())
+	if out.Count != 1 || len(out.Templates) != 1 {
+		t.Fatalf("expected one filtered template, got %#v", out)
+	}
+	if out.Templates[0].CheckID != "disk_maintenance_regression" {
+		t.Fatalf("unexpected filtered template: %#v", out.Templates[0])
 	}
 }
 

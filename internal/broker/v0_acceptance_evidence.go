@@ -115,15 +115,20 @@ func (a *App) RunV0AcceptanceEvidenceList(limit int, now time.Time) (V0Acceptanc
 	}, nil
 }
 
-func (a *App) RunV0AcceptanceEvidenceTemplate(limit int, now time.Time) (V0AcceptanceEvidenceTemplateOutput, error) {
+func (a *App) RunV0AcceptanceEvidenceTemplate(limit int, checkID string, now time.Time) (V0AcceptanceEvidenceTemplateOutput, error) {
+	checkID = strings.TrimSpace(checkID)
+	if checkID != "" && !isValidV0AcceptanceEvidenceCheck(checkID) {
+		return V0AcceptanceEvidenceTemplateOutput{}, fmt.Errorf("unknown v0 acceptance check id: %s", checkID)
+	}
 	acceptance, err := a.RunV0AcceptanceFromSnapshot(limit)
 	if err != nil {
 		return V0AcceptanceEvidenceTemplateOutput{}, err
 	}
-	return BuildV0AcceptanceEvidenceTemplate(acceptance, now), nil
+	return BuildV0AcceptanceEvidenceTemplate(acceptance, checkID, now), nil
 }
 
-func BuildV0AcceptanceEvidenceTemplate(acceptance V0AcceptanceOutput, now time.Time) V0AcceptanceEvidenceTemplateOutput {
+func BuildV0AcceptanceEvidenceTemplate(acceptance V0AcceptanceOutput, checkID string, now time.Time) V0AcceptanceEvidenceTemplateOutput {
+	checkID = strings.TrimSpace(checkID)
 	out := V0AcceptanceEvidenceTemplateOutput{
 		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Source:      acceptance.Source,
@@ -135,6 +140,9 @@ func BuildV0AcceptanceEvidenceTemplate(acceptance V0AcceptanceOutput, now time.T
 	}
 	for _, check := range acceptance.Checks {
 		if check.Category != "manual" || strings.TrimSpace(check.EvidenceCommand) == "" {
+			continue
+		}
+		if checkID != "" && check.ID != checkID {
 			continue
 		}
 		out.Templates = append(out.Templates, V0AcceptanceEvidenceTemplate{
