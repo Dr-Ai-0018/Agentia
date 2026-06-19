@@ -99,6 +99,7 @@ type ResidentMemoryMaintenance struct {
 	OperatorDecayCandidates int    `json:"operator_decay_candidates,omitempty"`
 	ResidentReviewQueue     int    `json:"resident_review_queue,omitempty"`
 	OperatorReviewRequired  int    `json:"operator_review_required,omitempty"`
+	StaleReviewItems        int    `json:"stale_review_items,omitempty"`
 	DuplicateHistoryGroups  int    `json:"duplicate_history_groups,omitempty"`
 	BeforeHistoryGroups     int    `json:"before_history_groups,omitempty"`
 	AfterHistoryGroups      int    `json:"after_history_groups,omitempty"`
@@ -118,6 +119,7 @@ type MemoryMaintenanceSummary struct {
 	OperatorDecayCandidates int                         `json:"operator_decay_candidates,omitempty"`
 	ResidentReviewQueue     int                         `json:"resident_review_queue,omitempty"`
 	OperatorReviewRequired  int                         `json:"operator_review_required,omitempty"`
+	StaleReviewItems        int                         `json:"stale_review_items,omitempty"`
 	DuplicateHistoryGroups  int                         `json:"duplicate_history_groups"`
 	BeforeHistoryGroups     int                         `json:"before_history_groups"`
 	AfterHistoryGroups      int                         `json:"after_history_groups"`
@@ -177,6 +179,7 @@ type HostInspectSummary struct {
 	MemoryOperatorDecayCandidates     int                                `json:"memory_operator_decay_candidates,omitempty"`
 	MemoryResidentReviewQueue         int                                `json:"memory_resident_review_queue,omitempty"`
 	MemoryOperatorReviewRequired      int                                `json:"memory_operator_review_required,omitempty"`
+	MemoryStaleReviewItems            int                                `json:"memory_stale_review_items,omitempty"`
 	MemoryDuplicateHistoryGroups      int                                `json:"memory_duplicate_history_groups,omitempty"`
 	LatestOrchestrator                *OrchestratorInspectionDigest      `json:"latest_orchestrator,omitempty"`
 	RecentOrchestrators               []OrchestratorInspectionDigest     `json:"recent_orchestrators,omitempty"`
@@ -222,6 +225,7 @@ type ResidentInspectRisk struct {
 	MemoryOperatorDecayCandidates int      `json:"memory_operator_decay_candidates,omitempty"`
 	MemoryResidentReviewQueue     int      `json:"memory_resident_review_queue,omitempty"`
 	MemoryOperatorReviewRequired  int      `json:"memory_operator_review_required,omitempty"`
+	MemoryStaleReviewItems        int      `json:"memory_stale_review_items,omitempty"`
 	MemoryDuplicateHistoryGroups  int      `json:"memory_duplicate_history_groups,omitempty"`
 	MemoryRecommendedAction       string   `json:"memory_recommended_action,omitempty"`
 	MemorySummary                 string   `json:"memory_summary,omitempty"`

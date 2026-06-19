@@ -145,12 +145,12 @@ func maintenanceReadiness(summary HostInspectSummary) V0ReadinessItem {
 
 func memoryReadiness(summary HostInspectSummary) V0ReadinessItem {
 	item := V0ReadinessItem{ID: "memory_governance", Title: "Memory governance boundaries are explicit", Required: true, Status: v0ReadinessPass}
-	item.Evidence = append(item.Evidence, fmt.Sprintf("attention=%d operator_decay=%d resident_review=%d operator_review=%d duplicates=%d", summary.MemoryItemsAttention, summary.MemoryOperatorDecayCandidates, summary.MemoryResidentReviewQueue, summary.MemoryOperatorReviewRequired, summary.MemoryDuplicateHistoryGroups))
-	if summary.MemoryDuplicateHistoryGroups > 0 {
+	item.Evidence = append(item.Evidence, fmt.Sprintf("attention=%d operator_decay=%d resident_review=%d operator_review=%d stale_review=%d duplicates=%d", summary.MemoryItemsAttention, summary.MemoryOperatorDecayCandidates, summary.MemoryResidentReviewQueue, summary.MemoryOperatorReviewRequired, summary.MemoryStaleReviewItems, summary.MemoryDuplicateHistoryGroups))
+	if summary.MemoryDuplicateHistoryGroups > 0 || summary.MemoryOperatorReviewRequired > 0 {
 		item.Status = v0ReadinessFail
 		return item
 	}
-	if summary.MemoryItemsAttention > 0 || summary.MemoryOperatorDecayCandidates > 0 || summary.MemoryResidentReviewQueue > 0 || summary.MemoryOperatorReviewRequired > 0 {
+	if summary.MemoryItemsAttention > 0 || summary.MemoryOperatorDecayCandidates > 0 || summary.MemoryResidentReviewQueue > 0 || summary.MemoryStaleReviewItems > 0 {
 		item.Status = v0ReadinessWarn
 	}
 	return item

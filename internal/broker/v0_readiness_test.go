@@ -106,6 +106,36 @@ func TestBuildV0ReadinessFailsOnDuplicateMemoryDebt(t *testing.T) {
 	}
 }
 
+func TestBuildV0ReadinessFailsOnOperatorMemoryReview(t *testing.T) {
+	out := BuildV0Readiness(HostInspectSummary{
+		ResidentCount:                3,
+		ResidentsRunning:             3,
+		Capacity:                     HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "disk", AllocatableTotal: 100, AllocatableFree: 50, Unit: "GiB"}}},
+		LatestOrchestrator:           &OrchestratorInspectionDigest{RunID: "orchestrator-ok"},
+		MemoryOperatorReviewRequired: 1,
+		MemoryMaintenanceResidents:   1,
+	}, time.Date(2026, 6, 18, 6, 30, 0, 0, time.UTC), "test")
+
+	if findReadinessItem(out, "memory_governance").Status != v0ReadinessFail {
+		t.Fatalf("expected operator review to fail memory governance: %#v", out)
+	}
+}
+
+func TestBuildV0ReadinessWarnsOnStaleMemoryReviews(t *testing.T) {
+	out := BuildV0Readiness(HostInspectSummary{
+		ResidentCount:              3,
+		ResidentsRunning:           3,
+		Capacity:                   HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "disk", AllocatableTotal: 100, AllocatableFree: 50, Unit: "GiB"}}},
+		LatestOrchestrator:         &OrchestratorInspectionDigest{RunID: "orchestrator-ok"},
+		MemoryStaleReviewItems:     12,
+		MemoryMaintenanceResidents: 1,
+	}, time.Date(2026, 6, 18, 6, 30, 0, 0, time.UTC), "test")
+
+	if findReadinessItem(out, "memory_governance").Status != v0ReadinessWarn {
+		t.Fatalf("expected stale memory reviews to warn without blocking: %#v", out)
+	}
+}
+
 func TestBuildV0ReadinessMarksLongSoakAsApprovalRequired(t *testing.T) {
 	out := BuildV0Readiness(HostInspectSummary{
 		ResidentCount:                 3,

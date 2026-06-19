@@ -513,8 +513,39 @@ func TestMemoryMaintenanceRecommendation(t *testing.T) {
 		t.Fatalf("unexpected operator review recommendation: %q", action)
 	}
 
+	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{LifecycleAttention: 1, StaleReviewItems: 1})
+	if action != "lifecycle_stale_review" {
+		t.Fatalf("unexpected stale review recommendation: %q", action)
+	}
+
 	action, _ = memoryMaintenanceRecommendation(ResidentMemoryMaintenance{DuplicateHistoryGroups: 1})
 	if action != "compaction_dry_run" {
 		t.Fatalf("unexpected compaction recommendation: %q", action)
+	}
+}
+
+func TestClassifyLifecycleAttentionSeparatesStaleRetain(t *testing.T) {
+	now := time.Date(2026, 6, 19, 9, 0, 0, 0, time.UTC)
+	decay, residentQueue, operatorRequired, stale := classifyLifecycleAttention([]memory.LifecycleItem{
+		{
+			NeedsAttention:            true,
+			Action:                    memory.ActionRetain,
+			RecommendedOperatorAction: "retain",
+		},
+		{
+			NeedsAttention:            true,
+			RecommendedOperatorAction: "review_for_promotion_or_rewrite",
+		},
+		{
+			NeedsAttention:            true,
+			RecommendedOperatorAction: "manual_review",
+		},
+		{
+			NeedsAttention:            true,
+			RecommendedOperatorAction: "decay_ok_after_spot_check",
+		},
+	}, now)
+	if decay != 1 || residentQueue != 1 || operatorRequired != 1 || stale != 1 {
+		t.Fatalf("unexpected lifecycle classification: decay=%d resident=%d operator=%d stale=%d", decay, residentQueue, operatorRequired, stale)
 	}
 }

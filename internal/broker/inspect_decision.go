@@ -127,6 +127,13 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		addOperatorAction(&out, "memory_operator_review", "medium", "Inspect operator-required memory items manually and prefer mark/keep over destructive edits.")
 		addOperatorObservation(&out, reason)
 	}
+	if summary.MemoryStaleReviewItems > 0 {
+		raiseSeverity(&out, "medium")
+		reason := fmt.Sprintf("%d memory lifecycle items are stale retain reviews", summary.MemoryStaleReviewItems)
+		out.Reasons = append(out.Reasons, reason)
+		addOperatorAction(&out, "memory_stale_review", "medium", "Keep stale retain reviews visible as maintenance debt; they are not a blocking operator rewrite queue.")
+		addOperatorObservation(&out, reason)
+	}
 	if summary.MemoryDuplicateHistoryGroups > 0 {
 		raiseSeverity(&out, "medium")
 		reason := fmt.Sprintf("%d duplicate memory history groups across %d residents can be compacted", summary.MemoryDuplicateHistoryGroups, summary.MemoryMaintenanceResidents)
@@ -206,6 +213,9 @@ func BuildHostDecisionAssist(summary HostInspectSummary) HostDecisionAssist {
 		}
 		if item.MemoryOperatorReviewRequired > 0 {
 			addFocusOperatorReason(&focus, fmt.Sprintf("%d memory lifecycle items require operator review", item.MemoryOperatorReviewRequired))
+		}
+		if item.MemoryStaleReviewItems > 0 {
+			addFocusOperatorReason(&focus, fmt.Sprintf("%d memory lifecycle items are stale retain reviews", item.MemoryStaleReviewItems))
 		}
 		if item.MemoryDuplicateHistoryGroups > 0 {
 			addFocusOperatorReason(&focus, fmt.Sprintf("%d duplicate memory history groups can be compacted", item.MemoryDuplicateHistoryGroups))

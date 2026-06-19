@@ -75,6 +75,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 		summary.MemoryOperatorDecayCandidates += item.OperatorDecayCandidates
 		summary.MemoryResidentReviewQueue += item.ResidentReviewQueue
 		summary.MemoryOperatorReviewRequired += item.OperatorReviewRequired
+		summary.MemoryStaleReviewItems += item.StaleReviewItems
 		if item.DuplicateHistoryGroups > 0 {
 			memoryDuplicateGroups[item.ResidentID] = item.DuplicateHistoryGroups
 			summary.MemoryDuplicateHistoryGroups += item.DuplicateHistoryGroups
@@ -95,7 +96,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 		maintenanceResidents[resident] = struct{}{}
 	}
 	for resident, item := range memoryMaintenanceByResident {
-		if item.OperatorDecayCandidates > 0 || item.ResidentReviewQueue > 0 || item.OperatorReviewRequired > 0 {
+		if item.OperatorDecayCandidates > 0 || item.ResidentReviewQueue > 0 || item.OperatorReviewRequired > 0 || item.StaleReviewItems > 0 {
 			maintenanceResidents[resident] = struct{}{}
 		}
 	}
@@ -157,6 +158,9 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			MemoryOperatorReviewRequired: memoryMaintenanceCount(memoryMaintenanceByResident, item.ResidentID, func(item ResidentMemoryMaintenance) int {
 				return item.OperatorReviewRequired
 			}),
+			MemoryStaleReviewItems: memoryMaintenanceCount(memoryMaintenanceByResident, item.ResidentID, func(item ResidentMemoryMaintenance) int {
+				return item.StaleReviewItems
+			}),
 			MemoryDuplicateHistoryGroups: memoryDuplicateGroups[item.ResidentID],
 		}
 		if item.HostRSSHighGuestUsageLow {
@@ -190,6 +194,7 @@ func SummarizeHostInspect(out HostInspectOutput) HostInspectSummary {
 			risk.MemoryOperatorDecayCandidates > 0 ||
 			risk.MemoryResidentReviewQueue > 0 ||
 			risk.MemoryOperatorReviewRequired > 0 ||
+			risk.MemoryStaleReviewItems > 0 ||
 			risk.MemoryDuplicateHistoryGroups > 0 ||
 			risk.HostRSSHighGuestUsageLow ||
 			strings.TrimSpace(risk.LiveMetricsError) != "" ||

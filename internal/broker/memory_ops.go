@@ -246,6 +246,7 @@ func (a *App) RunMemoryMaintenanceSummary() MemoryMaintenanceSummary {
 		out.OperatorDecayCandidates += item.OperatorDecayCandidates
 		out.ResidentReviewQueue += item.ResidentReviewQueue
 		out.OperatorReviewRequired += item.OperatorReviewRequired
+		out.StaleReviewItems += item.StaleReviewItems
 		out.DuplicateHistoryGroups += item.DuplicateHistoryGroups
 		out.BeforeHistoryGroups += item.BeforeHistoryGroups
 		out.AfterHistoryGroups += item.AfterHistoryGroups
@@ -278,7 +279,7 @@ func (a *App) buildMemoryMaintenanceReportsAt(now time.Time) []ResidentMemoryMai
 		item := ResidentMemoryMaintenance{ResidentID: resident.ResidentID}
 		if report, err := store.LifecycleReport(resident.ResidentID, now, memory.DefaultPolicy()); err == nil {
 			item.LifecycleAttention = report.NeedsAttention
-			item.OperatorDecayCandidates, item.ResidentReviewQueue, item.OperatorReviewRequired = classifyLifecycleAttention(report.Items, now)
+			item.OperatorDecayCandidates, item.ResidentReviewQueue, item.OperatorReviewRequired, item.StaleReviewItems = classifyLifecycleAttention(report.Items, now)
 		}
 		if report, err := store.CompactResidentWithReport(resident.ResidentID, false); err == nil {
 			item.BeforeHistoryGroups = report.BeforeHistoryGroups
@@ -305,7 +306,10 @@ func memoryMaintenanceRecommendation(item ResidentMemoryMaintenance) (string, st
 	case item.ResidentReviewQueue > 0 && item.OperatorReviewRequired == 0:
 		return "resident_memory_review_queue", fmt.Sprintf("%d memory lifecycle items are marked for resident self-review; do not rewrite protected memories from the host side.", item.ResidentReviewQueue)
 	case item.LifecycleAttention > 0:
-		return "lifecycle_operator_review", fmt.Sprintf("%d memory lifecycle items need operator review before further action.", item.OperatorReviewRequired)
+		if item.OperatorReviewRequired > 0 {
+			return "lifecycle_operator_review", fmt.Sprintf("%d memory lifecycle items need operator review before further action.", item.OperatorReviewRequired)
+		}
+		return "lifecycle_stale_review", fmt.Sprintf("%d memory lifecycle items passed review time but current policy still recommends retain; keep visible as maintenance debt, not a blocking operator rewrite queue.", item.StaleReviewItems)
 	case item.DuplicateHistoryGroups > 0:
 		return "compaction_dry_run", fmt.Sprintf("%d duplicate history groups can be compacted after reviewing the before/after report.", item.DuplicateHistoryGroups)
 	default:
@@ -313,7 +317,7 @@ func memoryMaintenanceRecommendation(item ResidentMemoryMaintenance) (string, st
 	}
 }
 
-func classifyLifecycleAttention(items []memory.LifecycleItem, now time.Time) (operatorDecayCandidates int, residentReviewQueue int, operatorReviewRequired int) {
+func classifyLifecycleAttention(items []memory.LifecycleItem, now time.Time) (operatorDecayCandidates int, residentReviewQueue int, operatorReviewRequired int, staleReviewItems int) {
 	for _, item := range items {
 		if !item.NeedsAttention {
 			continue
@@ -326,7 +330,11 @@ func classifyLifecycleAttention(items []memory.LifecycleItem, now time.Time) (op
 			residentReviewQueue++
 			continue
 		}
+		if item.Action == memory.ActionRetain && item.RecommendedOperatorAction == "retain" {
+			staleReviewItems++
+			continue
+		}
 		operatorReviewRequired++
 	}
-	return operatorDecayCandidates, residentReviewQueue, operatorReviewRequired
+	return operatorDecayCandidates, residentReviewQueue, operatorReviewRequired, staleReviewItems
 }
