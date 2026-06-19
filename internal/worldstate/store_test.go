@@ -390,6 +390,34 @@ func TestReadHostFollowups(t *testing.T) {
 	}
 }
 
+func TestReadHostFollowupsSkipsCompletedInterventions(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	completed, err := store.CreateHostIntervention("amber", "maintenance", "Completed maintenance", "Maintenance completed.", "chenglin", now)
+	if err != nil {
+		t.Fatalf("create completed intervention: %v", err)
+	}
+	if _, err := store.ResolveHostIntervention(completed.ID, "Maintenance completed.\nmaintenance_completed=true\nmaintenance_state=completed", "chenglin", now.Add(time.Minute)); err != nil {
+		t.Fatalf("resolve intervention: %v", err)
+	}
+	if _, err := store.CreateHostIntervention("jade", "maintenance", "Planned maintenance", "Maintenance is planned.", "chenglin", now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("create planned intervention: %v", err)
+	}
+
+	items, err := store.ReadHostFollowups(10)
+	if err != nil {
+		t.Fatalf("host followups: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected only planned intervention followup, got %#v", items)
+	}
+	if items[0].Resident != "jade" || items[0].Status != "planned" {
+		t.Fatalf("unexpected followup: %#v", items[0])
+	}
+}
+
 func TestMarkResidentMessagesReadDoesNotLeaveTempFiles(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)

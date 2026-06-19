@@ -559,6 +559,9 @@ func (s *Store) ReadHostFollowups(limit int) ([]HostFollowup, error) {
 		})
 	}
 	for _, item := range openInterventions {
+		if !hostInterventionNeedsFollowup(item.Status) {
+			continue
+		}
 		out = append(out, HostFollowup{
 			Kind:        "host_intervention",
 			Resident:    item.Resident,
@@ -587,6 +590,17 @@ func (s *Store) ReadHostFollowups(limit int) ([]HostFollowup, error) {
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func hostInterventionNeedsFollowup(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "planned", "open", "in_progress", "failed", "rolled_back", "unknown":
+		return true
+	case "completed", "resolved", "closed", "cancelled", "canceled":
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *Store) MessageStatus(messageID string) (string, error) {
