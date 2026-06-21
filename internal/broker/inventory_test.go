@@ -61,22 +61,66 @@ func TestParseMemoryLimitMiB(t *testing.T) {
 	}
 }
 
+func TestParseDiskGiB(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    string
+		fallback int64
+		want     int64
+	}{
+		{name: "gib", value: "13GiB", want: 13},
+		{name: "decimal gib rounds up", value: "12.5GiB", want: 13},
+		{name: "gb rounds to gib", value: "13GB", want: 13},
+		{name: "mib", value: "13312MiB", want: 13},
+		{name: "bytes", value: "13958643712", want: 13},
+		{name: "plain small integer means gib", value: "13", want: 13},
+		{name: "bad uses fallback", value: "bad", fallback: 12, want: 12},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseDiskGiB(tt.value, tt.fallback); got != tt.want {
+				t.Fatalf("parseDiskGiB(%q) = %d, want %d", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRootDiskGiBPrefersExplicitRootDevice(t *testing.T) {
+	item := incusInventoryInstance{
+		Devices: map[string]map[string]string{
+			"root": {
+				"type": "disk",
+				"size": "13GiB",
+			},
+		},
+		ExpandedDevices: map[string]map[string]string{
+			"root": {
+				"type": "disk",
+				"size": "12GiB",
+			},
+		},
+	}
+	if got := parseRootDiskGiB(item, 10); got != 13 {
+		t.Fatalf("expected explicit root device size 13, got %d", got)
+	}
+}
+
+func TestParseRootDiskGiBFallsBackToExpandedRootDevice(t *testing.T) {
+	item := incusInventoryInstance{
+		ExpandedDevices: map[string]map[string]string{
+			"root": {
+				"type": "disk",
+				"size": "13GiB",
+			},
+		},
+	}
+	if got := parseRootDiskGiB(item, 10); got != 13 {
+		t.Fatalf("expected expanded root device size 13, got %d", got)
+	}
+}
+
 func TestExtractIPv4SkipsLoopback(t *testing.T) {
-	item := struct {
-		Name           string            `json:"name"`
-		Status         string            `json:"status"`
-		Type           string            `json:"type"`
-		Config         map[string]string `json:"config"`
-		ExpandedConfig map[string]string `json:"expanded_config"`
-		State          struct {
-			Network map[string]struct {
-				Addresses []struct {
-					Family  string `json:"family"`
-					Address string `json:"address"`
-				} `json:"addresses"`
-			} `json:"network"`
-		} `json:"state"`
-	}{}
+	item := incusInventoryInstance{}
 	item.State.Network = map[string]struct {
 		Addresses []struct {
 			Family  string `json:"family"`

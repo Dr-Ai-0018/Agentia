@@ -42,6 +42,9 @@ type AgentDecision struct {
 	NextAction     string `json:"next_action"`
 	Command        string `json:"command,omitempty"`
 	Message        string `json:"message,omitempty"`
+	NoteFile       string `json:"note_file,omitempty"`
+	NoteText       string `json:"note_text,omitempty"`
+	BackupFile     string `json:"backup_file,omitempty"`
 	TicketTitle    string `json:"ticket_title,omitempty"`
 	TicketBody     string `json:"ticket_body,omitempty"`
 	TicketPriority string `json:"ticket_priority,omitempty"`
@@ -67,9 +70,19 @@ func (d AgentDecision) CompactForHistory() string {
 		if v := truncateForModel(strings.TrimSpace(d.Command), 200); v != "" {
 			parts = append(parts, "command="+v)
 		}
-	case "write_note":
-		if v := truncateForModel(strings.TrimSpace(d.MemoryText), 200); v != "" {
+	case "note_append", "note_replace_with_backup", "note_summarize_or_compact":
+		if v := truncateForModel(strings.TrimSpace(d.NoteFile), 80); v != "" {
+			parts = append(parts, "note_file="+v)
+		}
+		if v := truncateForModel(strings.TrimSpace(d.NoteText), 200); v != "" {
 			parts = append(parts, "note="+v)
+		}
+	case "note_read", "note_list", "note_restore_backup":
+		if v := truncateForModel(strings.TrimSpace(d.NoteFile), 80); v != "" {
+			parts = append(parts, "note_file="+v)
+		}
+		if v := truncateForModel(strings.TrimSpace(d.BackupFile), 80); v != "" {
+			parts = append(parts, "backup_file="+v)
 		}
 	case "talk_to_chenglin":
 		if v := truncateForModel(strings.TrimSpace(d.Message), 180); v != "" {
@@ -91,6 +104,15 @@ func (d AgentDecision) CompactForHistory() string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func isNoteAction(action string) bool {
+	switch action {
+	case "note_list", "note_read", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact":
+		return true
+	default:
+		return false
+	}
 }
 
 func (d AgentDecision) MemoryReviewRequest() memory.MemoryReviewRequest {

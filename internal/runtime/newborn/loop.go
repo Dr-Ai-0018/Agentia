@@ -15,14 +15,15 @@ import (
 )
 
 type Runner struct {
-	client   *http.Client
-	baseURL  string
-	apiKey   string
-	actions  ActionExecutor
-	budget   *BudgetController
-	reports  *ReportWriter
-	world    *WorldBridge
-	memories *memory.FileStore
+	client    *http.Client
+	baseURL   string
+	apiKey    string
+	endpoints []openai.Endpoint
+	actions   ActionExecutor
+	budget    *BudgetController
+	reports   *ReportWriter
+	world     *WorldBridge
+	memories  *memory.FileStore
 }
 
 type loopState struct {
@@ -36,19 +37,42 @@ type loopState struct {
 	LastReflectRound int
 	RunGroupID       string
 	RecentActions    []RecentAction
+	ParseFailures    int
 }
 
 func NewRunner(client *http.Client, baseURL, apiKey string) *Runner {
-	return &Runner{
-		client:   client,
-		baseURL:  baseURL,
-		apiKey:   apiKey,
-		actions:  NewIncusActionExecutor(),
-		budget:   NewBudgetController(broker.New(".agents")),
-		reports:  NewReportWriter(),
-		world:    NewWorldBridge(".agents"),
-		memories: memory.NewFileStore(".agents/memory"),
+	return NewRunnerWithEndpoints(client, []openai.Endpoint{{
+		Name:    "primary",
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+	}})
+}
+
+func NewRunnerWithEndpoints(client *http.Client, endpoints []openai.Endpoint) *Runner {
+	baseURL := ""
+	apiKey := ""
+	if len(endpoints) > 0 {
+		baseURL = endpoints[0].BaseURL
+		apiKey = endpoints[0].APIKey
 	}
+	return &Runner{
+		client:    client,
+		baseURL:   baseURL,
+		apiKey:    apiKey,
+		endpoints: append([]openai.Endpoint(nil), endpoints...),
+		actions:   NewIncusActionExecutor(),
+		budget:    NewBudgetController(broker.New(".agents")),
+		reports:   NewReportWriter(),
+		world:     NewWorldBridge(".agents"),
+		memories:  memory.NewFileStore(".agents/memory"),
+	}
+}
+
+func (r *Runner) postStream(payload openai.RequestPayload, verbose bool) (openai.StreamResult, error) {
+	if len(r.endpoints) > 0 {
+		return openai.PostStreamWithFailover(r.client, r.endpoints, payload, verbose)
+	}
+	return openai.PostStream(r.client, r.baseURL, r.apiKey, payload, verbose)
 }
 
 func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (FinalReport, error) {
@@ -75,6 +99,9 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		NotePath:    "/root/arena-notes/boot-notes.md",
 		RunGroupID:  fmt.Sprintf("newborn-%s-%s", profile.Name, started.Format("20060102T150405Z")),
 	}
+	initialPacket := r.buildContextPacket(profile, int(duration.Seconds()), state)
+	stablePrefix := initialPacket.StablePrefix()
+	promptCacheKey := initialPacket.PromptCacheKey(profile.Name)
 	roundLogs := []RoundLog{}
 	stoppedReason := ""
 	round := 0
@@ -114,13 +141,10 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 
 		packet := r.buildContextPacket(profile, remaining, state)
-		input := append([]openai.Message(nil), history...)
-		input = append(input, openai.Message{
-			Role:    "user",
-			Content: packet.FullInput(),
-		})
+		history = appendWorkingContext(history, packet)
+		input := buildDecisionInput(stablePrefix, history)
 
-		result, err := openai.PostStream(r.client, r.baseURL, r.apiKey, buildDecisionToolPayload(profile, input, packet.PromptCacheKey(profile.Name)), verbose)
+		result, err := r.postStream(buildDecisionToolPayload(profile, input, promptCacheKey), verbose)
 		if err != nil {
 			if len(roundLogs) > 0 {
 				stoppedReason = fmt.Sprintf("upstream_request_failed: round_%d", round)
@@ -140,13 +164,24 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			parseError = err.Error()
 			fallbackUsed = true
 			decision = AgentDecision{
-				Situation:  "failed to parse structured decision",
-				NextAction: "guest_exec",
-				Command:    "whoami && hostname && pwd",
-				Reason:     "fallback to safe self inspection",
+				Situation:  "structured decision parse failed",
+				NextAction: "noop",
+				Reason:     "The runtime did not receive a valid action tool call, so no guest action was executed.",
 			}
+			state.ParseFailures++
 		}
-		actionResult := r.actions.Execute(profile, decision)
+		var actionResult ActionResult
+		if parseError != "" {
+			actionResult = ActionResult{
+				Observation: "structured_decision_parse_failed: " + parseError,
+				Activity:    tokenledger.ActivityStatusCheck,
+				Error:       true,
+				ErrorKind:   "structured_decision_parse_failed",
+				RawOutput:   parseError,
+			}
+		} else {
+			actionResult = r.actions.Execute(profile, decision)
+		}
 		observation := actionResult.Observation
 		brokerLog, err := r.budget.Settle(profile, result, roundNow, runtimeguard.CallKindWork, actionResult.Activity)
 		if err != nil {
@@ -178,10 +213,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 		state = updatedState
 
-		history = append(history,
-			openai.Message{Role: "assistant", Content: "Decision summary:\n" + decision.CompactForHistory()},
-			openai.Message{Role: "user", Content: "Observation result:\n" + compactObservationForHistory(observation)},
-		)
+		history = appendDecisionExchange(history, result, observation)
 
 		roundLogs = append(roundLogs, RoundLog{
 			Round:        round,
@@ -199,6 +231,10 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			OutputTokens: result.OutputTokens,
 			Broker:       brokerLog,
 		})
+		if parseError != "" {
+			stoppedReason = "structured_decision_parse_failed"
+			break
+		}
 		if decision.NextAction == "noop" {
 			stoppedReason = "resident_noop"
 			break
@@ -215,7 +251,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, history []openai.Message, roundLogs []RoundLog, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
 	var acceptanceBroker *BrokerUsageLog
-	if len(roundLogs) > 0 && !strings.HasPrefix(stoppedReason, "upstream_request_failed:") {
+	if len(roundLogs) > 0 && !strings.HasPrefix(stoppedReason, "upstream_request_failed:") && stoppedReason != "structured_decision_parse_failed" {
 		value, brokerLog, err := r.runAcceptance(profile, history, roundLogs, verbose)
 		if err != nil {
 			stoppedReason = appendStopReason(stoppedReason, "acceptance_failed")
@@ -452,6 +488,10 @@ func (r *Runner) renderMemoryReviewQueue(profile ResidentProfile, state loopStat
 			break
 		}
 	}
+	if len(lines) > 0 {
+		total := countResidentVisibleGovernanceItems(records)
+		lines = append([]string{fmt.Sprintf("memory_review_queue_summary: visible_pending=%d showing=%d", total, len(lines))}, lines...)
+	}
 	return lines
 }
 
@@ -467,6 +507,19 @@ func shouldDelayMemoryReview(state loopState) bool {
 		return false
 	}
 	return state.UsedActions["self_quota"] == 0 && state.UsedActions["self_status"] == 0
+}
+
+func countResidentVisibleGovernanceItems(records []memory.AbstractMemory) int {
+	total := 0
+	for _, record := range records {
+		if !memory.ResidentDigestVisible(record) {
+			continue
+		}
+		if needsGovernanceFlag(record) {
+			total++
+		}
+	}
+	return total
 }
 
 func renderRecentActions(actions []RecentAction) []string {
@@ -792,7 +845,9 @@ func preflightActivity(state loopState) tokenledger.ActivityType {
 	switch state.LastDecision.NextAction {
 	case "self_status", "self_quota", "noop":
 		return tokenledger.ActivityStatusCheck
-	case "talk_to_chenglin", "submit_ticket", "write_note", "memory_review":
+	case "talk_to_chenglin", "submit_ticket", "memory_review":
+		return tokenledger.ActivityLightWork
+	case "write_note", "note_list", "note_read", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact":
 		return tokenledger.ActivityLightWork
 	case "guest_exec":
 		return classifyGuestExecActivity(state.LastDecision.Command)
@@ -854,7 +909,7 @@ func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message
 			renderAcceptanceRoundRecap(rounds),
 		}, "\n"),
 	})
-	result, err := openai.PostStream(r.client, r.baseURL, r.apiKey, openai.RequestPayload{
+	result, err := r.postStream(openai.RequestPayload{
 		Model:           profile.Model,
 		Instructions:    acceptanceInstructions(),
 		PromptCacheKey:  fmt.Sprintf("arena-newborn-acceptance-%s-v2", profile.Name),

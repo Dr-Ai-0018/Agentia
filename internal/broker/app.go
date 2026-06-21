@@ -1039,7 +1039,7 @@ func RecoveryProbeSpec(start time.Time, responseID string) CallSpec {
 			CachedTokens: 80,
 			OutputTokens: 50,
 			TotalTokens:  150,
-			Model:        "gpt-5.4-mini",
+			Model:        "gpt-5.4",
 			ResponseID:   responseID,
 			StartedAt:    start,
 			FinishedAt:   start.Add(2 * time.Second),

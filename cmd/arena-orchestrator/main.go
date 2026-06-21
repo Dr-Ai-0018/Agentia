@@ -13,6 +13,7 @@ import (
 
 	"ai-arena/internal/broker"
 	"ai-arena/internal/orchestrator"
+	"ai-arena/internal/runtime/newborn"
 )
 
 const defaultBaseURL = "https://api.openai.com/v1"
@@ -31,16 +32,19 @@ func main() {
 		runMode   = flag.String("run-mode", "sequential", "Run mode for run: sequential|parallel")
 		runID     = flag.String("run-id", "", "Run ID for status|summary|pause|resume")
 		limit     = flag.Int("limit", 10, "Run list limit for list mode")
+		turns     = flag.Int("turns", 8, "Turns for cache-probe mode")
 	)
 	flag.Parse()
 
 	app := broker.New(".agents")
 	modeValue := strings.ToLower(strings.TrimSpace(*mode))
 	apiKey := os.Getenv("OPENAI_API_KEY")
-	if modeValue == "run" || modeValue == "retry-failed" {
+	if modeValue == "run" || modeValue == "retry-failed" || modeValue == "cache-probe" {
 		if apiKey == "" && noResidentAPIKeys(orchestrator.ParseResidentRoster(*residents)) {
 			exitf("OPENAI_API_KEY or resident-specific *_OPENAI_API_KEY is required")
 		}
+	}
+	if modeValue == "run" || modeValue == "retry-failed" {
 		if err := os.MkdirAll(*outDir, 0o755); err != nil {
 			exitf("create out dir: %v", err)
 		}
@@ -128,9 +132,38 @@ func main() {
 		}
 		raw, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Println(string(raw))
+	case "cache-probe":
+		out := runCacheProbe(orchestrator.ParseResidentRoster(*residents), *turns, *baseURL, apiKey, *verbose)
+		raw, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(raw))
 	default:
 		exitf("unknown mode: %s", *mode)
 	}
+}
+
+type cacheProbeBatch struct {
+	Residents []newborn.CacheProbeSummary `json:"residents"`
+}
+
+func runCacheProbe(residents []string, turns int, globalBaseURL, globalAPIKey string, verbose bool) cacheProbeBatch {
+	client := &http.Client{Timeout: 5 * time.Minute}
+	out := cacheProbeBatch{}
+	for _, resident := range residents {
+		profile, err := newborn.BuildProfile(resident)
+		if err != nil {
+			exitf("%v", err)
+		}
+		endpoints := orchestrator.ResidentEndpoints(resident, globalBaseURL, globalAPIKey)
+		if len(endpoints) == 0 {
+			exitf("no API endpoint configured for resident %s", resident)
+		}
+		summary, err := newborn.RunCacheProbe(client, endpoints, profile, turns, verbose)
+		if err != nil {
+			exitf("%v", err)
+		}
+		out.Residents = append(out.Residents, summary)
+	}
+	return out
 }
 
 func loadDotEnvIfPresent(path string) {
@@ -165,7 +198,7 @@ func exitf(format string, args ...any) {
 
 func noResidentAPIKeys(residents []string) bool {
 	for _, resident := range residents {
-		if orchestrator.ResidentAPIKey(resident, "") != "" {
+		if len(orchestrator.ResidentEndpoints(resident, orchestrator.EnvOrDefault("OPENAI_BASE_URL", defaultBaseURL), os.Getenv("OPENAI_API_KEY"))) > 0 {
 			return false
 		}
 	}

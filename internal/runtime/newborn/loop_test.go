@@ -22,10 +22,18 @@ import (
 )
 
 type fakeActionExecutor struct {
-	result ActionResult
+	result    ActionResult
+	calls     *int
+	decisions *[]AgentDecision
 }
 
-func (f fakeActionExecutor) Execute(ResidentProfile, AgentDecision) ActionResult {
+func (f fakeActionExecutor) Execute(_ ResidentProfile, decision AgentDecision) ActionResult {
+	if f.calls != nil {
+		*f.calls++
+	}
+	if f.decisions != nil {
+		*f.decisions = append(*f.decisions, decision)
+	}
 	return f.result
 }
 
@@ -204,21 +212,31 @@ func TestValidateGuestExecRejectsRiskyContinuityHeredoc(t *testing.T) {
 	if !denied {
 		t.Fatalf("expected risky continuity heredoc to be denied")
 	}
-	if !result.Error || result.ErrorKind != "unsafe_continuity_write" {
+	if !result.Error || result.ErrorKind != "continuity_surface_requires_note_tool" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if !strings.Contains(result.Observation, "Use write_note") {
-		t.Fatalf("expected write_note guidance, got %q", result.Observation)
+	if !strings.Contains(result.Observation, "note_replace_with_backup") {
+		t.Fatalf("expected note tool guidance, got %q", result.Observation)
+	}
+	if !strings.Contains(result.Observation, "semantic tool-selection error") {
+		t.Fatalf("expected semantic error guidance, got %q", result.Observation)
 	}
 	if !strings.Contains(result.RawOutput, "cat >> /root/arena-notes/boot-notes.md") {
 		t.Fatalf("expected raw command for debugging, got %q", result.RawOutput)
 	}
 }
 
-func TestValidateGuestExecAllowsContinuityRead(t *testing.T) {
+func TestValidateGuestExecRejectsContinuityRead(t *testing.T) {
 	command := "cat /root/arena-notes/boot-notes.md"
-	if result, denied := validateGuestExecCommand(command); denied {
-		t.Fatalf("expected continuity read to be allowed, got %#v", result)
+	result, denied := validateGuestExecCommand(command)
+	if !denied {
+		t.Fatalf("expected continuity read to require note_read")
+	}
+	if result.ErrorKind != "continuity_surface_requires_note_tool" {
+		t.Fatalf("unexpected error kind: %s", result.ErrorKind)
+	}
+	if !strings.Contains(result.Observation, "note_read") {
+		t.Fatalf("expected note_read guidance, got %q", result.Observation)
 	}
 }
 
@@ -228,7 +246,7 @@ func TestValidateGuestExecRejectsSedContinuityEdit(t *testing.T) {
 	if !denied {
 		t.Fatalf("expected sed continuity edit to be denied")
 	}
-	if result.ErrorKind != "unsafe_continuity_write" {
+	if result.ErrorKind != "continuity_surface_requires_note_tool" {
 		t.Fatalf("unexpected error kind: %s", result.ErrorKind)
 	}
 }
@@ -313,6 +331,26 @@ func TestParseDecisionResultFromFunctionCall(t *testing.T) {
 	}
 }
 
+func TestParseDecisionResultFromSplitToolCallName(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				CallName:  "guest_exec",
+				Arguments: `{"situation":"Need an identity probe.","reason":"Observe before assuming.","command":"whoami"}`,
+			},
+		},
+	}
+
+	decision, err := parseDecisionResult(result)
+	if err != nil {
+		t.Fatalf("parse decision result: %v", err)
+	}
+	if decision.NextAction != "guest_exec" || decision.Command != "whoami" {
+		t.Fatalf("unexpected split-tool decision: %#v", decision)
+	}
+}
+
 func TestParseDecisionResultSupportsSelfQuota(t *testing.T) {
 	result := openai.StreamResult{
 		FunctionCalls: []openai.ResponseItem{
@@ -336,7 +374,7 @@ func TestParseDecisionResultSupportsSelfQuota(t *testing.T) {
 	}
 }
 
-func TestParseDecisionResultSupportsWriteNoteMemoryText(t *testing.T) {
+func TestParseDecisionResultMapsLegacyWriteNoteToNoteAppend(t *testing.T) {
 	result := openai.StreamResult{
 		FunctionCalls: []openai.ResponseItem{
 			{
@@ -351,14 +389,17 @@ func TestParseDecisionResultSupportsWriteNoteMemoryText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse decision result: %v", err)
 	}
-	if decision.NextAction != "write_note" {
+	if decision.NextAction != "note_append" {
 		t.Fatalf("unexpected next action: %s", decision.NextAction)
 	}
 	if decision.Command != "" {
-		t.Fatalf("expected write_note command to be cleared, got %q", decision.Command)
+		t.Fatalf("expected legacy write_note command to be cleared, got %q", decision.Command)
 	}
-	if decision.MemoryText != "I confirmed the note surface exists." {
-		t.Fatalf("expected memory_text to survive normalization, got %q", decision.MemoryText)
+	if decision.NoteText != "I confirmed the note surface exists." {
+		t.Fatalf("expected memory_text to move into note_text, got %q", decision.NoteText)
+	}
+	if decision.MemoryText != "" {
+		t.Fatalf("expected memory_text to be cleared after normalization, got %q", decision.MemoryText)
 	}
 }
 
@@ -424,6 +465,58 @@ func TestParseDecisionResultRejectsGuestExecWithoutCommand(t *testing.T) {
 	}
 }
 
+func TestParseDecisionResultSupportsSplitNoteAppendTool(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				Name:      "note_append",
+				Arguments: `{"situation":"Need continuity.","reason":"Record concise local fact.","note_file":"","note_text":"I confirmed the safe note API is the continuity path."}`,
+			},
+		},
+	}
+
+	decision, err := parseDecisionResult(result)
+	if err != nil {
+		t.Fatalf("parse decision result: %v", err)
+	}
+	if decision.NextAction != "note_append" {
+		t.Fatalf("unexpected next action: %s", decision.NextAction)
+	}
+	if decision.Command != "" {
+		t.Fatalf("expected split note tool not to carry command, got %q", decision.Command)
+	}
+	if decision.NoteText != "I confirmed the safe note API is the continuity path." {
+		t.Fatalf("unexpected note text: %q", decision.NoteText)
+	}
+}
+
+func TestParseDecisionResultSupportsNoteCompactTool(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				Name:      "note_summarize_or_compact",
+				Arguments: `{"situation":"Boot notes are too long.","reason":"Compact after reading them.","note_file":"boot-notes.md","note_text":"Compact continuity summary."}`,
+			},
+		},
+	}
+
+	decision, err := parseDecisionResult(result)
+	if err != nil {
+		t.Fatalf("parse decision result: %v", err)
+	}
+	if decision.NextAction != "note_summarize_or_compact" {
+		t.Fatalf("unexpected next action: %s", decision.NextAction)
+	}
+	if decision.Command != "" {
+		t.Fatalf("expected compact note tool not to carry command, got %q", decision.Command)
+	}
+	if decision.NoteText != "Compact continuity summary." {
+		t.Fatalf("unexpected note text: %q", decision.NoteText)
+	}
+}
+
 func TestCompactObservationForHistory(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i < 120; i++ {
@@ -465,6 +558,184 @@ func TestBuildContextPacketStableCacheKeyAcrossWorkingShift(t *testing.T) {
 	}
 }
 
+func TestDecisionPayloadPlacesStableContextAsFirstInputMessage(t *testing.T) {
+	runner := NewRunner(nil, "", "")
+	profile := ResidentProfile{
+		Name:     "amber",
+		Model:    "gpt-5.5",
+		Persona:  "coordinator",
+		Style:    "clear",
+		CoreBias: "reduce confusion",
+	}
+	packet := runner.buildContextPacket(profile, 240, loopState{
+		UsedActions:     map[string]int{"guest_exec": 1},
+		NotePath:        "/root/arena-notes/boot-notes.md",
+		LastObservation: "dynamic observation",
+	})
+	history := []openai.Message{
+		{Role: "user", Content: "initial"},
+		{Role: "assistant", Content: "previous decision"},
+	}
+	history = appendWorkingContext(history, packet)
+	input := buildDecisionInput(packet.StablePrefix(), history)
+	payload := buildDecisionToolPayload(profile, input, packet.PromptCacheKey(profile.Name))
+
+	if payload.Instructions != makeInstructions() {
+		t.Fatalf("instructions must stay fixed tool rules only")
+	}
+	if strings.Contains(payload.Instructions, "[system_const]") ||
+		strings.Contains(payload.Instructions, "[world_state]") ||
+		strings.Contains(payload.Instructions, "[memory_digest]") {
+		t.Fatalf("stable resident context must not be promoted into instructions: %q", payload.Instructions)
+	}
+	if len(payload.Input) != 4 {
+		t.Fatalf("expected stable prefix plus append-only history, got %#v", payload.Input)
+	}
+	if !strings.Contains(payload.Input[0].Content, "[system_const]") ||
+		!strings.Contains(payload.Input[0].Content, "[world_state]") ||
+		!strings.Contains(payload.Input[0].Content, "[memory_digest]") {
+		t.Fatalf("stable context must be first input message: %q", payload.Input[0].Content)
+	}
+	if strings.Contains(payload.Input[0].Content, "[recent_working_context]") {
+		t.Fatalf("dynamic working context must not enter stable prefix")
+	}
+	if payload.Input[1].Content != "initial" || payload.Input[2].Content != "previous decision" {
+		t.Fatalf("history order was changed: %#v", payload.Input)
+	}
+	if !strings.Contains(payload.Input[len(payload.Input)-1].Content, "[recent_working_context]") {
+		t.Fatalf("dynamic working context must be the final input message: %#v", payload.Input)
+	}
+}
+
+func TestRunnerDecisionRequestPlacesStablePrefixBeforeHistory(t *testing.T) {
+	dir := t.TempDir()
+	var decisionPayloads []openai.RequestPayload
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		var payload openai.RequestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request payload: %v", err)
+		}
+		if strings.HasPrefix(payload.PromptCacheKey, "arena-ctx-") {
+			decisionPayloads = append(decisionPayloads, payload)
+		}
+		header := http.Header{}
+		header.Set("Content-Type", "text/event-stream")
+		var body string
+		switch requests {
+		case 1:
+			body = renderSSECompleted(t, map[string]any{
+				"id": "resp-decision",
+				"usage": map[string]any{
+					"input_tokens":  100,
+					"output_tokens": 20,
+				},
+				"output": []map[string]any{
+					{
+						"type":      "function_call",
+						"name":      "guest_exec",
+						"arguments": `{"situation":"Need one direct fact.","reason":"Check identity.","command":"whoami"}`,
+					},
+				},
+			})
+		case 2:
+			body = renderSSECompleted(t, map[string]any{
+				"id": "resp-decision-2",
+				"usage": map[string]any{
+					"input_tokens":  120,
+					"output_tokens": 20,
+				},
+				"output": []map[string]any{
+					{
+						"type":      "function_call",
+						"name":      "noop",
+						"arguments": `{"situation":"Enough for now.","reason":"Stop."}`,
+					},
+				},
+			})
+		case 3:
+			body = renderSSECompleted(t, map[string]any{
+				"id":          "resp-acceptance",
+				"output_text": "I stopped after one decision.",
+				"usage": map[string]any{
+					"input_tokens":  80,
+					"output_tokens": 20,
+				},
+			})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})}
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = fakeActionExecutor{result: ActionResult{Observation: "guest observed full output\nline two", Activity: tokenledger.ActivityStatusCheck}}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+
+	_, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(decisionPayloads) != 2 {
+		t.Fatalf("expected two decision payloads, got %d", len(decisionPayloads))
+	}
+	first := decisionPayloads[0]
+	second := decisionPayloads[1]
+	if first.Instructions != makeInstructions() || second.Instructions != makeInstructions() {
+		t.Fatalf("decision instructions must stay fixed")
+	}
+	if strings.Contains(first.Instructions, "[system_const]") || strings.Contains(second.Instructions, "[memory_digest]") {
+		t.Fatalf("resident context leaked into instructions")
+	}
+	if first.PromptCacheKey != second.PromptCacheKey {
+		t.Fatalf("prompt cache key changed within run: %q vs %q", first.PromptCacheKey, second.PromptCacheKey)
+	}
+	if len(first.Input) < 3 || len(second.Input) <= len(first.Input) {
+		t.Fatalf("expected second input to append to first input, first=%#v second=%#v", first.Input, second.Input)
+	}
+	if !strings.Contains(first.Input[0].Content, "[system_const]") ||
+		!strings.Contains(first.Input[0].Content, "[world_state]") ||
+		!strings.Contains(first.Input[0].Content, "[memory_digest]") {
+		t.Fatalf("stable context must be first input message: %q", first.Input[0].Content)
+	}
+	if first.Input[0].Content != second.Input[0].Content {
+		t.Fatalf("stable prefix changed across turns")
+	}
+	if !messagesEqual(first.Input, second.Input[:len(first.Input)]) {
+		t.Fatalf("second request did not preserve first request as byte-stable prefix\nfirst=%#v\nsecond_prefix=%#v", first.Input, second.Input[:len(first.Input)])
+	}
+	last := second.Input[len(second.Input)-1].Content
+	if !strings.Contains(last, "[recent_working_context]") {
+		t.Fatalf("expected latest working context as final input, got %q", last)
+	}
+	if !strings.Contains(second.Input[len(first.Input)].Content, "Function call returned by model:") ||
+		!strings.Contains(second.Input[len(first.Input)].Content, `"command":"whoami"`) {
+		t.Fatalf("expected raw function call arguments appended to history, got %q", second.Input[len(first.Input)].Content)
+	}
+	if !strings.Contains(second.Input[len(first.Input)+1].Content, "guest observed full output") {
+		t.Fatalf("expected full observation appended to history, got %q", second.Input[len(first.Input)+1].Content)
+	}
+}
+
+func messagesEqual(a, b []openai.Message) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestBuildDecisionToolPayloadUsesStableInstructions(t *testing.T) {
 	payload := buildDecisionToolPayload(ResidentProfile{Name: "jade", Model: "gpt-5.4"}, []openai.Message{
 		{Role: "user", Content: "hello"},
@@ -475,45 +746,51 @@ func TestBuildDecisionToolPayloadUsesStableInstructions(t *testing.T) {
 	if payload.PromptCacheKey != "cache-key" {
 		t.Fatalf("unexpected prompt cache key")
 	}
-	params := payload.Tools[0].Parameters
-	required, ok := params["required"].([]string)
-	if !ok {
-		t.Fatalf("expected required fields slice")
+	if payload.ToolChoice != "required" {
+		t.Fatalf("decision payload must require one tool call, got %#v", payload.ToolChoice)
 	}
-	if len(required) != 14 {
-		t.Fatalf("unexpected required fields: %#v", required)
+	if len(payload.Tools) < 10 {
+		t.Fatalf("expected split action tools, got %#v", payload.Tools)
 	}
-	expected := []string{
-		"situation",
-		"next_action",
-		"reason",
-		"command",
-		"message",
-		"ticket_title",
-		"ticket_body",
-		"ticket_priority",
-		"memory_id",
-		"memory_action",
-		"memory_summary",
-		"memory_text",
-		"memory_layer",
-		"memory_reason",
+	tools := map[string]openai.ResponseTool{}
+	for _, item := range payload.Tools {
+		tools[item.Name] = item
 	}
-	for i := range expected {
-		if required[i] != expected[i] {
-			t.Fatalf("unexpected required field order/content at %d: got %q want %q", i, required[i], expected[i])
+	for _, name := range []string{"guest_exec", "note_list", "note_read", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact"} {
+		if _, ok := tools[name]; !ok {
+			t.Fatalf("missing split tool %q in %#v", name, tools)
 		}
 	}
-	nextAction, ok := params["properties"].(map[string]any)["next_action"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected next_action property")
+	assertToolHasProperty(t, tools["guest_exec"], "command")
+	assertToolMissingProperty(t, tools["guest_exec"], "note_text")
+	for _, name := range []string{"note_list", "note_read", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact"} {
+		assertToolMissingProperty(t, tools[name], "command")
 	}
-	enum, ok := nextAction["enum"].([]string)
+	assertToolHasProperty(t, tools["note_append"], "note_text")
+	assertToolHasProperty(t, tools["note_replace_with_backup"], "note_text")
+	assertToolHasProperty(t, tools["note_summarize_or_compact"], "note_text")
+	assertToolHasProperty(t, tools["note_restore_backup"], "backup_file")
+}
+
+func assertToolHasProperty(t *testing.T, tool openai.ResponseTool, name string) {
+	t.Helper()
+	properties, ok := tool.Parameters["properties"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected next_action enum slice")
+		t.Fatalf("tool %s missing properties map: %#v", tool.Name, tool.Parameters)
 	}
-	if len(enum) != 8 {
-		t.Fatalf("expected 8 next_action values, got %#v", enum)
+	if _, ok := properties[name]; !ok {
+		t.Fatalf("tool %s missing property %s in %#v", tool.Name, name, properties)
+	}
+}
+
+func assertToolMissingProperty(t *testing.T, tool openai.ResponseTool, name string) {
+	t.Helper()
+	properties, ok := tool.Parameters["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool %s missing properties map: %#v", tool.Name, tool.Parameters)
+	}
+	if _, ok := properties[name]; ok {
+		t.Fatalf("tool %s should not expose property %s in %#v", tool.Name, name, properties)
 	}
 }
 
@@ -656,7 +933,7 @@ func TestRunnerReportRecordsActionFailureRawOutput(t *testing.T) {
 	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
 	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
 
-	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4-mini", Instance: "jade"}, 27*time.Second, filepath.Join(dir, "runs"), false, true)
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 27*time.Second, filepath.Join(dir, "runs"), false, true)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -740,7 +1017,7 @@ func TestRunnerStopsAfterResidentNoop(t *testing.T) {
 	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
 	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
 
-	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4-mini", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -756,7 +1033,7 @@ func TestRunnerStopsAfterResidentNoop(t *testing.T) {
 	if report.AcceptanceBroker == nil || !report.AcceptanceBroker.Applied {
 		t.Fatalf("expected applied acceptance broker settlement, got %#v", report.AcceptanceBroker)
 	}
-	if report.AcceptanceBroker.ApplyReason != "acceptance call via gpt-5.4-mini" {
+	if report.AcceptanceBroker.ApplyReason != "acceptance call via gpt-5.4" {
 		t.Fatalf("expected acceptance charge reason, got %q", report.AcceptanceBroker.ApplyReason)
 	}
 	if report.AcceptanceBroker.AfterStatus == nil {
@@ -764,6 +1041,71 @@ func TestRunnerStopsAfterResidentNoop(t *testing.T) {
 	}
 	if report.AcceptanceBroker.AfterStatus.FinalNoticeUsed {
 		t.Fatalf("normal acceptance must not consume final notice state")
+	}
+}
+
+func TestRunnerStopsWithoutGuestFallbackWhenDecisionToolCallMissing(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		header := http.Header{}
+		header.Set("Content-Type", "text/event-stream")
+		header.Set("x-request-id", fmt.Sprintf("req-%d", requests))
+		if requests != 1 {
+			t.Fatalf("unexpected request after parse failure: %d", requests)
+		}
+		body := renderSSECompleted(t, map[string]any{
+			"id":          "resp-empty-decision",
+			"output_text": "",
+			"usage": map[string]any{
+				"input_tokens":  100,
+				"output_tokens": 0,
+			},
+		})
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})}
+
+	actionCalls := 0
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = fakeActionExecutor{
+		result: ActionResult{Observation: "this must not execute", Activity: tokenledger.ActivityLightWork},
+		calls:  &actionCalls,
+	}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if actionCalls != 0 {
+		t.Fatalf("parse failure must not execute guest action, got calls=%d", actionCalls)
+	}
+	if report.StoppedReason != "structured_decision_parse_failed" {
+		t.Fatalf("unexpected stopped reason: %q", report.StoppedReason)
+	}
+	if report.Rounds != 1 || len(report.RoundLogs) != 1 {
+		t.Fatalf("expected one parse-failure round, got %#v", report)
+	}
+	round := report.RoundLogs[0]
+	if !round.FallbackUsed || !round.ActionError || round.ErrorKind != "structured_decision_parse_failed" {
+		t.Fatalf("expected structured parse failure round, got %#v", round)
+	}
+	if round.Decision.NextAction != "noop" || strings.TrimSpace(round.Decision.Command) != "" {
+		t.Fatalf("parse failure decision must be non-executing noop, got %#v", round.Decision)
+	}
+	if !strings.Contains(round.Observation, "no supported action function call returned") {
+		t.Fatalf("expected semantic parse error observation, got %q", round.Observation)
+	}
+	if report.AcceptanceBroker != nil {
+		t.Fatalf("parse-failure run should not make acceptance call, got %#v", report.AcceptanceBroker)
 	}
 }
 
@@ -790,14 +1132,14 @@ func TestBudgetControllerPreflightAutoRecoversToNow(t *testing.T) {
 	}
 	if _, err := app.RunAdmitSpec("jade", broker.CallSpec{
 		Kind:      runtimeguard.CallKindWork,
-		Usage:     openaiUsage(300, 0, 120, "gpt-5.4-mini", "preflight_recover_seed", start.Add(time.Minute)),
+		Usage:     openaiUsage(300, 0, 120, "gpt-5.4", "preflight_recover_seed", start.Add(time.Minute)),
 		Penalties: tokenledger.Penalties{},
 		Activity:  tokenledger.ActivityNormalWork,
 	}, true); err != nil {
 		t.Fatalf("seed admit: %v", err)
 	}
 
-	prepared, err := controller.Preflight(ResidentProfile{Name: "jade", Model: "gpt-5.4-mini"}, loopState{}, start.Add(30*time.Minute))
+	prepared, err := controller.Preflight(ResidentProfile{Name: "jade", Model: "gpt-5.4"}, loopState{}, start.Add(30*time.Minute))
 	if err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
@@ -916,6 +1258,64 @@ func TestBuildResidentMemoryDigestSkipsOperatorOnlyMemory(t *testing.T) {
 	}
 }
 
+func TestRenderMemoryReviewQueueIncludesVisiblePendingSummary(t *testing.T) {
+	dir := t.TempDir()
+	runner := NewRunner(nil, "", "")
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "memory"))
+	now := time.Date(2026, 6, 20, 8, 50, 0, 0, time.UTC)
+	for _, record := range []memory.AbstractMemory{
+		{
+			Record:   memory.Record{ID: "jade-visible-1", Layer: memory.LayerShort, Domain: memory.DomainLessons, Status: memory.StatusActive, CreatedAt: now, UpdatedAt: now},
+			Resident: "jade",
+			Summary:  "visible memory 1",
+			Governance: memory.GovernanceMeta{
+				ReviewState:  "needs_resident_review",
+				ReviewReason: "resident should decide whether this still carries value",
+			},
+		},
+		{
+			Record:   memory.Record{ID: "jade-visible-2", Layer: memory.LayerShort, Domain: memory.DomainLessons, Status: memory.StatusActive, CreatedAt: now, UpdatedAt: now},
+			Resident: "jade",
+			Summary:  "visible memory 2",
+			Governance: memory.GovernanceMeta{
+				ReviewState:  "needs_resident_review",
+				ReviewReason: "resident should decide whether this still carries value",
+			},
+		},
+		{
+			Record:     memory.Record{ID: "jade-hidden-operator", Layer: memory.LayerShort, Domain: memory.DomainLessons, Status: memory.StatusActive, CreatedAt: now, UpdatedAt: now},
+			Resident:   "jade",
+			Summary:    "hidden operator memory",
+			Visibility: memory.VisibilityOperatorObservation,
+			Governance: memory.GovernanceMeta{
+				ReviewState:  "needs_resident_review",
+				ReviewReason: "operator-only",
+			},
+		},
+	} {
+		if err := runner.memories.UpsertAbstractMemory(record); err != nil {
+			t.Fatalf("upsert memory: %v", err)
+		}
+	}
+	state := loopState{
+		RecentActions: []RecentAction{
+			{Action: "guest_exec", Signature: "guest_exec: whoami hostname uname -a", Observation: "hostname kernel os-release"},
+			{Action: "guest_exec", Signature: "guest_exec: ls -la / find /root", Observation: "arena-notes"},
+			{Action: "guest_exec", Signature: "guest_exec: df -h free -h nproc", Observation: "memory disk cpu"},
+			{Action: "guest_exec", Signature: "guest_exec: ip addr ip route resolv.conf curl", Observation: "network"},
+		},
+		UsedActions: map[string]int{"guest_exec": 4, "self_status": 1},
+	}
+
+	queue := strings.Join(runner.renderMemoryReviewQueue(ResidentProfile{Name: "jade"}, state), "\n")
+	if !strings.Contains(queue, "memory_review_queue_summary: visible_pending=2 showing=2") {
+		t.Fatalf("expected visible pending summary excluding operator-only memory, got %q", queue)
+	}
+	if strings.Contains(queue, "jade-hidden-operator") || strings.Contains(queue, "operator-only") {
+		t.Fatalf("expected operator-only memory to stay hidden, got %q", queue)
+	}
+}
+
 func TestShouldDelayMemoryReviewDuringNewbornOrientation(t *testing.T) {
 	if !shouldDelayMemoryReview(loopState{}) {
 		t.Fatalf("expected delay with no recent actions")
@@ -992,15 +1392,14 @@ func TestTempDirSanity(t *testing.T) {
 	}
 }
 
-func TestRepeatedWriteNoteSuppression(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "boot-notes.md")
-	if err := os.WriteFile(target, []byte("hello"), 0o644); err != nil {
-		t.Fatalf("write target: %v", err)
+func TestSafeNoteFileRejectsPathsAndTraversal(t *testing.T) {
+	if got, err := safeNoteFile(""); err != nil || got != "boot-notes.md" {
+		t.Fatalf("expected empty note_file to default to boot-notes.md, got %q err=%v", got, err)
 	}
-	command := "cat > " + target + " <<'EOF'\nnew\nEOF"
-	if !repeatedWriteNote(command) {
-		t.Fatalf("expected repeated write note to be suppressed")
+	for _, value := range []string{"/root/arena-notes/boot-notes.md", "../boot-notes.md", "subdir/note.md", `subdir\note.md`, ".."} {
+		if got, err := safeNoteFile(value); err == nil {
+			t.Fatalf("expected %q to be rejected, got %q", value, got)
+		}
 	}
 }
 
@@ -1033,18 +1432,6 @@ func TestClassifyCommandIntentDetectsBaselineCaptureInsideGuestExec(t *testing.T
 	})
 	if intent != "baseline_note_capture" {
 		t.Fatalf("expected baseline_note_capture, got %q", intent)
-	}
-}
-
-func TestRepeatedBaselineCaptureByRecentFile(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "boot-notes.md")
-	if err := os.WriteFile(target, []byte("hello"), 0o644); err != nil {
-		t.Fatalf("write target: %v", err)
-	}
-	command := "cat > " + target + " <<'EOF'\n- Hostname: onyx\n- Kernel: Linux\n- Disk: 12G\n- Memory: 2G\n- Debian trixie\nEOF"
-	if !repeatedBaselineCapture(command) {
-		t.Fatalf("expected repeated baseline capture to be suppressed")
 	}
 }
 

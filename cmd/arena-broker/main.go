@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +18,10 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|quota|quota-grant|spark-grant|test-allowance-card|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|host-maintenance-draft|host-maintenance-draft-cached|v0-readiness|v0-readiness-cached|v0-runbook|v0-acceptance|v0-acceptance-cached|v0-acceptance-evidence|v0-acceptance-evidence-list|v0-acceptance-evidence-template|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-auto-maintain|memory-review|recover|recover-all|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|host-resolve-intervention|host-plan-maintenance|host-start-maintenance|host-complete-maintenance|host-fail-maintenance|host-rollback-maintenance|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|budget-status|quota|quota-grant|spark-grant|test-allowance-card|orchestrator-budget-estimate|orchestrator-budget-report|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|host-maintenance-draft|host-maintenance-draft-cached|v0-readiness|v0-readiness-cached|v0-runbook|v0-acceptance|v0-acceptance-cached|v0-acceptance-evidence|v0-acceptance-evidence-list|v0-acceptance-evidence-template|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-auto-maintain|memory-review|recover|recover-all|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|host-resolve-intervention|host-plan-maintenance|host-start-maintenance|host-complete-maintenance|host-fail-maintenance|host-rollback-maintenance|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
+	runID := flag.String("run-id", "", "Orchestrator run id for orchestrator budget report modes")
+	allowance := flag.String("allowance", "", "Optional per-resident allowance map, e.g. amber=372.7,jade=271.2,onyx=298.1")
 	hours := flag.Float64("hours", 1, "Recovery hours to advance for recover mode")
 	recoveryMode := flag.String("recovery-mode", "", "Optional recovery mode for recover mode: idle|normal|rest|deep")
 	window6HDelta := flag.Int("window-6h-delta", 0, "6h quota cap delta for quota-grant mode")
@@ -65,6 +68,12 @@ func main() {
 	createCheckpoint := flag.Bool("create-checkpoint", false, "Whether maintenance planning should create a host checkpoint before execution")
 	checkpointName := flag.String("checkpoint-name", "", "Checkpoint name for maintenance start/complete metadata")
 	flag.Parse()
+	residentProvided := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "resident" {
+			residentProvided = true
+		}
+	})
 
 	app := broker.New(".agents")
 	world := worldstate.New(".agents")
@@ -79,6 +88,16 @@ func main() {
 		printJSON(out)
 	case "status":
 		out, err := app.RunStatus(*residentID)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "budget-status":
+		var residents []string
+		if residentProvided {
+			residents = splitResidentIDs(*residentID)
+		}
+		out, err := app.RunBudgetStatus(residents)
 		if err != nil {
 			exitf("%v", err)
 		}
@@ -103,6 +122,21 @@ func main() {
 		printJSON(out)
 	case "test-allowance-card":
 		out, err := app.RunTestAllowanceCard(splitResidentIDs(*residentID), *sparkAmount, *window6HDelta, *dayDelta, *weekDelta, *resetWindow6HUsed, *resetDayUsed, *resetWeekUsed, *reason, *operator, time.Now().UTC())
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "orchestrator-budget-estimate":
+		out, err := app.RunOrchestratorBudgetEstimate(*limit)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "orchestrator-budget-report":
+		if *runID == "" {
+			exitf("run-id is required for orchestrator-budget-report mode")
+		}
+		out, err := app.RunOrchestratorBudgetReport(*runID, parseAllowanceMap(*allowance))
 		if err != nil {
 			exitf("%v", err)
 		}
@@ -899,6 +933,30 @@ func splitResidentIDs(raw string) []string {
 		if item != "" {
 			out = append(out, item)
 		}
+	}
+	return out
+}
+
+func parseAllowanceMap(raw string) map[string]float64 {
+	out := map[string]float64{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		residentID, sparkRaw, ok := strings.Cut(item, "=")
+		if !ok {
+			exitf("invalid allowance entry %q, expected resident=spark", item)
+		}
+		residentID = strings.TrimSpace(residentID)
+		if residentID == "" {
+			exitf("invalid allowance entry %q, resident is empty", item)
+		}
+		spark, err := strconv.ParseFloat(strings.TrimSpace(sparkRaw), 64)
+		if err != nil || spark < 0 {
+			exitf("invalid allowance spark for %s: %q", residentID, sparkRaw)
+		}
+		out[residentID] = spark
 	}
 	return out
 }

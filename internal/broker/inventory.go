@@ -66,34 +66,36 @@ type ResidentLiveRuntimeFact struct {
 	Error                 string
 }
 
-func CollectInventorySnapshot(cfg Config, now time.Time) (InventorySnapshot, error) {
-	type incusInstance struct {
-		Name           string            `json:"name"`
-		Status         string            `json:"status"`
-		Type           string            `json:"type"`
-		Config         map[string]string `json:"config"`
-		ExpandedConfig map[string]string `json:"expanded_config"`
-		State          struct {
-			Network map[string]struct {
-				Addresses []struct {
-					Family  string `json:"family"`
-					Address string `json:"address"`
-				} `json:"addresses"`
-			} `json:"network"`
-		} `json:"state"`
-	}
+type incusInventoryInstance struct {
+	Name            string                       `json:"name"`
+	Status          string                       `json:"status"`
+	Type            string                       `json:"type"`
+	Config          map[string]string            `json:"config"`
+	ExpandedConfig  map[string]string            `json:"expanded_config"`
+	Devices         map[string]map[string]string `json:"devices"`
+	ExpandedDevices map[string]map[string]string `json:"expanded_devices"`
+	State           struct {
+		Network map[string]struct {
+			Addresses []struct {
+				Family  string `json:"family"`
+				Address string `json:"address"`
+			} `json:"addresses"`
+		} `json:"network"`
+	} `json:"state"`
+}
 
+func CollectInventorySnapshot(cfg Config, now time.Time) (InventorySnapshot, error) {
 	cmd := exec.Command("incus", "list", "--format", "json")
 	out, err := cmd.Output()
 	if err != nil {
 		return InventorySnapshot{}, fmt.Errorf("collect incus inventory: %w", err)
 	}
-	var instances []incusInstance
+	var instances []incusInventoryInstance
 	if err := json.Unmarshal(out, &instances); err != nil {
 		return InventorySnapshot{}, err
 	}
 
-	byName := map[string]incusInstance{}
+	byName := map[string]incusInventoryInstance{}
 	for _, item := range instances {
 		byName[item.Name] = item
 	}
@@ -120,6 +122,7 @@ func CollectInventorySnapshot(cfg Config, now time.Time) (InventorySnapshot, err
 			if v := firstNonEmpty(item.Config["limits.memory"], item.ExpandedConfig["limits.memory"]); v != "" {
 				fact.MemoryLimitMiB = parseMemoryLimitMiB(v, fact.MemoryLimitMiB)
 			}
+			fact.DiskGiB = parseRootDiskGiB(item, fact.DiskGiB)
 			fact.IPv4 = extractIPv4(item)
 		}
 		facts = append(facts, fact)
@@ -386,21 +389,74 @@ func parseMemoryLimitMiB(value string, fallback int64) int64 {
 	return fallback
 }
 
-func extractIPv4(item struct {
-	Name           string            `json:"name"`
-	Status         string            `json:"status"`
-	Type           string            `json:"type"`
-	Config         map[string]string `json:"config"`
-	ExpandedConfig map[string]string `json:"expanded_config"`
-	State          struct {
-		Network map[string]struct {
-			Addresses []struct {
-				Family  string `json:"family"`
-				Address string `json:"address"`
-			} `json:"addresses"`
-		} `json:"network"`
-	} `json:"state"`
-}) string {
+func parseRootDiskGiB(item incusInventoryInstance, fallback int64) int64 {
+	for _, devices := range []map[string]map[string]string{item.Devices, item.ExpandedDevices} {
+		if devices == nil {
+			continue
+		}
+		root := devices["root"]
+		if root == nil {
+			continue
+		}
+		if root["type"] != "" && root["type"] != "disk" {
+			continue
+		}
+		if size := strings.TrimSpace(root["size"]); size != "" {
+			return parseDiskGiB(size, fallback)
+		}
+	}
+	return fallback
+}
+
+func parseDiskGiB(value string, fallback int64) int64 {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return fallback
+	}
+	parse := func(raw string) (float64, bool) {
+		n, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		return n, err == nil && n > 0
+	}
+	ceil := func(n float64) int64 {
+		whole := int64(n)
+		if n > float64(whole) {
+			return whole + 1
+		}
+		return whole
+	}
+	switch {
+	case strings.HasSuffix(value, "gib"):
+		if n, ok := parse(strings.TrimSuffix(value, "gib")); ok {
+			return ceil(n)
+		}
+	case strings.HasSuffix(value, "gb"):
+		if n, ok := parse(strings.TrimSuffix(value, "gb")); ok {
+			return ceil(n * 1000 * 1000 * 1000 / 1024 / 1024 / 1024)
+		}
+	case strings.HasSuffix(value, "mib"):
+		if n, ok := parse(strings.TrimSuffix(value, "mib")); ok {
+			return ceil(n / 1024)
+		}
+	case strings.HasSuffix(value, "mb"):
+		if n, ok := parse(strings.TrimSuffix(value, "mb")); ok {
+			return ceil(n * 1000 * 1000 / 1024 / 1024 / 1024)
+		}
+	case strings.HasSuffix(value, "b"):
+		if n, ok := parse(strings.TrimSuffix(value, "b")); ok {
+			return ceil(n / 1024 / 1024 / 1024)
+		}
+	default:
+		if n, ok := parse(value); ok {
+			if n > 1024*1024 {
+				return ceil(n / 1024 / 1024 / 1024)
+			}
+			return ceil(n)
+		}
+	}
+	return fallback
+}
+
+func extractIPv4(item incusInventoryInstance) string {
 	for _, network := range item.State.Network {
 		for _, addr := range network.Addresses {
 			if addr.Family == "inet" && addr.Address != "" && addr.Address != "127.0.0.1" {

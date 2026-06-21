@@ -72,6 +72,20 @@ func BuildV0Acceptance(readiness V0ReadinessOutput, runbook V0RunbookOutput, evi
 		}
 		addAcceptanceCheck(&out, acceptanceCheckFromRecommendedStep(step, evidenceByCheck[step.ID]))
 	}
+	for _, gap := range v0ManualValidationGaps() {
+		if acceptanceHasCheck(out, gap.ID) {
+			continue
+		}
+		addAcceptanceCheck(&out, acceptanceCheckFromRecommendedStep(V0RecommendedStep{
+			ID:               gap.ID,
+			Title:            gap.Title,
+			Reason:           gap.Reason,
+			Command:          gap.Command,
+			RequiresApproval: gap.RequiresApproval,
+			BlocksRelease:    gap.BlocksRelease,
+			RelatedItems:     []string{"known_manual_gaps"},
+		}, evidenceByCheck[gap.ID]))
+	}
 	finalizeV0Acceptance(&out)
 	return out
 }
@@ -153,6 +167,15 @@ func addAcceptanceCheck(out *V0AcceptanceOutput, check V0AcceptanceCheck) {
 			out.Summary.AutomaticFailed++
 		}
 	}
+}
+
+func acceptanceHasCheck(out V0AcceptanceOutput, id string) bool {
+	for _, check := range out.Checks {
+		if check.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func finalizeV0Acceptance(out *V0AcceptanceOutput) {

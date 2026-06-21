@@ -39,6 +39,46 @@ type StreamResult struct {
 	CachedTokens           int
 	OutputTokens           int
 	RequestID              string
+	EndpointName           string
+}
+
+type Endpoint struct {
+	Name    string
+	BaseURL string
+	APIKey  string
+	Comment string
+}
+
+type EndpointFailure struct {
+	Endpoint string
+	Err      error
+}
+
+type FailoverError struct {
+	Failures  []EndpointFailure
+	LastErr   error
+	Retryable bool
+}
+
+func (e *FailoverError) Error() string {
+	if e == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(e.Failures))
+	for _, failure := range e.Failures {
+		parts = append(parts, fmt.Sprintf("%s: %v", failure.Endpoint, failure.Err))
+	}
+	if len(parts) == 0 && e.LastErr != nil {
+		return e.LastErr.Error()
+	}
+	return "all configured OpenAI endpoints failed: " + strings.Join(parts, " | ")
+}
+
+func (e *FailoverError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.LastErr
 }
 
 type APIError struct {
@@ -62,6 +102,10 @@ func (e *APIError) Error() string {
 }
 
 func IsRetryableError(err error) bool {
+	var failoverErr *FailoverError
+	if errors.As(err, &failoverErr) {
+		return failoverErr.Retryable
+	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.Retryable
@@ -155,6 +199,40 @@ func ProbeStructuredTool(client *http.Client, baseURL, apiKey string, payload Re
 	return result, fmt.Errorf("structured tool probe missing %s function call; output_text=%q calls=%d", toolName, result.OutputText, len(result.FunctionCalls))
 }
 
+func PostStreamWithFailover(client *http.Client, endpoints []Endpoint, payload RequestPayload, verbose bool) (StreamResult, error) {
+	usable := normalizeEndpoints(endpoints)
+	if len(usable) == 0 {
+		return StreamResult{}, errors.New("no usable OpenAI endpoints configured")
+	}
+	failures := make([]EndpointFailure, 0, len(usable))
+	var lastErr error
+	allRetryable := true
+	for i, endpoint := range usable {
+		result, err := PostStream(client, endpoint.BaseURL, endpoint.APIKey, payload, verbose)
+		if err == nil {
+			result.EndpointName = endpoint.Name
+			return result, nil
+		}
+		lastErr = err
+		retryable := shouldFailover(err)
+		if !retryable {
+			allRetryable = false
+		}
+		failures = append(failures, EndpointFailure{Endpoint: endpoint.Name, Err: err})
+		if i == len(usable)-1 || !retryable {
+			break
+		}
+	}
+	if len(failures) == 0 {
+		return StreamResult{}, lastErr
+	}
+	return StreamResult{}, &FailoverError{
+		Failures:  failures,
+		LastErr:   lastErr,
+		Retryable: allRetryable,
+	}
+}
+
 func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayload, verbose bool) (StreamResult, error) {
 	payload.Stream = true
 	body, err := json.Marshal(payload)
@@ -213,6 +291,36 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 		return StreamResult{}, lastErr
 	}
 	return StreamResult{}, errors.New("request failed without a concrete error")
+}
+
+func normalizeEndpoints(endpoints []Endpoint) []Endpoint {
+	out := make([]Endpoint, 0, len(endpoints))
+	for i, endpoint := range endpoints {
+		name := strings.TrimSpace(endpoint.Name)
+		if name == "" {
+			name = fmt.Sprintf("endpoint_%d", i+1)
+		}
+		baseURL := strings.TrimSpace(endpoint.BaseURL)
+		apiKey := strings.TrimSpace(endpoint.APIKey)
+		if baseURL == "" || apiKey == "" {
+			continue
+		}
+		out = append(out, Endpoint{
+			Name:    name,
+			BaseURL: baseURL,
+			APIKey:  apiKey,
+			Comment: strings.TrimSpace(endpoint.Comment),
+		})
+	}
+	return out
+}
+
+func shouldFailover(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Retryable
+	}
+	return err != nil
 }
 
 func shouldRetryHTTPStatus(status int) bool {

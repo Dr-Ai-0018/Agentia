@@ -70,14 +70,17 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 		InputTokens:  100,
 		CachedTokens: 80,
 		OutputTokens: 50,
-		Model:        "gpt-5.4-mini",
+		Model:        "gpt-5.4",
 		FinishedAt:   start.Add(2*time.Hour + time.Minute),
 	}, tokenledger.Penalties{})
 	if err != nil {
 		t.Fatalf("prepare work: %v", err)
 	}
-	if !workPrepared.Decision.Allowed {
-		t.Fatalf("work should be allowed after debt is cleared")
+	if workPrepared.Decision.Allowed {
+		t.Fatalf("work should remain stopped until spark reserve is safe: %#v", workPrepared.Decision)
+	}
+	if len(workPrepared.Decision.Reasons) != 1 || workPrepared.Decision.Reasons[0] != "work_would_enter_debt" {
+		t.Fatalf("unexpected post-debt stop reason: %#v", workPrepared.Decision)
 	}
 
 	engine.TickRecovery(start.Add(3 * time.Hour))
@@ -85,7 +88,7 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 		InputTokens:  100,
 		CachedTokens: 80,
 		OutputTokens: 50,
-		Model:        "gpt-5.4-mini",
+		Model:        "gpt-5.4",
 		FinishedAt:   start.Add(3*time.Hour + time.Minute),
 	}, tokenledger.Penalties{})
 	if err != nil {
@@ -96,7 +99,7 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 	}
 }
 
-func TestWorkCallCanEnterDebtAndLocksFurtherWork(t *testing.T) {
+func TestWorkCallStopsBeforeDebt(t *testing.T) {
 	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
 	engine := New(Config{
 		TokenPolicy: tokenledger.DefaultConfig(),
@@ -128,32 +131,27 @@ func TestWorkCallCanEnterDebtAndLocksFurtherWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if !prepared.Decision.Allowed || !prepared.Decision.AllowDebt || !prepared.Decision.LockAfterThisCall {
-		t.Fatalf("expected work to be allowed into debt and then lock: %#v", prepared.Decision)
+	if prepared.Decision.Allowed || prepared.Decision.AllowDebt {
+		t.Fatalf("expected work to be stopped before debt: %#v", prepared.Decision)
 	}
-
-	applied, err := engine.ApplyCall(prepared, tokenledger.ActivityNormalWork)
-	if err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-	if !applied.State.DebtActive {
-		t.Fatalf("expected debt after over-budget work call")
-	}
-	if applied.State.DebtAmount <= 0 {
-		t.Fatalf("expected positive debt amount")
+	if !prepared.Decision.WouldEnterDebt {
+		t.Fatalf("expected prepare to report debt risk: %#v", prepared.Decision)
 	}
 
 	nextPrepared, err := engine.PrepareCall(runtimeguard.CallKindWork, tokenledger.Usage{
 		InputTokens:  100,
 		OutputTokens: 50,
-		Model:        "gpt-5.4-mini",
+		Model:        "gpt-5.4",
 		FinishedAt:   start.Add(2 * time.Minute),
 	}, tokenledger.Penalties{})
 	if err != nil {
 		t.Fatalf("prepare next work: %v", err)
 	}
 	if nextPrepared.Decision.Allowed {
-		t.Fatalf("expected debt to block ordinary work")
+		t.Fatalf("expected reserve policy to keep ordinary work stopped")
+	}
+	if engine.State().DebtActive {
+		t.Fatalf("work preflight must not create debt")
 	}
 }
 
@@ -180,7 +178,7 @@ func TestAcceptanceDoesNotConsumeFinalNotice(t *testing.T) {
 		InputTokens:  300,
 		CachedTokens: 100,
 		OutputTokens: 120,
-		Model:        "gpt-5.4-mini",
+		Model:        "gpt-5.4",
 		FinishedAt:   start.Add(time.Minute),
 	}, tokenledger.Penalties{})
 	if err != nil {
@@ -197,7 +195,7 @@ func TestAcceptanceDoesNotConsumeFinalNotice(t *testing.T) {
 	if applied.State.FinalNoticeUsed {
 		t.Fatalf("normal acceptance must not consume final notice state")
 	}
-	if applied.SparkEntry.Reason != "acceptance call via gpt-5.4-mini" {
+	if applied.SparkEntry.Reason != "acceptance call via gpt-5.4" {
 		t.Fatalf("unexpected charge reason: %q", applied.SparkEntry.Reason)
 	}
 }

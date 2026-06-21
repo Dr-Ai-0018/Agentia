@@ -17,7 +17,11 @@ func (a *App) RunV0Readiness(limit int) (V0ReadinessOutput, error) {
 	if err != nil {
 		return V0ReadinessOutput{}, err
 	}
-	return BuildV0Readiness(summary, time.Now().UTC(), "live"), nil
+	evidence, err := LoadRecentV0AcceptanceEvidence(a.root, 64)
+	if err != nil {
+		return V0ReadinessOutput{}, err
+	}
+	return BuildV0ReadinessWithEvidence(summary, time.Now().UTC(), "live", evidence), nil
 }
 
 func (a *App) RunV0ReadinessFromSnapshot(limit int) (V0ReadinessOutput, error) {
@@ -25,10 +29,19 @@ func (a *App) RunV0ReadinessFromSnapshot(limit int) (V0ReadinessOutput, error) {
 	if err != nil {
 		return V0ReadinessOutput{}, err
 	}
-	return BuildV0Readiness(summary, time.Now().UTC(), "cached"), nil
+	evidence, err := LoadRecentV0AcceptanceEvidence(a.root, 64)
+	if err != nil {
+		return V0ReadinessOutput{}, err
+	}
+	return BuildV0ReadinessWithEvidence(summary, time.Now().UTC(), "cached", evidence), nil
 }
 
 func BuildV0Readiness(summary HostInspectSummary, now time.Time, source string) V0ReadinessOutput {
+	return BuildV0ReadinessWithEvidence(summary, now, source, nil)
+}
+
+func BuildV0ReadinessWithEvidence(summary HostInspectSummary, now time.Time, source string, evidence []V0AcceptanceEvidenceRecord) V0ReadinessOutput {
+	evidenceByCheck := latestPassingV0AcceptanceEvidence(evidence)
 	decision := BuildHostDecisionAssist(summary)
 	draft := BuildHostMaintenanceDraft(decision, now, true)
 	out := V0ReadinessOutput{
@@ -46,8 +59,8 @@ func BuildV0Readiness(summary HostInspectSummary, now time.Time, source string) 
 	addReadinessItem(&out, memoryReadiness(summary))
 	addReadinessItem(&out, decisionBoundaryReadiness(decision))
 	addReadinessItem(&out, maintenanceDraftReadiness(draft))
-	addReadinessItem(&out, knownManualGapReadiness())
-	out.Completion = buildV0Completion(out.Items)
+	addReadinessItem(&out, knownManualGapReadiness(evidenceByCheck))
+	out.Completion = buildV0Completion(out.Items, evidenceByCheck)
 	finalizeV0Readiness(&out)
 	return out
 }
@@ -145,13 +158,22 @@ func maintenanceReadiness(summary HostInspectSummary) V0ReadinessItem {
 
 func memoryReadiness(summary HostInspectSummary) V0ReadinessItem {
 	item := V0ReadinessItem{ID: "memory_governance", Title: "Memory governance boundaries are explicit", Required: true, Status: v0ReadinessPass}
-	item.Evidence = append(item.Evidence, fmt.Sprintf("attention=%d operator_decay=%d resident_review=%d operator_review=%d stale_review=%d duplicates=%d", summary.MemoryItemsAttention, summary.MemoryOperatorDecayCandidates, summary.MemoryResidentReviewQueue, summary.MemoryOperatorReviewRequired, summary.MemoryStaleReviewItems, summary.MemoryDuplicateHistoryGroups))
+	hostActionable := summary.MemoryOperatorDecayCandidates + summary.MemoryOperatorReviewRequired + summary.MemoryDuplicateHistoryGroups
+	residentOwned := summary.MemoryResidentReviewQueue + summary.MemoryStaleReviewItems
+	item.Evidence = append(item.Evidence,
+		fmt.Sprintf("attention=%d operator_decay=%d resident_review=%d operator_review=%d stale_review=%d duplicates=%d", summary.MemoryItemsAttention, summary.MemoryOperatorDecayCandidates, summary.MemoryResidentReviewQueue, summary.MemoryOperatorReviewRequired, summary.MemoryStaleReviewItems, summary.MemoryDuplicateHistoryGroups),
+		fmt.Sprintf("host_actionable=%d resident_owned=%d", hostActionable, residentOwned),
+	)
 	if summary.MemoryDuplicateHistoryGroups > 0 || summary.MemoryOperatorReviewRequired > 0 {
 		item.Status = v0ReadinessFail
+		item.Evidence = append(item.Evidence, "operator-owned memory governance work must be resolved by safe maintenance or explicit review before release")
 		return item
 	}
 	if summary.MemoryItemsAttention > 0 || summary.MemoryOperatorDecayCandidates > 0 || summary.MemoryResidentReviewQueue > 0 || summary.MemoryStaleReviewItems > 0 {
 		item.Status = v0ReadinessWarn
+		if hostActionable == 0 && residentOwned > 0 {
+			item.Evidence = append(item.Evidence, "remaining warning is resident-owned self-review or stale retain visibility; host must not rewrite protected resident memories")
+		}
 	}
 	return item
 }
@@ -181,18 +203,77 @@ func maintenanceDraftReadiness(draft HostMaintenanceDraftOutput) V0ReadinessItem
 	return item
 }
 
-func knownManualGapReadiness() V0ReadinessItem {
-	return V0ReadinessItem{
+type v0ManualValidationGap struct {
+	ID               string
+	Title            string
+	Reason           string
+	Command          string
+	RequiresApproval bool
+	BlocksRelease    bool
+}
+
+func v0ManualValidationGaps() []v0ManualValidationGap {
+	return []v0ManualValidationGap{
+		{
+			ID:               "host_only_maintenance_smoke",
+			Title:            "Run host-only maintenance notice lifecycle smoke test",
+			Reason:           "Host-only maintenance should prove plan/start/fail-or-complete notices, intervention status updates, and maintenance run records without requiring a resident ticket or real VM resource change.",
+			Command:          "arena-broker --mode host-plan-maintenance --resident amber --resource memory --amount smoke-noop --window '<test window>' --operator <operator> --body '<smoke notice>'; then host-start-maintenance and host-fail-maintenance for the returned intervention id",
+			RequiresApproval: true,
+		},
+		{
+			ID:               "cpu_maintenance_regression",
+			Title:            "Run CPU maintenance-style regression with an approved window",
+			Reason:           "CPU maintenance must prove host-plan/start/complete or rollback, approved window, stop/change/start if needed, resident-facing notices, maintenance run record, and inventory refresh.",
+			Command:          "arena-broker --mode v0-runbook",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+		},
+		{
+			ID:               "disk_maintenance_regression",
+			Title:            "Run disk maintenance-style regression with an approved window",
+			Reason:           "Disk maintenance must prove host-plan/start/complete or rollback, approved window, stop/change/start if needed, resident-facing notices, maintenance run record, and inventory refresh.",
+			Command:          "arena-broker --mode v0-runbook",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+		},
+		{
+			ID:               "checkpoint_cleanup_apply_regression",
+			Title:            "Run checkpoint cleanup apply regression after dry-run review",
+			Reason:           "Checkpoint cleanup apply is intentionally not automated and must prove protected baseline/self snapshots are preserved.",
+			Command:          "arena-broker --mode checkpoint-cleanup --resident jade --keep 2",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+		},
+		{
+			ID:               "final_acceptance_manual_pass",
+			Title:            "Perform final manual acceptance pass after validation gaps close",
+			Reason:           "v0 should only be declared after automatic checks pass and approved manual validation evidence is recorded.",
+			Command:          "arena-broker --mode v0-acceptance-cached --limit 5",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+		},
+	}
+}
+
+func knownManualGapReadiness(evidenceByCheck map[string]*V0AcceptanceEvidenceRecord) V0ReadinessItem {
+	item := V0ReadinessItem{
 		ID:       "known_manual_gaps",
 		Title:    "Known v0 manual validation gaps are explicit",
 		Status:   v0ReadinessWarn,
 		Required: false,
-		Evidence: []string{
-			"CPU and disk maintenance-style real regressions still require approved maintenance windows.",
-			"checkpoint cleanup apply is intentionally not run without explicit approval.",
-			"final acceptance still needs manual pass after validation gaps close.",
-		},
 	}
+	for _, gap := range v0ManualValidationGaps() {
+		if evidenceByCheck[gap.ID] != nil {
+			continue
+		}
+		item.Evidence = append(item.Evidence, gap.Reason)
+	}
+	if len(item.Evidence) == 0 {
+		item.Status = v0ReadinessPass
+		item.Evidence = append(item.Evidence, "manual validation evidence is recorded for all v0 acceptance checks")
+	}
+	return item
 }
 
 func finalizeV0Readiness(out *V0ReadinessOutput) {
@@ -211,7 +292,7 @@ func finalizeV0Readiness(out *V0ReadinessOutput) {
 	}
 }
 
-func buildV0Completion(items []V0ReadinessItem) V0CompletionSummary {
+func buildV0Completion(items []V0ReadinessItem, evidenceByCheck map[string]*V0AcceptanceEvidenceRecord) V0CompletionSummary {
 	byID := map[string]V0ReadinessItem{}
 	for _, item := range items {
 		byID[item.ID] = item
@@ -240,7 +321,7 @@ func buildV0Completion(items []V0ReadinessItem) V0CompletionSummary {
 		ReleaseGate:      "ready_with_warnings",
 		Workstreams:      workstreams,
 	}
-	summary.RecommendedSteps = buildV0RecommendedSteps(byID)
+	summary.RecommendedSteps = buildV0RecommendedSteps(byID, evidenceByCheck)
 	for _, item := range items {
 		if item.ID == "known_manual_gaps" {
 			summary.ManualValidationGaps = append(summary.ManualValidationGaps, item.Evidence...)
@@ -262,7 +343,7 @@ func buildV0Completion(items []V0ReadinessItem) V0CompletionSummary {
 	return summary
 }
 
-func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedStep {
+func buildV0RecommendedSteps(items map[string]V0ReadinessItem, evidenceByCheck map[string]*V0AcceptanceEvidenceRecord) []V0RecommendedStep {
 	var steps []V0RecommendedStep
 	if hasFailure(items, "inventory_facts", "capacity_headroom") {
 		steps = append(steps, V0RecommendedStep{
@@ -305,14 +386,20 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 		})
 	}
 	if hasWarning(items, "orchestrator_registry") {
-		steps = append(steps, V0RecommendedStep{
+		step := V0RecommendedStep{
 			ID:               "longer_orchestrator_soak",
 			Title:            "Run a longer multi-resident orchestrator soak",
 			Reason:           "Recent orchestrator runs are readable but still need attention, usually budget-blocked or runtime stop reasons.",
 			Command:          "arena-orchestrator --mode run --run-mode parallel --residents jade,amber,onyx --duration 10m",
 			RequiresApproval: true,
 			RelatedItems:     []string{"orchestrator_registry"},
-		})
+		}
+		if itemEvidenceContains(items["orchestrator_registry"], "latest budget_blocked=") && !itemEvidenceContains(items["orchestrator_registry"], "latest budget_blocked=0") {
+			step.Title = "Estimate and issue test allowance before another orchestrator probe"
+			step.Reason = "The latest orchestrator run was budget-blocked. During controlled testing, estimate per-resident spark from historical runs, issue the probe allowance per resident, then run a short probe before any full 10m soak."
+			step.Command = "arena-broker --mode orchestrator-budget-estimate --limit 8; issue the listed probe_allowance_by_resident commands; confirm work_allowed_now, then arena-orchestrator --mode run --run-mode parallel --residents jade --duration 45s"
+		}
+		steps = append(steps, step)
 	}
 	if hasWarning(items, "world_followups") {
 		steps = append(steps, V0RecommendedStep{
@@ -324,60 +411,34 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem) []V0RecommendedSt
 		})
 	}
 	if hasWarning(items, "memory_governance") {
-		steps = append(steps, V0RecommendedStep{
+		step := V0RecommendedStep{
 			ID:           "review_memory_governance_queue",
 			Title:        "Review memory governance queue without leaking operator-only context",
-			Reason:       "Memory governance has resident self-review or stale retain work; v0 can continue, but the queue should stay visible without host rewriting protected memories.",
+			Reason:       "Memory governance has remaining review work; v0 can continue, but operator-only and resident-owned memory boundaries must stay visible.",
 			Command:      "arena-broker --mode memory-maintenance",
 			RelatedItems: []string{"memory_governance"},
-		})
+		}
+		if itemEvidenceContains(items["memory_governance"], "host_actionable=0") {
+			step.Title = "Review resident-owned memory governance queue"
+			step.Reason = "Host-actionable memory cleanup is clear; remaining work is resident self-review or stale retain visibility, so the host must not rewrite protected resident memories."
+		}
+		steps = append(steps, step)
 	}
 	if hasWarning(items, "known_manual_gaps") {
-		steps = append(steps, V0RecommendedStep{
-			ID:               "host_only_maintenance_smoke",
-			Title:            "Run host-only maintenance notice lifecycle smoke test",
-			Reason:           "Host-only maintenance should prove plan/start/fail-or-complete notices, intervention status updates, and maintenance run records without requiring a resident ticket or real VM resource change.",
-			Command:          "arena-broker --mode host-plan-maintenance --resident amber --resource memory --amount smoke-noop --window '<test window>' --operator <operator> --body '<smoke notice>'; then host-start-maintenance and host-fail-maintenance for the returned intervention id",
-			RequiresApproval: true,
-			BlocksRelease:    false,
-			RelatedItems:     []string{"known_manual_gaps"},
-		})
-		steps = append(steps, V0RecommendedStep{
-			ID:               "cpu_maintenance_regression",
-			Title:            "Run CPU maintenance-style regression with an approved window",
-			Reason:           "CPU maintenance must prove host-plan/start/complete or rollback, approved window, stop/change/start if needed, resident-facing notices, maintenance run record, and inventory refresh.",
-			Command:          "arena-broker --mode v0-runbook",
-			RequiresApproval: true,
-			BlocksRelease:    true,
-			RelatedItems:     []string{"known_manual_gaps"},
-		})
-		steps = append(steps, V0RecommendedStep{
-			ID:               "disk_maintenance_regression",
-			Title:            "Run disk maintenance-style regression with an approved window",
-			Reason:           "Disk maintenance must prove host-plan/start/complete or rollback, approved window, stop/change/start if needed, resident-facing notices, maintenance run record, and inventory refresh.",
-			Command:          "arena-broker --mode v0-runbook",
-			RequiresApproval: true,
-			BlocksRelease:    true,
-			RelatedItems:     []string{"known_manual_gaps"},
-		})
-		steps = append(steps, V0RecommendedStep{
-			ID:               "checkpoint_cleanup_apply_regression",
-			Title:            "Run checkpoint cleanup apply regression after dry-run review",
-			Reason:           "Checkpoint cleanup apply is intentionally not automated and must prove protected baseline/self snapshots are preserved.",
-			Command:          "arena-broker --mode checkpoint-cleanup --resident jade --keep 2",
-			RequiresApproval: true,
-			BlocksRelease:    true,
-			RelatedItems:     []string{"known_manual_gaps"},
-		})
-		steps = append(steps, V0RecommendedStep{
-			ID:               "final_acceptance_manual_pass",
-			Title:            "Perform final manual acceptance pass after validation gaps close",
-			Reason:           "v0 should only be declared after automatic checks pass and approved manual validation evidence is recorded.",
-			Command:          "arena-broker --mode v0-acceptance-cached --limit 5",
-			RequiresApproval: true,
-			BlocksRelease:    true,
-			RelatedItems:     []string{"known_manual_gaps"},
-		})
+		for _, gap := range v0ManualValidationGaps() {
+			if evidenceByCheck[gap.ID] != nil {
+				continue
+			}
+			steps = append(steps, V0RecommendedStep{
+				ID:               gap.ID,
+				Title:            gap.Title,
+				Reason:           gap.Reason,
+				Command:          gap.Command,
+				RequiresApproval: gap.RequiresApproval,
+				BlocksRelease:    gap.BlocksRelease,
+				RelatedItems:     []string{"known_manual_gaps"},
+			})
+		}
 		steps = append(steps, V0RecommendedStep{
 			ID:           "review_operator_runbook",
 			Title:        "Review the operator runbook and final acceptance pass",
@@ -522,6 +583,15 @@ func hasFailure(items map[string]V0ReadinessItem, ids ...string) bool {
 func hasWarning(items map[string]V0ReadinessItem, ids ...string) bool {
 	for _, id := range ids {
 		if items[id].Status == v0ReadinessWarn {
+			return true
+		}
+	}
+	return false
+}
+
+func itemEvidenceContains(item V0ReadinessItem, needle string) bool {
+	for _, evidence := range item.Evidence {
+		if strings.Contains(evidence, needle) {
 			return true
 		}
 	}

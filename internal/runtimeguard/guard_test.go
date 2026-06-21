@@ -6,7 +6,7 @@ import (
 	"ai-arena/internal/tokenledger"
 )
 
-func TestAllowsWorkToConsumeReserveAndEnterDebt(t *testing.T) {
+func TestBlocksWorkBeforeDebtOrReserveConsumption(t *testing.T) {
 	state := State{
 		SparkBalance: 0.05,
 		Quota: tokenledger.QuotaState{
@@ -23,11 +23,39 @@ func TestAllowsWorkToConsumeReserveAndEnterDebt(t *testing.T) {
 		StrainCost: 120,
 	})
 
-	if !got.Allowed || !got.AllowDebt || !got.LockAfterThisCall {
-		t.Fatalf("expected work call to be allowed into debt and lock after call: %#v", got)
+	if got.Allowed || got.AllowDebt {
+		t.Fatalf("expected work call to be blocked before debt: %#v", got)
 	}
 	if !got.WouldEnterDebt || !got.WouldExceedQuota {
 		t.Fatalf("expected work call to report debt and quota overrun risk: %#v", got)
+	}
+	if len(got.Reasons) != 1 || got.Reasons[0] != "work_would_enter_debt" {
+		t.Fatalf("unexpected reasons: %#v", got.Reasons)
+	}
+}
+
+func TestBlocksWorkBeforeSparkReserveConsumption(t *testing.T) {
+	state := State{
+		SparkBalance: 0.25,
+		Quota: tokenledger.QuotaState{
+			Window6HCap:  1000,
+			Window6HUsed: 100,
+		},
+		ReserveSpark:  0.2,
+		ReserveStrain: 120,
+	}
+
+	got := Evaluate(state, Request{
+		Kind:       CallKindWork,
+		SparkCost:  0.1,
+		StrainCost: 10,
+	})
+
+	if got.Allowed {
+		t.Fatalf("expected work call to be blocked before consuming spark reserve: %#v", got)
+	}
+	if !got.ConsumesReserve || len(got.Reasons) != 1 || got.Reasons[0] != "work_would_consume_spark_reserve" {
+		t.Fatalf("unexpected reserve decision: %#v", got)
 	}
 }
 
@@ -191,7 +219,10 @@ func TestFatigueAndSleepDebtShrinkEffectiveQuota(t *testing.T) {
 		SparkCost:  0.2,
 		StrainCost: 900,
 	})
-	if !got.Allowed || !got.WouldExceedQuota || !got.LockAfterThisCall {
-		t.Fatalf("expected reduced effective quota to allow one overrun and then lock: %#v", got)
+	if got.Allowed || !got.WouldExceedQuota || !got.LockAfterThisCall {
+		t.Fatalf("expected reduced effective quota to soft-stop before overrun: %#v", got)
+	}
+	if len(got.Reasons) != 1 || got.Reasons[0] != "work_would_exceed_quota" {
+		t.Fatalf("unexpected reasons: %#v", got.Reasons)
 	}
 }

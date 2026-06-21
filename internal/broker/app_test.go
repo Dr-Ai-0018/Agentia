@@ -1,6 +1,9 @@
 package broker
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +47,189 @@ func TestAppResetStatusAndAdmitFlow(t *testing.T) {
 	if admit.AfterStatus.SparkBalance >= admit.BeforeStatus.SparkBalance {
 		t.Fatalf("expected spark balance to decrease")
 	}
+}
+
+func TestRunOrchestratorBudgetEstimateUsesHistoricalSpark(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "orchestrator-runs", "orchestrator-20260621T025415.332200526Z")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	summary := `{
+  "run_id": "orchestrator-20260621T025415.332200526Z",
+  "runs": [
+    {
+      "resident": "amber",
+      "report": {
+        "resident": "amber",
+        "model": "gpt-5.5",
+        "started_at": "2026-06-21T02:54:15Z",
+        "ended_at": "2026-06-21T02:56:15Z",
+        "rounds": 3,
+        "round_logs": [
+          {"broker": {"applied": true, "spark_delta": -2.5}},
+          {"broker": {"applied": true, "spark_delta": -3.0}},
+          {"broker": {"applied": true, "spark_delta": -3.5}}
+        ]
+      }
+    },
+    {
+      "resident": "jade",
+      "report": {
+        "resident": "jade",
+        "model": "gpt-5.4",
+        "started_at": "2026-06-21T02:54:15Z",
+        "ended_at": "2026-06-21T02:55:15Z",
+        "rounds": 2,
+        "round_logs": [
+          {"broker": {"applied": true, "spark_delta": -1.0}},
+          {"broker": {"applied": true, "spark_delta": -1.2}}
+        ]
+      }
+    }
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(runDir, "summary.json"), []byte(summary), 0o644); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+
+	out, err := New(root).RunOrchestratorBudgetEstimate(8)
+	if err != nil {
+		t.Fatalf("budget estimate: %v", err)
+	}
+	if out.GeneratedFromRuns != 1 {
+		t.Fatalf("unexpected generated runs: %#v", out)
+	}
+	if len(out.Residents) != 2 {
+		t.Fatalf("expected two resident estimates: %#v", out.Residents)
+	}
+	amber := findBudgetEstimate(out, "amber")
+	if amber == nil {
+		t.Fatalf("missing amber estimate: %#v", out.Residents)
+	}
+	if amber.SoakSparkRecommended <= amber.ProbeSparkRecommended {
+		t.Fatalf("expected soak budget to exceed probe budget: %#v", amber)
+	}
+	if amber.ProbeSparkRecommended <= defaultMinimumProbeSpark {
+		t.Fatalf("expected amber probe budget to use history, got %#v", amber)
+	}
+	if len(out.Recommended.SoakAllowanceByResident) != 2 {
+		t.Fatalf("expected per-resident soak commands, got %#v", out.Recommended)
+	}
+	if !strings.Contains(out.Recommended.SoakAllowanceByResident[0], "test-allowance-card") || !strings.Contains(out.Recommended.SoakRun, "--duration 10m") {
+		t.Fatalf("expected recommended commands, got %#v", out.Recommended)
+	}
+	if strings.Contains(out.Recommended.SoakAllowanceByResident[0], "jade,amber") {
+		t.Fatalf("allowance command must be per-resident, got %#v", out.Recommended.SoakAllowanceByResident)
+	}
+}
+
+func findBudgetEstimate(out OrchestratorBudgetEstimateOutput, resident string) *ResidentBudgetEstimate {
+	for i := range out.Residents {
+		if out.Residents[i].Resident == resident {
+			return &out.Residents[i]
+		}
+	}
+	return nil
+}
+
+func TestRunBudgetStatusSummarizesResidents(t *testing.T) {
+	app := New(t.TempDir())
+	if _, err := app.RunReset("amber", time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("reset amber: %v", err)
+	}
+	if _, err := app.RunReset("jade", time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("reset jade: %v", err)
+	}
+
+	out, err := app.RunBudgetStatus([]string{"amber", "jade"})
+	if err != nil {
+		t.Fatalf("budget status: %v", err)
+	}
+	if out.ResidentCount != 2 || len(out.Residents) != 2 {
+		t.Fatalf("expected two residents: %#v", out)
+	}
+	if out.Totals.SparkBalance != 12.5 {
+		t.Fatalf("unexpected total spark: %#v", out.Totals)
+	}
+	if out.Totals.WorkAllowedCount != 2 || out.Totals.BlockedCount != 0 {
+		t.Fatalf("unexpected allowed/blocked counts: %#v", out.Totals)
+	}
+}
+
+func TestRunOrchestratorBudgetReportSummarizesRunSpend(t *testing.T) {
+	root := t.TempDir()
+	runID := "orchestrator-20260621T093703.615042509Z"
+	runDir := filepath.Join(root, "orchestrator-runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	summary := `{
+  "run_id": "orchestrator-20260621T093703.615042509Z",
+  "runs": [
+    {
+      "resident": "amber",
+      "report": {
+        "resident": "amber",
+        "model": "gpt-5.5",
+        "rounds": 2,
+        "acceptance_broker": {"applied": true, "spark_delta": -0.5},
+        "round_logs": [
+          {"input_tokens": 100, "cached_tokens": 0, "output_tokens": 10, "broker": {"applied": true, "spark_delta": -2.5}},
+          {"input_tokens": 200, "cached_tokens": 50, "output_tokens": 20, "broker": {"applied": true, "spark_delta": -3.0}}
+        ]
+      }
+    },
+    {
+      "resident": "jade",
+      "report": {
+        "resident": "jade",
+        "model": "gpt-5.4",
+        "rounds": 1,
+        "acceptance_broker": {"applied": true, "spark_delta": -0.25},
+        "round_logs": [
+          {"input_tokens": 80, "cached_tokens": 0, "output_tokens": 8, "broker": {"applied": true, "spark_delta": -1.25}}
+        ]
+      }
+    }
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(runDir, "summary.json"), []byte(summary), 0o644); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+
+	out, err := New(root).RunOrchestratorBudgetReport(runID, map[string]float64{"amber": 10, "jade": 5})
+	if err != nil {
+		t.Fatalf("budget report: %v", err)
+	}
+	if out.ResidentCount != 2 {
+		t.Fatalf("unexpected resident count: %#v", out)
+	}
+	if out.Totals.SpentSpark != 7.5 || out.InternalUSD != 0.075 {
+		t.Fatalf("unexpected totals: %#v", out)
+	}
+	amber := findBudgetReport(out, "amber")
+	if amber == nil {
+		t.Fatalf("missing amber: %#v", out.Residents)
+	}
+	if amber.SpentSpark != 6.0 || amber.TotalTokens != 330 || amber.CacheHitRatio != 0.1667 || amber.AllowanceUsedRatio != 0.6 {
+		t.Fatalf("unexpected amber report: %#v", amber)
+	}
+	if out.Totals.CacheHitRatio != 0.1316 {
+		t.Fatalf("unexpected total cache hit ratio: %#v", out.Totals)
+	}
+	if out.CacheHealth != "poor" || len(out.Warnings) == 0 {
+		t.Fatalf("expected poor cache health warning: %#v", out)
+	}
+}
+
+func findBudgetReport(out OrchestratorBudgetReportOutput, resident string) *ResidentOrchestratorBudgetReport {
+	for i := range out.Residents {
+		if out.Residents[i].ResidentID == resident {
+			return &out.Residents[i]
+		}
+	}
+	return nil
 }
 
 func TestAppFinalNoticeDebtAndRecovery(t *testing.T) {
@@ -100,7 +286,7 @@ func TestAppRunAdmitSpecUsesProvidedUsage(t *testing.T) {
 			CachedTokens: 0,
 			OutputTokens: 50,
 			TotalTokens:  150,
-			Model:        "gpt-5.4-mini",
+			Model:        "gpt-5.4",
 			ResponseID:   "resp_custom",
 			StartedAt:    now.Add(time.Minute),
 			FinishedAt:   now.Add(time.Minute + 2*time.Second),
@@ -119,7 +305,7 @@ func TestAppRunAdmitSpecUsesProvidedUsage(t *testing.T) {
 	if resp.ApplyResult == nil {
 		t.Fatalf("expected apply result")
 	}
-	if resp.ApplyResult.SparkEntry.Reason != "work call via gpt-5.4-mini" {
+	if resp.ApplyResult.SparkEntry.Reason != "work call via gpt-5.4" {
 		t.Fatalf("unexpected model in spark entry reason: %s", resp.ApplyResult.SparkEntry.Reason)
 	}
 	if resp.Prepared.Usage.ResponseID != "resp_custom" {

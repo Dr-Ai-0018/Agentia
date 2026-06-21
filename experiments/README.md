@@ -24,6 +24,7 @@
 
 - `openai-cache/`
   - 验证 Responses 流式、usage、`cached_tokens`、模型差异
+  - 主系统 runtime 必须复用该实验形态：固定 `instructions`、固定 `prompt_cache_key`、完整 append-only input history replay
 - `context-packet/`
   - 验证上下文组包顺序、稳定前缀、hash 漂移边界
 - `token-ledger/`
@@ -54,6 +55,8 @@
   - 验证居民对自身机器、资源、目录、日志的感知与操作
 - `network-boundary/`
   - 验证居民能否区分本机问题、宿主/桥接问题、上游/provider 问题
+- `ticket-roundtrip/`
+  - 验证 resident 工单 -> host inbox -> host reply -> resident fresh update 的闭环
 
 ### D. Persona / Multi-Agent 层
 
@@ -109,12 +112,22 @@
 
 当前进展补充：
 
+- `openai-cache/`
+  - 结论已回写到 newborn runtime
+  - runtime 不再把 resident/world/memory 上下文塞进 `instructions`
+  - runtime 不再压缩或重写当前 run 的历史前缀
+  - 8 轮三居民 cache probe 已确认本地请求前缀连续保留，但 cache health 仍为 `watch`
 - `broker-self-actions/`
   - 已完成真实 `self_status` 验收
   - 已完成真实越权拒绝验收
 - `vm-control/`
   - 已完成 `jade` 的宿主/guest 双视角真实采样
   - 已确认当前健康样本不会误报资源申请
+- `ticket-roundtrip/`
+  - 已完成真实闭环验收
+  - `amber` 已真实提交工单
+  - host inbox 已真实看到 open ticket
+  - host reply 后 resident 已真实收到 `ticket_update`
 - `memory-runtime/`
   - 仍然是 memory 子系统的真实可用基线
 - `multi-agent-baseline/`

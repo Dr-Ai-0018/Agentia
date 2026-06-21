@@ -51,7 +51,7 @@ func TestRunAdmitRejectsInvalidCachedTokens(t *testing.T) {
 	}
 }
 
-func TestRunAdmitAllowsOneWorkOverrunThenLocks(t *testing.T) {
+func TestRunAdmitStopsWorkBeforeOverrun(t *testing.T) {
 	app := broker.New(t.TempDir())
 	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
 
@@ -76,24 +76,27 @@ func TestRunAdmitAllowsOneWorkOverrunThenLocks(t *testing.T) {
 	if !ok {
 		t.Fatalf("unexpected response type %T", raw)
 	}
-	if resp.Denied || !resp.Applied {
-		t.Fatalf("expected overrun work call to apply: %#v", resp)
+	if !resp.Denied || resp.Applied {
+		t.Fatalf("expected overrun work call to stop before apply: %#v", resp)
 	}
-	if resp.AfterStatus == nil || !resp.AfterStatus.DebtActive {
-		t.Fatalf("expected overrun work call to create debt")
+	if resp.AfterStatus != nil {
+		t.Fatalf("denied overrun must not create after status: %#v", resp.AfterStatus)
 	}
 	if !resp.Prepared.Decision.WouldEnterDebt || !resp.Prepared.Decision.WouldExceedQuota {
 		t.Fatalf("expected overrun decision flags: %#v", resp.Prepared.Decision)
+	}
+	if len(resp.DeniedReason) == 0 || resp.DeniedReason[0] != "work_would_enter_debt" {
+		t.Fatalf("unexpected denied reason: %#v", resp.DeniedReason)
 	}
 
 	next, err := app.RunAdmit("onyx", runtimeguard.CallKindWork, false, now.Add(2*time.Minute))
 	if err != nil {
 		t.Fatalf("next admit: %v", err)
 	}
-	if !next.Denied {
-		t.Fatalf("expected debt to deny next ordinary work")
+	if next.BeforeStatus.DebtActive {
+		t.Fatalf("denied overrun must not put resident into debt: %#v", next.BeforeStatus)
 	}
-	if len(next.DeniedReason) == 0 || next.DeniedReason[0] != "spark_debt_active" {
-		t.Fatalf("unexpected next denied reason: %#v", next.DeniedReason)
+	if next.Denied {
+		t.Fatalf("ordinary follow-up should not inherit debt from denied overrun: %#v", next)
 	}
 }

@@ -112,7 +112,7 @@ func (r *Runner) shouldCreateShortReflection(state loopState, round int, decisio
 	if decision.NextAction == "talk_to_chenglin" || decision.NextAction == "submit_ticket" {
 		return true
 	}
-	if decision.NextAction == "write_note" && state.UsedActions["guest_exec"] >= 2 {
+	if isNoteAction(decision.NextAction) && state.UsedActions["guest_exec"] >= 2 {
 		return true
 	}
 	if strings.Contains(strings.ToLower(observation), "duplicate action suppressed") {
@@ -316,7 +316,7 @@ func inferDomain(decision AgentDecision) memory.Domain {
 	switch decision.NextAction {
 	case "talk_to_chenglin", "submit_ticket":
 		return memory.DomainRelationships
-	case "write_note":
+	case "write_note", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact":
 		return memory.DomainWorking
 	default:
 		return memory.DomainLessons
@@ -330,7 +330,7 @@ func summarizeShortReflection(decision AgentDecision, observation string) string
 		return "A world-facing thread was opened; the exchange and its tone now exist as part of the current situation."
 	case "submit_ticket":
 		return "A formal host-decision request is now live in the world state with its own title, body, and priority."
-	case "write_note":
+	case "write_note", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact":
 		return "A local note was updated inside the VM and now exists as part of local continuity."
 	default:
 		if facts == "" {
@@ -414,7 +414,7 @@ func inferFactsFromDecision(decision AgentDecision) string {
 		facts = append(facts, v)
 	}
 
-	if decision.NextAction == "write_note" {
+	if isNoteAction(decision.NextAction) {
 		add("I left or updated a local continuity note inside the VM.")
 	}
 	if strings.Contains(text, "whoami") || strings.Contains(text, "id\n") || strings.Contains(text, "identity") || strings.Contains(text, "hostname") {

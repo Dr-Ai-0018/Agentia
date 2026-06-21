@@ -110,6 +110,7 @@ func TestServiceRunParallelKeepsAllResidentStatuses(t *testing.T) {
 }
 
 func TestServiceUsesResidentSpecificAPIKeys(t *testing.T) {
+	clearOpenAIEndpointEnv(t)
 	root := t.TempDir()
 	t.Setenv("JADE_OPENAI_API_KEY", "jade-key")
 	t.Setenv("AMBER_OPENAI_API_KEY", "amber-key")
@@ -117,9 +118,11 @@ func TestServiceUsesResidentSpecificAPIKeys(t *testing.T) {
 	service := New(app, &http.Client{}, "http://example.invalid", "fallback-key")
 	service.stateRoot = filepath.Join(root, "orchestrator-runs")
 	seen := map[string]string{}
-	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
+	service.endpointRunnerFactory = func(client *http.Client, endpoints []openai.Endpoint, resident string) Runner {
 		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
-			seen[profile.Name] = apiKey
+			if len(endpoints) > 0 {
+				seen[profile.Name] = endpoints[0].APIKey
+			}
 			return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, Rounds: 1}, nil
 		})
 	}
@@ -134,6 +137,174 @@ func TestServiceUsesResidentSpecificAPIKeys(t *testing.T) {
 	}
 	if seen["jade"] != "jade-key" || seen["amber"] != "amber-key" || seen["onyx"] != "fallback-key" {
 		t.Fatalf("unexpected resident api keys: %#v", seen)
+	}
+}
+
+func TestResidentEndpointsSupportsPerResidentPrimaryAndBackups(t *testing.T) {
+	clearOpenAIEndpointEnv(t)
+	t.Setenv("OPENAI_BASE_URL_2", "http://global-backup.invalid")
+	t.Setenv("OPENAI_API_KEY_2", "global-backup-key")
+	t.Setenv("JADE_OPENAI_BASE_URL", "http://jade-primary.invalid")
+	t.Setenv("JADE_OPENAI_API_KEY", "jade-primary-key")
+	t.Setenv("JADE_OPENAI_BASE_URL_2", "http://jade-backup1.invalid")
+	t.Setenv("JADE_OPENAI_API_KEY_2", "jade-backup1-key")
+	t.Setenv("JADE_OPENAI_CHANNEL_COMMENT_2", "zz1-Pro")
+	t.Setenv("JADE_OPENAI_BASE_URL_3", "http://jade-backup2.invalid")
+	t.Setenv("JADE_OPENAI_API_KEY_3", "jade-backup2-key")
+
+	jade := ResidentEndpoints("jade", "http://fallback-primary.invalid", "fallback-primary-key")
+	if len(jade) != 5 {
+		t.Fatalf("expected jade personal chain plus global fallbacks, got %#v", jade)
+	}
+	if jade[0].Name != "primary" || jade[0].BaseURL != "http://jade-primary.invalid" || jade[0].APIKey != "jade-primary-key" {
+		t.Fatalf("unexpected jade primary: %#v", jade[0])
+	}
+	if jade[1].Name != "backup_1" || jade[1].BaseURL != "http://jade-backup1.invalid" || jade[1].APIKey != "jade-backup1-key" {
+		t.Fatalf("unexpected jade backup 1: %#v", jade[1])
+	}
+	if jade[1].Comment != "zz1-Pro" {
+		t.Fatalf("unexpected jade backup 1 comment: %#v", jade[1])
+	}
+	if jade[2].Name != "backup_2" || jade[2].BaseURL != "http://jade-backup2.invalid" || jade[2].APIKey != "jade-backup2-key" {
+		t.Fatalf("unexpected jade backup 2: %#v", jade[2])
+	}
+	if jade[3].Name != "global_fallback_primary" || jade[3].BaseURL != "http://fallback-primary.invalid" || jade[3].APIKey != "fallback-primary-key" {
+		t.Fatalf("unexpected jade global fallback primary: %#v", jade[3])
+	}
+	if jade[4].Name != "global_fallback_backup_1" || jade[4].BaseURL != "http://global-backup.invalid" || jade[4].APIKey != "global-backup-key" {
+		t.Fatalf("unexpected jade global fallback backup: %#v", jade[4])
+	}
+
+	onyx := ResidentEndpoints("onyx", "http://fallback-primary.invalid", "fallback-primary-key")
+	if len(onyx) != 2 {
+		t.Fatalf("expected onyx fallback primary plus global backup, got %#v", onyx)
+	}
+	if onyx[0].Name != "primary" || onyx[0].BaseURL != "http://fallback-primary.invalid" || onyx[0].APIKey != "fallback-primary-key" {
+		t.Fatalf("unexpected onyx primary: %#v", onyx[0])
+	}
+	if onyx[1].Name != "backup_1" || onyx[1].BaseURL != "http://global-backup.invalid" || onyx[1].APIKey != "global-backup-key" {
+		t.Fatalf("unexpected onyx backup: %#v", onyx[1])
+	}
+}
+
+func TestResidentEndpointsPreferPersonalChainBeforeGlobalFallback(t *testing.T) {
+	clearOpenAIEndpointEnv(t)
+	t.Setenv("OPENAI_BASE_URL", "http://global-primary.invalid")
+	t.Setenv("OPENAI_API_KEY", "global-primary-key")
+	t.Setenv("OPENAI_BASE_URL_2", "http://global-backup.invalid")
+	t.Setenv("OPENAI_API_KEY_2", "global-backup-key")
+	t.Setenv("JADE_OPENAI_API_KEY_2", "jade-backup-key")
+	t.Setenv("JADE_OPENAI_CHANNEL_COMMENT_2", "zz1-Pro")
+
+	endpoints := ResidentEndpoints("jade", "http://fallback-primary.invalid", "fallback-primary-key")
+	if len(endpoints) != 3 {
+		t.Fatalf("expected personal backup plus global fallbacks, got %#v", endpoints)
+	}
+	if endpoints[0].Name != "backup_1" || endpoints[0].APIKey != "jade-backup-key" || endpoints[0].BaseURL != "http://fallback-primary.invalid" {
+		t.Fatalf("expected personal backup first, got %#v", endpoints)
+	}
+	if endpoints[0].Comment != "zz1-Pro" {
+		t.Fatalf("expected personal channel comment, got %#v", endpoints[0])
+	}
+	if endpoints[1].Name != "global_fallback_primary" || endpoints[1].APIKey != "fallback-primary-key" || endpoints[1].BaseURL != "http://fallback-primary.invalid" {
+		t.Fatalf("expected global primary after personal chain, got %#v", endpoints[1])
+	}
+	if endpoints[2].Name != "global_fallback_backup_1" || endpoints[2].APIKey != "global-backup-key" || endpoints[2].BaseURL != "http://global-backup.invalid" {
+		t.Fatalf("expected global backup last, got %#v", endpoints[2])
+	}
+}
+
+func TestResidentEndpointsUseGlobalPrimaryWhenNoPersonalKeyExists(t *testing.T) {
+	clearOpenAIEndpointEnv(t)
+	t.Setenv("OPENAI_BASE_URL", "http://global-primary.invalid")
+	t.Setenv("OPENAI_API_KEY", "global-primary-key")
+
+	endpoints := ResidentEndpoints("newcomer", "http://fallback-primary.invalid", "fallback-primary-key")
+	if len(endpoints) != 1 {
+		t.Fatalf("expected one global endpoint, got %#v", endpoints)
+	}
+	if endpoints[0].Name != "primary" || endpoints[0].APIKey != "fallback-primary-key" || endpoints[0].BaseURL != "http://fallback-primary.invalid" {
+		t.Fatalf("expected global primary for newcomer, got %#v", endpoints[0])
+	}
+}
+
+func TestResidentEndpointsBackupKeyReusesResidentPrimaryBaseURL(t *testing.T) {
+	clearOpenAIEndpointEnv(t)
+	t.Setenv("JADE_OPENAI_BASE_URL", "http://jade-primary.invalid")
+	t.Setenv("JADE_OPENAI_API_KEY", "jade-primary-key")
+	t.Setenv("JADE_OPENAI_API_KEY_2", "jade-backup-key")
+
+	endpoints := ResidentEndpoints("jade", "http://fallback-primary.invalid", "fallback-primary-key")
+	if len(endpoints) != 3 {
+		t.Fatalf("expected jade primary and backup, got %#v", endpoints)
+	}
+	if endpoints[1].BaseURL != "http://jade-primary.invalid" || endpoints[1].APIKey != "jade-backup-key" {
+		t.Fatalf("expected backup key to reuse resident primary base URL, got %#v", endpoints[1])
+	}
+}
+
+func TestServicePassesResidentEndpointListToRunner(t *testing.T) {
+	clearOpenAIEndpointEnv(t)
+	root := t.TempDir()
+	t.Setenv("JADE_OPENAI_BASE_URL", "http://jade-primary.invalid")
+	t.Setenv("JADE_OPENAI_API_KEY", "jade-primary-key")
+	t.Setenv("JADE_OPENAI_BASE_URL_2", "http://jade-backup.invalid")
+	t.Setenv("JADE_OPENAI_API_KEY_2", "jade-backup-key")
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://fallback.invalid", "fallback-key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	var seen []openai.Endpoint
+	service.endpointRunnerFactory = func(client *http.Client, endpoints []openai.Endpoint, resident string) Runner {
+		seen = append([]openai.Endpoint(nil), endpoints...)
+		return RunnerFunc(func(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+			return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, Rounds: 1}, nil
+		})
+	}
+
+	if _, err := service.Run(RunInput{
+		Residents: []string{"jade"},
+		Duration:  30 * time.Second,
+		OutDir:    filepath.Join(root, "out"),
+		Mode:      RunModeSequential,
+	}); err != nil {
+		t.Fatalf("run orchestrator: %v", err)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("expected two jade endpoints, got %#v", seen)
+	}
+	if seen[0].BaseURL != "http://jade-primary.invalid" || seen[1].BaseURL != "http://jade-backup.invalid" {
+		t.Fatalf("unexpected endpoint order: %#v", seen)
+	}
+}
+
+func clearOpenAIEndpointEnv(t *testing.T) {
+	t.Helper()
+	keys := []string{
+		"OPENAI_BASE_URL",
+		"OPENAI_API_KEY",
+		"OPENAI_CHANNEL_COMMENT",
+		"OPENAI_BASE_URL_2",
+		"OPENAI_API_KEY_2",
+		"OPENAI_CHANNEL_COMMENT_2",
+		"OPENAI_BASE_URL_3",
+		"OPENAI_API_KEY_3",
+		"OPENAI_CHANNEL_COMMENT_3",
+	}
+	for _, resident := range []string{"JADE", "AMBER", "ONYX"} {
+		keys = append(keys,
+			resident+"_OPENAI_BASE_URL",
+			resident+"_OPENAI_API_KEY",
+			resident+"_OPENAI_CHANNEL_COMMENT",
+			resident+"_OPENAI_BASE_URL_2",
+			resident+"_OPENAI_API_KEY_2",
+			resident+"_OPENAI_CHANNEL_COMMENT_2",
+			resident+"_OPENAI_BASE_URL_3",
+			resident+"_OPENAI_API_KEY_3",
+			resident+"_OPENAI_CHANNEL_COMMENT_3",
+		)
+	}
+	for _, key := range keys {
+		t.Setenv(key, "")
 	}
 }
 

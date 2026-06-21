@@ -51,5 +51,9 @@ func hasBudgetBlock(reason string) bool {
 		strings.Contains(reason, "quota_reserved_for_final_notice") ||
 		strings.Contains(reason, "spark_exhausted") ||
 		strings.Contains(reason, "effective_window_exhausted") ||
-		strings.Contains(reason, "spark_debt_active")
+		strings.Contains(reason, "spark_debt_active") ||
+		strings.Contains(reason, "would_enter_debt") ||
+		strings.Contains(reason, "would_exceed_quota") ||
+		strings.Contains(reason, "would_consume_spark_reserve") ||
+		strings.Contains(reason, "would_consume_strain_reserve")
 }

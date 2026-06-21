@@ -2,7 +2,6 @@ package newborn
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -28,7 +27,7 @@ type ActionResult struct {
 }
 
 const (
-	writeNoteMaxChars     = 2000
+	noteTextMaxChars      = 12000
 	writeNoteMaxFileBytes = 256 * 1024
 	actionRawOutputMax    = 12000
 )
@@ -52,8 +51,18 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 		return ActionResult{Observation: reason, Activity: tokenledger.ActivityStatusCheck}
 	}
 	switch decision.NextAction {
-	case "write_note":
-		return e.executeWriteNote(profile, decision)
+	case "write_note", "note_append":
+		return e.executeNoteAppend(profile, decision)
+	case "note_list":
+		return executeNoteList(profile)
+	case "note_read":
+		return executeNoteRead(profile, decision)
+	case "note_replace_with_backup":
+		return executeNoteReplaceWithBackup(profile, decision)
+	case "note_restore_backup":
+		return executeNoteRestoreBackup(profile, decision)
+	case "note_summarize_or_compact":
+		return executeNoteSummarizeOrCompact(profile, decision)
 	case "guest_exec":
 		if strings.TrimSpace(decision.Command) == "" {
 			return actionError("guest_exec denied: command is required", "validation_error", "")
@@ -88,20 +97,23 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 	}
 }
 
-func (e *IncusActionExecutor) executeWriteNote(profile ResidentProfile, decision AgentDecision) ActionResult {
-	text := strings.TrimSpace(decision.MemoryText)
+func (e *IncusActionExecutor) executeNoteAppend(profile ResidentProfile, decision AgentDecision) ActionResult {
+	text := strings.TrimSpace(decision.NoteText)
+	if text == "" {
+		text = strings.TrimSpace(decision.MemoryText)
+	}
 	if text == "" {
 		text = strings.TrimSpace(decision.Message)
 	}
 	if text == "" {
-		return actionError("write_note denied: provide note text in memory_text; shell commands are not executed for write_note", "validation_error", decision.Command)
+		return actionError("note_append denied: provide note text in note_text; shell commands are not executed for note tools", "validation_error", decision.Command)
 	}
-	if len(text) > writeNoteMaxChars {
-		return actionError(fmt.Sprintf("write_note denied: note text exceeds %d characters", writeNoteMaxChars), "validation_error", text)
+	if len(text) > noteTextMaxChars {
+		return actionError(fmt.Sprintf("note_append denied: note text exceeds %d characters", noteTextMaxChars), "validation_error", text)
 	}
-	result := writeGuestNote(profile.Instance, text)
+	result := appendGuestNote(profile.Instance, decision.NoteFile, text)
 	if result.Error {
-		result.ErrorKind = "write_note_failed"
+		result.ErrorKind = "note_append_failed"
 	}
 	return result
 }
@@ -211,12 +223,7 @@ func (e *IncusActionExecutor) executeMemoryReview(profile ResidentProfile, decis
 }
 
 func suppressDuplicateAction(profile ResidentProfile, decision AgentDecision) (bool, string) {
-	intent := classifyCommandIntent(decision)
 	switch {
-	case intent == "baseline_note_capture":
-		if repeatedBaselineCapture(decision.Command) {
-			return true, "duplicate action suppressed: baseline capture was already done recently; stop rewriting the same startup facts and move to the next unresolved area such as network, services, package state, or world interaction"
-		}
 	case decision.NextAction == "talk_to_chenglin":
 		if repeatedChat(profile.Name, decision.Message) {
 			return true, "duplicate action suppressed: a very similar chat message is already in the recent world thread; wait for new facts or send a meaningfully different message"
@@ -232,7 +239,7 @@ func suppressDuplicateAction(profile ResidentProfile, decision AgentDecision) (b
 func classifyCommandIntent(decision AgentDecision) string {
 	command := normalizeDuplicateText(decision.Command)
 	switch {
-	case decision.NextAction == "write_note":
+	case decision.NextAction == "write_note", isNoteAction(decision.NextAction):
 		return "note"
 	case decision.NextAction == "self_status":
 		return "self_status"
@@ -273,40 +280,14 @@ func validateGuestExecCommand(command string) (ActionResult, bool) {
 	if trimmed == "" {
 		return actionError("guest_exec denied: command is required", "validation_error", command), true
 	}
-	if isRiskyContinuityShellWrite(trimmed) {
+	if targetsContinuitySurface(strings.ToLower(trimmed)) {
 		return actionError(
-			"guest_exec denied: risky continuity-note shell write detected. Use write_note with plain memory_text instead of heredoc, redirection, sed -i, or complex quoting against /root/arena-notes or continuity files.",
-			"unsafe_continuity_write",
+			"guest_exec denied: continuity files under /root/arena-notes must use the dedicated note API: note_list, note_read, note_append, note_replace_with_backup, note_restore_backup, or note_summarize_or_compact. This is a semantic tool-selection error, not a shell quoting problem.",
+			"continuity_surface_requires_note_tool",
 			command,
 		), true
 	}
 	return ActionResult{}, false
-}
-
-func isRiskyContinuityShellWrite(command string) bool {
-	lower := strings.ToLower(command)
-	if !targetsContinuitySurface(lower) {
-		return false
-	}
-	if strings.Contains(lower, "<<") || strings.Contains(lower, ">>") || strings.Contains(lower, ">") {
-		return true
-	}
-	for _, token := range []string{
-		"sed -i",
-		"perl -pi",
-		"tee ",
-		"python -",
-		"python3 -",
-		"cat <<",
-		"cat >",
-		"cat >>",
-		"truncate ",
-	} {
-		if strings.Contains(lower, token) {
-			return true
-		}
-	}
-	return false
 }
 
 func targetsContinuitySurface(command string) bool {
@@ -314,7 +295,6 @@ func targetsContinuitySurface(command string) bool {
 		"/root/arena-notes",
 		"arena-notes/",
 		"boot-notes.md",
-		"continuity",
 	} {
 		if strings.Contains(command, token) {
 			return true
@@ -373,31 +353,161 @@ func guestCommand(instance, script string, activity tokenledger.ActivityType) Ac
 	return ActionResult{Observation: string(out), Activity: activity}
 }
 
-func writeGuestNote(instance, text string) ActionResult {
+func executeNoteList(profile ResidentProfile) ActionResult {
 	script := strings.Join([]string{
 		"set -euo pipefail",
 		"note_dir=/root/arena-notes",
-		"note_file=$note_dir/boot-notes.md",
+		"mkdir -p \"$note_dir\"",
+		"find \"$note_dir\" -maxdepth 1 -type f -printf '%f %s %TY-%Tm-%Td %TH:%TM\\n' | sort",
+	}, "\n")
+	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		raw := limitRawOutput(strings.TrimSpace(string(out)))
+		return ActionResult{Observation: "note_list failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_list_failed", RawOutput: raw}
+	}
+	return ActionResult{Observation: "note_list files under /root/arena-notes:\n" + string(out), Activity: tokenledger.ActivityLightWork}
+}
+
+func executeNoteRead(profile ResidentProfile, decision AgentDecision) ActionResult {
+	file, err := safeNoteFile(decision.NoteFile)
+	if err != nil {
+		return actionError("note_read denied: "+err.Error(), "note_path_invalid", decision.NoteFile)
+	}
+	script := strings.Join([]string{
+		"set -euo pipefail",
+		"note_dir=/root/arena-notes",
+		"note_file=$note_dir/$1",
+		"if [ ! -f \"$note_file\" ]; then echo \"note_read denied: file not found: $1\" >&2; exit 44; fi",
+		"wc -c \"$note_file\"",
+		"sed -n '1,220p' \"$note_file\"",
+	}, "\n")
+	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script, "note_read", file)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		raw := limitRawOutput(strings.TrimSpace(string(out)))
+		return ActionResult{Observation: "note_read failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_read_failed", RawOutput: raw}
+	}
+	return ActionResult{Observation: "note_read /root/arena-notes/" + file + ":\n" + string(out), Activity: tokenledger.ActivityLightWork}
+}
+
+func appendGuestNote(instance, noteFile, text string) ActionResult {
+	file, err := safeNoteFile(noteFile)
+	if err != nil {
+		return actionError("note_append denied: "+err.Error(), "note_path_invalid", noteFile)
+	}
+	script := strings.Join([]string{
+		"set -euo pipefail",
+		"note_dir=/root/arena-notes",
+		"note_file=$note_dir/$1",
 		"mkdir -p \"$note_dir\"",
 		"current_bytes=0",
 		"if [ -f \"$note_file\" ]; then current_bytes=$(wc -c < \"$note_file\"); fi",
-		fmt.Sprintf("if [ \"$current_bytes\" -gt %d ]; then echo \"write_note denied: note file exceeds %d bytes\" >&2; exit 42; fi", writeNoteMaxFileBytes, writeNoteMaxFileBytes),
-		"printf '%s\n' \"$1\" >> \"$note_file\"",
+		fmt.Sprintf("if [ \"$current_bytes\" -gt %d ]; then echo \"note_append denied: note file exceeds %d bytes\" >&2; exit 42; fi", writeNoteMaxFileBytes, writeNoteMaxFileBytes),
+		"printf '%s\n' \"$2\" >> \"$note_file\"",
 		"wc -c \"$note_file\"",
 	}, "\n")
-	cmd := exec.Command("incus", "exec", instance, "--", "bash", "-lc", script, "write_note", text)
+	cmd := exec.Command("incus", "exec", instance, "--", "bash", "-lc", script, "note_append", file, text)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
 		return ActionResult{
-			Observation: fmt.Sprintf("write_note failed:\n%s", raw),
+			Observation: fmt.Sprintf("note_append failed:\n%s", raw),
 			Activity:    tokenledger.ActivityLightWork,
 			Error:       true,
-			ErrorKind:   "write_note_failed",
+			ErrorKind:   "note_append_failed",
 			RawOutput:   raw,
 		}
 	}
-	return ActionResult{Observation: "write_note appended plain text to /root/arena-notes/boot-notes.md\n" + string(out), Activity: tokenledger.ActivityLightWork}
+	return ActionResult{Observation: "note_append appended plain text to /root/arena-notes/" + file + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
+}
+
+func executeNoteReplaceWithBackup(profile ResidentProfile, decision AgentDecision) ActionResult {
+	return replaceGuestNoteWithBackup(profile, decision, "note_replace_with_backup")
+}
+
+func executeNoteSummarizeOrCompact(profile ResidentProfile, decision AgentDecision) ActionResult {
+	return replaceGuestNoteWithBackup(profile, decision, "note_summarize_or_compact")
+}
+
+func replaceGuestNoteWithBackup(profile ResidentProfile, decision AgentDecision, action string) ActionResult {
+	file, err := safeNoteFile(decision.NoteFile)
+	if err != nil {
+		return actionError(action+" denied: "+err.Error(), "note_path_invalid", decision.NoteFile)
+	}
+	text := strings.TrimSpace(decision.NoteText)
+	if text == "" {
+		return actionError(action+" denied: note_text is required", "validation_error", "")
+	}
+	if len(text) > noteTextMaxChars {
+		return actionError(fmt.Sprintf("%s denied: note text exceeds %d characters", action, noteTextMaxChars), "validation_error", text)
+	}
+	script := strings.Join([]string{
+		"set -euo pipefail",
+		"note_dir=/root/arena-notes",
+		"note_file=$note_dir/$1",
+		"mkdir -p \"$note_dir\"",
+		"stamp=$(date -u +%Y%m%dT%H%M%SZ)",
+		"base_name=$(basename \"$note_file\")",
+		"backup_file=$(mktemp \"$note_dir/$base_name.bak-$stamp.XXXXXX\")",
+		"if [ -f \"$note_file\" ]; then cp \"$note_file\" \"$backup_file\"; else rm -f \"$backup_file\"; backup_file=; fi",
+		"tmp_file=$(mktemp \"$note_dir/.note-replace.XXXXXX\")",
+		"printf '%s\n' \"$2\" > \"$tmp_file\"",
+		"mv \"$tmp_file\" \"$note_file\"",
+		"if [ -n \"$backup_file\" ]; then backup_name=$(basename \"$backup_file\"); printf 'backup=%s\n' \"$backup_name\"; else printf 'backup=none\n'; fi",
+		"wc -c \"$note_file\"",
+	}, "\n")
+	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script, action, file, text)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		raw := limitRawOutput(strings.TrimSpace(string(out)))
+		return ActionResult{Observation: action + " failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_replace_failed", RawOutput: raw}
+	}
+	return ActionResult{Observation: action + " replaced /root/arena-notes/" + file + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
+}
+
+func executeNoteRestoreBackup(profile ResidentProfile, decision AgentDecision) ActionResult {
+	file, err := safeNoteFile(decision.NoteFile)
+	if err != nil {
+		return actionError("note_restore_backup denied: "+err.Error(), "note_path_invalid", decision.NoteFile)
+	}
+	backup, err := safeNoteFile(decision.BackupFile)
+	if err != nil {
+		return actionError("note_restore_backup denied: invalid backup_file: "+err.Error(), "note_path_invalid", decision.BackupFile)
+	}
+	script := strings.Join([]string{
+		"set -euo pipefail",
+		"note_dir=/root/arena-notes",
+		"note_file=$note_dir/$1",
+		"backup_file=$note_dir/$2",
+		"if [ ! -f \"$backup_file\" ]; then echo \"note_restore_backup denied: backup not found: $2\" >&2; exit 45; fi",
+		"stamp=$(date -u +%Y%m%dT%H%M%SZ)",
+		"if [ -f \"$note_file\" ]; then cp \"$note_file\" \"$note_file.pre-restore-$stamp\"; fi",
+		"cp \"$backup_file\" \"$note_file\"",
+		"wc -c \"$note_file\"",
+	}, "\n")
+	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script, "note_restore", file, backup)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		raw := limitRawOutput(strings.TrimSpace(string(out)))
+		return ActionResult{Observation: "note_restore_backup failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_restore_failed", RawOutput: raw}
+	}
+	return ActionResult{Observation: "note_restore_backup restored /root/arena-notes/" + file + " from " + backup + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
+}
+
+func safeNoteFile(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "boot-notes.md", nil
+	}
+	if value == "" || strings.Contains(value, "/") || strings.Contains(value, `\`) {
+		return "", fmt.Errorf("note_file must be a file name under /root/arena-notes")
+	}
+	cleaned := filepath.Clean(value)
+	if cleaned == "." || cleaned == ".." || strings.Contains(cleaned, "..") {
+		return "", fmt.Errorf("note_file cannot traverse directories")
+	}
+	return cleaned, nil
 }
 
 func limitRawOutput(raw string) string {
@@ -431,7 +541,15 @@ func decisionSignature(decision AgentDecision) string {
 	case "guest_exec":
 		return decision.NextAction + ":" + normalize(decision.Command)
 	case "write_note":
-		return decision.NextAction + ":" + normalize(decision.MemoryText)
+		return "note_append:" + normalize(firstNonEmpty(decision.NoteText, decision.MemoryText, decision.Message))
+	case "note_append", "note_replace_with_backup", "note_summarize_or_compact":
+		return decision.NextAction + ":" + normalize(decision.NoteFile+" "+decision.NoteText)
+	case "note_read":
+		return decision.NextAction + ":" + normalize(decision.NoteFile)
+	case "note_restore_backup":
+		return decision.NextAction + ":" + normalize(decision.NoteFile+" "+decision.BackupFile)
+	case "note_list":
+		return decision.NextAction
 	case "self_status", "self_quota":
 		return decision.NextAction
 	case "talk_to_chenglin":
@@ -443,60 +561,21 @@ func decisionSignature(decision AgentDecision) string {
 	}
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func appendRecentAction(actions []RecentAction, item RecentAction) []RecentAction {
 	actions = append(actions, item)
 	if len(actions) > 6 {
 		actions = actions[len(actions)-6:]
 	}
 	return actions
-}
-
-func repeatedWriteNote(command string) bool {
-	path := extractWriteTarget(command)
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	if time.Since(info.ModTime()) > 3*time.Minute {
-		return false
-	}
-	name := filepath.Base(path)
-	return strings.Contains(strings.ToLower(name), "boot-notes") || strings.Contains(strings.ToLower(name), "continuity")
-}
-
-func repeatedBaselineCapture(command string) bool {
-	if !containsBaselineMarkers(strings.ToLower(command)) {
-		return false
-	}
-	path := extractWriteTarget(command)
-	if path == "" {
-		return true
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return time.Since(info.ModTime()) <= 5*time.Minute
-}
-
-func extractWriteTarget(command string) string {
-	lower := command
-	markers := []string{">>", ">"}
-	for _, marker := range markers {
-		if idx := strings.Index(lower, marker); idx >= 0 {
-			target := strings.TrimSpace(lower[idx+len(marker):])
-			if fields := strings.Fields(target); len(fields) > 0 {
-				candidate := strings.Trim(fields[0], `"'`)
-				if strings.HasPrefix(candidate, "/") {
-					return candidate
-				}
-			}
-		}
-	}
-	return ""
 }
 
 func containsBaselineMarkers(command string) bool {

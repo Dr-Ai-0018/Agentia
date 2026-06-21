@@ -72,19 +72,30 @@ func Evaluate(state State, req Request) Decision {
 			decision.Reasons = append(decision.Reasons, "effective_window_exhausted")
 			return decision
 		}
-		decision.Allowed = true
 		decision.RemainingSpark = state.SparkBalance - req.SparkCost
 		decision.Remaining6H = remaining6H - req.StrainCost
 		decision.WouldEnterDebt = decision.RemainingSpark < 0
 		decision.WouldExceedQuota = decision.Remaining6H < 0
-		decision.AllowDebt = decision.WouldEnterDebt
 		decision.LockAfterThisCall = decision.WouldEnterDebt || decision.WouldExceedQuota
 		if decision.WouldEnterDebt {
-			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_allowed_to_enter_debt")
+			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_enter_debt")
+			return decision
 		}
 		if decision.WouldExceedQuota {
-			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_allowed_to_exceed_quota")
+			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_exceed_quota")
+			return decision
 		}
+		if decision.RemainingSpark < state.ReserveSpark {
+			decision.ConsumesReserve = true
+			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_consume_spark_reserve")
+			return decision
+		}
+		if decision.Remaining6H < state.ReserveStrain {
+			decision.ConsumesReserve = true
+			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_consume_strain_reserve")
+			return decision
+		}
+		decision.Allowed = true
 		return decision
 	}
 

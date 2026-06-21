@@ -59,6 +59,37 @@ func TestBuildV0ReadinessReportsWarningsForKnownGaps(t *testing.T) {
 	}
 }
 
+func TestBuildV0ReadinessUsesManualValidationEvidence(t *testing.T) {
+	now := time.Date(2026, 6, 18, 6, 30, 0, 0, time.UTC)
+	out := BuildV0ReadinessWithEvidence(HostInspectSummary{
+		CollectedAt:      "2026-06-18T06:30:00Z",
+		ResidentCount:    3,
+		ResidentsRunning: 3,
+		Capacity:         HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "cpu", AllocatableTotal: 4, AllocatableFree: 2, Unit: "vcpu"}}},
+		LatestOrchestrator: &OrchestratorInspectionDigest{
+			RunID: "orchestrator-20260617T041222.823174786Z",
+		},
+	}, now, "test", []V0AcceptanceEvidenceRecord{
+		passedAcceptanceEvidence("host_only_maintenance_smoke", "2026-06-18T08:00:00Z"),
+		passedAcceptanceEvidence("cpu_maintenance_regression", "2026-06-18T08:01:00Z"),
+		passedAcceptanceEvidence("disk_maintenance_regression", "2026-06-18T08:02:00Z"),
+		passedAcceptanceEvidence("checkpoint_cleanup_apply_regression", "2026-06-18T08:03:00Z"),
+	})
+
+	if hasRecommendedStep(out, "cpu_maintenance_regression") ||
+		hasRecommendedStep(out, "disk_maintenance_regression") ||
+		hasRecommendedStep(out, "checkpoint_cleanup_apply_regression") {
+		t.Fatalf("completed manual validations should not remain recommended steps: %#v", out.Completion.RecommendedSteps)
+	}
+	if !hasBlockingRecommendedStep(out, "final_acceptance_manual_pass") {
+		t.Fatalf("expected only final acceptance blocker to remain: %#v", out.Completion.RecommendedSteps)
+	}
+	item := findReadinessItem(out, "known_manual_gaps")
+	if item.Status != v0ReadinessWarn || len(item.Evidence) != 1 || !strings.Contains(item.Evidence[0], "v0 should only be declared") {
+		t.Fatalf("expected known manual gaps to reflect only missing final acceptance: %#v", item)
+	}
+}
+
 func TestBuildV0ReadinessFailsWhenRequiredStateMissing(t *testing.T) {
 	out := BuildV0Readiness(HostInspectSummary{
 		ResidentsMissingInventory: 1,
@@ -131,8 +162,23 @@ func TestBuildV0ReadinessWarnsOnStaleMemoryReviews(t *testing.T) {
 		MemoryMaintenanceResidents: 1,
 	}, time.Date(2026, 6, 18, 6, 30, 0, 0, time.UTC), "test")
 
-	if findReadinessItem(out, "memory_governance").Status != v0ReadinessWarn {
+	item := findReadinessItem(out, "memory_governance")
+	if item.Status != v0ReadinessWarn {
 		t.Fatalf("expected stale memory reviews to warn without blocking: %#v", out)
+	}
+	joinedEvidence := strings.Join(item.Evidence, " ")
+	if !strings.Contains(joinedEvidence, "host_actionable=0") || !strings.Contains(joinedEvidence, "resident_owned=12") {
+		t.Fatalf("expected memory governance evidence to split host-actionable and resident-owned work: %#v", item)
+	}
+	step, ok := findRecommendedStep(out, "review_memory_governance_queue")
+	if !ok {
+		t.Fatalf("expected memory governance review step: %#v", out.Completion.RecommendedSteps)
+	}
+	if step.Title != "Review resident-owned memory governance queue" {
+		t.Fatalf("expected resident-owned memory step title, got %#v", step)
+	}
+	if !strings.Contains(step.Reason, "Host-actionable memory cleanup is clear") {
+		t.Fatalf("expected step reason to avoid implying host rewrite work: %#v", step)
 	}
 }
 
@@ -161,6 +207,12 @@ func TestBuildV0ReadinessMarksLongSoakAsApprovalRequired(t *testing.T) {
 	}
 	if step.BlocksRelease {
 		t.Fatalf("longer soak should not be a hard release blocker by itself: %#v", step)
+	}
+	if step.Title != "Estimate and issue test allowance before another orchestrator probe" {
+		t.Fatalf("expected budget-blocked soak step to point at budget estimate first, got %#v", step)
+	}
+	if !strings.Contains(step.Command, "orchestrator-budget-estimate") || !strings.Contains(step.Command, "probe_allowance_by_resident") || !strings.Contains(step.Command, "--duration 45s") {
+		t.Fatalf("expected budget estimate plus short probe command, got %#v", step)
 	}
 }
 

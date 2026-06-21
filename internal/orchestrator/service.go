@@ -37,6 +37,7 @@ func (r errorRunner) Run(profile newborn.ResidentProfile, duration time.Duration
 }
 
 type RunnerFactory func(client *http.Client, baseURL, apiKey, resident string) Runner
+type EndpointRunnerFactory func(client *http.Client, endpoints []openai.Endpoint, resident string) Runner
 
 type ResidentRun struct {
 	Resident string               `json:"resident"`
@@ -151,12 +152,13 @@ type RunInput struct {
 }
 
 type Service struct {
-	app           *broker.App
-	baseURL       string
-	apiKey        string
-	client        *http.Client
-	runnerFactory RunnerFactory
-	stateRoot     string
+	app                   *broker.App
+	baseURL               string
+	apiKey                string
+	client                *http.Client
+	runnerFactory         RunnerFactory
+	endpointRunnerFactory EndpointRunnerFactory
+	stateRoot             string
 }
 
 func New(app *broker.App, client *http.Client, baseURL, apiKey string) *Service {
@@ -166,11 +168,11 @@ func New(app *broker.App, client *http.Client, baseURL, apiKey string) *Service 
 		baseURL:   strings.TrimSpace(baseURL),
 		apiKey:    strings.TrimSpace(apiKey),
 		stateRoot: ".agents/orchestrator-runs",
-		runnerFactory: func(client *http.Client, baseURL, apiKey, resident string) Runner {
-			if strings.TrimSpace(apiKey) == "" {
+		endpointRunnerFactory: func(client *http.Client, endpoints []openai.Endpoint, resident string) Runner {
+			if len(usableEndpoints(endpoints)) == 0 {
 				return errorRunner{err: fmt.Errorf("missing api key for resident: %s", strings.TrimSpace(resident))}
 			}
-			return newborn.NewRunner(client, baseURL, apiKey)
+			return newborn.NewRunnerWithEndpoints(client, endpoints)
 		},
 	}
 }
@@ -209,6 +211,132 @@ func ResidentAPIKey(resident, fallback string) string {
 		}
 	}
 	return strings.TrimSpace(fallback)
+}
+
+func ResidentEndpoints(resident, fallbackBaseURL, fallbackAPIKey string) []openai.Endpoint {
+	normalized := normalizeResidentEnvPrefix(resident)
+	fallbackBaseURL = strings.TrimSpace(fallbackBaseURL)
+	fallbackAPIKey = strings.TrimSpace(fallbackAPIKey)
+	personal := make([]openai.Endpoint, 0, 3)
+	personalPrimaryBaseURL := fallbackBaseURL
+	for i := 1; i <= 3; i++ {
+		baseURL := ""
+		apiKey := ""
+		comment := ""
+		if normalized != "" {
+			baseURL = strings.TrimSpace(os.Getenv(fmt.Sprintf("%s_OPENAI_BASE_URL_%d", normalized, i)))
+			apiKey = strings.TrimSpace(os.Getenv(fmt.Sprintf("%s_OPENAI_API_KEY_%d", normalized, i)))
+			comment = strings.TrimSpace(os.Getenv(fmt.Sprintf("%s_OPENAI_CHANNEL_COMMENT_%d", normalized, i)))
+		}
+		if i == 1 {
+			if baseURL == "" && normalized != "" {
+				baseURL = strings.TrimSpace(os.Getenv(normalized + "_OPENAI_BASE_URL"))
+			}
+			if apiKey == "" && normalized != "" {
+				apiKey = strings.TrimSpace(os.Getenv(normalized + "_OPENAI_API_KEY"))
+			}
+			if comment == "" && normalized != "" {
+				comment = strings.TrimSpace(os.Getenv(normalized + "_OPENAI_CHANNEL_COMMENT"))
+			}
+			if baseURL == "" && apiKey != "" {
+				baseURL = personalPrimaryBaseURL
+			}
+			if baseURL != "" {
+				personalPrimaryBaseURL = baseURL
+			}
+		} else if baseURL == "" && apiKey != "" {
+			baseURL = personalPrimaryBaseURL
+		}
+		if baseURL == "" || apiKey == "" {
+			continue
+		}
+		name := "primary"
+		if i > 1 {
+			name = fmt.Sprintf("backup_%d", i-1)
+		}
+		personal = append(personal, openai.Endpoint{
+			Name:    name,
+			BaseURL: baseURL,
+			APIKey:  apiKey,
+			Comment: comment,
+		})
+	}
+	global := globalEndpoints(fallbackBaseURL, fallbackAPIKey)
+	if len(personal) > 0 {
+		return append(personal, renameEndpoints(global, "global_fallback")...)
+	}
+	return global
+}
+
+func normalizeResidentEnvPrefix(resident string) string {
+	resident = strings.ToUpper(strings.TrimSpace(resident))
+	return strings.NewReplacer("-", "_", " ", "_").Replace(resident)
+}
+
+func globalEndpoints(fallbackBaseURL, fallbackAPIKey string) []openai.Endpoint {
+	fallbackBaseURL = strings.TrimSpace(fallbackBaseURL)
+	fallbackAPIKey = strings.TrimSpace(fallbackAPIKey)
+	out := make([]openai.Endpoint, 0, 3)
+	primaryBaseURL := fallbackBaseURL
+	for i := 1; i <= 3; i++ {
+		baseURL := strings.TrimSpace(os.Getenv(fmt.Sprintf("OPENAI_BASE_URL_%d", i)))
+		apiKey := strings.TrimSpace(os.Getenv(fmt.Sprintf("OPENAI_API_KEY_%d", i)))
+		comment := strings.TrimSpace(os.Getenv(fmt.Sprintf("OPENAI_CHANNEL_COMMENT_%d", i)))
+		if i == 1 {
+			if baseURL == "" {
+				baseURL = fallbackBaseURL
+			}
+			if apiKey == "" {
+				apiKey = fallbackAPIKey
+			}
+			if comment == "" {
+				comment = strings.TrimSpace(os.Getenv("OPENAI_CHANNEL_COMMENT"))
+			}
+			if baseURL != "" {
+				primaryBaseURL = baseURL
+			}
+		} else if baseURL == "" && apiKey != "" {
+			baseURL = primaryBaseURL
+		}
+		if baseURL == "" || apiKey == "" {
+			continue
+		}
+		name := "primary"
+		if i > 1 {
+			name = fmt.Sprintf("backup_%d", i-1)
+		}
+		out = append(out, openai.Endpoint{
+			Name:    name,
+			BaseURL: baseURL,
+			APIKey:  apiKey,
+			Comment: comment,
+		})
+	}
+	return out
+}
+
+func renameEndpoints(endpoints []openai.Endpoint, prefix string) []openai.Endpoint {
+	out := make([]openai.Endpoint, 0, len(endpoints))
+	for i, endpoint := range endpoints {
+		name := strings.TrimSpace(endpoint.Name)
+		if name == "" {
+			name = fmt.Sprintf("endpoint_%d", i+1)
+		}
+		endpoint.Name = prefix + "_" + name
+		out = append(out, endpoint)
+	}
+	return out
+}
+
+func usableEndpoints(endpoints []openai.Endpoint) []openai.Endpoint {
+	out := make([]openai.Endpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if strings.TrimSpace(endpoint.BaseURL) == "" || strings.TrimSpace(endpoint.APIKey) == "" {
+			continue
+		}
+		out = append(out, endpoint)
+	}
+	return out
 }
 
 func (s *Service) Run(input RunInput) (RunSummary, error) {
@@ -429,8 +557,14 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 		s.updateResidentStatus(runStatus, statusMu, resident, "error", run.Error)
 		return run
 	}
-	apiKey := ResidentAPIKey(profile.Name, s.apiKey)
-	runner := s.runnerFactory(s.client, s.baseURL, apiKey, profile.Name)
+	endpoints := ResidentEndpoints(profile.Name, s.baseURL, s.apiKey)
+	var runner Runner
+	if s.runnerFactory != nil {
+		apiKey := ResidentAPIKey(profile.Name, s.apiKey)
+		runner = s.runnerFactory(s.client, s.baseURL, apiKey, profile.Name)
+	} else {
+		runner = s.endpointRunnerFactory(s.client, endpoints, profile.Name)
+	}
 	report, err := runner.Run(profile, input.Duration, input.OutDir, input.Verbose, input.ResetResident)
 	if err != nil {
 		var partial *newborn.PartialRunError
