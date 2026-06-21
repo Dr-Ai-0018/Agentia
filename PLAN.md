@@ -190,6 +190,51 @@ Validation:
 - Three-resident budget report: spent `18.2451` spark, internal USD `0.1825`, cache ratio `0.5600`.
 - Post-run budget status: all three residents still `work_allowed_now=true`.
 
+### 2026-06-21 Fifteen-Minute Soak
+
+Setup:
+
+- Issued test allowance cards before the soak, per testing-stage policy.
+- `amber`: +205 spark, +900000 6h cap, 6h used reset.
+- `jade`: +195 spark, +900000 6h cap, 6h used reset.
+- `onyx`: +195 spark, +900000 6h cap, 6h used reset.
+
+Run:
+
+- `orchestrator-20260621T141754.083147565Z`
+- Requested duration: 15 minutes.
+- Actual duration: about 11m16s.
+- Run mode: parallel.
+- Residents: `jade`, `amber`, `onyx`.
+
+Outcome:
+
+- All three residents finished normally with useful runs.
+- `jade`: 7 rounds, `resident_noop`.
+- `amber`: 10 rounds, `resident_noop`.
+- `onyx`: 46 rounds, `resident_noop`.
+- No budget block.
+- No first-turn streaming hang.
+- Live telemetry showed `onyx` actively progressing through high round counts rather than being stuck.
+
+Budget report:
+
+- Total charged calls: 66.
+- Total input tokens: 847609.
+- Total cached tokens: 719744.
+- Total output tokens: 4958.
+- Overall cache ratio: `0.8491`.
+- Cache health: `good`.
+- Total spent: `69.8565` spark.
+- Internal USD: `0.6986`.
+
+Post-run budget status:
+
+- All three residents remained `work_allowed_now=true`.
+- `amber` spark balance: `449.8967`.
+- `jade` spark balance: `402.4894`.
+- `onyx` spark balance: `251.3780`.
+
 ## Desired System Properties
 
 The system should support:
