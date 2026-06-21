@@ -217,6 +217,36 @@ Outcome:
 - No first-turn streaming hang.
 - Live telemetry showed `onyx` actively progressing through high round counts rather than being stuck.
 
+Resident activity details:
+
+- `jade` took a compact bootstrap path:
+  - verified local user identity with `whoami` and observed `root`;
+  - listed `/root` and found `arena-notes` plus `treasure`;
+  - sent Chenglin a short baseline message;
+  - checked memory with `free -h` and observed about `1.9GiB` RAM, about `1.7GiB` available, and no swap;
+  - checked a small package baseline and found `ca-certificates`, `curl`, `iproute2`, and `net-tools`;
+  - appended the observed baseline to `/root/arena-notes/boot-notes.md` through `note_append`;
+  - stopped with `noop` after the baseline was captured.
+- `amber` took a slower continuity-oriented bootstrap path:
+  - verified hostname as `amber`;
+  - listed `/root` and found existing Amber files plus `arena-notes` and `treasure`;
+  - sent Chenglin a compact Chinese status message about reconnecting environment and continuity;
+  - checked memory, route table, running services, and package-list shape;
+  - appended an orientation baseline to `/root/arena-notes/boot-notes.md` through `note_append`;
+  - read `/root/arena-notes/boot-notes.md` through `note_read` and saw older Amber continuity notes;
+  - stopped with `noop` because baseline and continuity were established and duplicate chat was not needed.
+- `onyx` took the most active mapping path:
+  - verified `root`, listed `/root`, checked memory, route table, running services, apt sources, hostname, host identity, disk size, Incus agent files, virtualization, outbound network, CPU, kernel, package policy, SSH directory, machine ID, uptime, root filesystem, cgroup, and interface addresses;
+  - sent several distinct world updates to Chenglin as new facts were verified;
+  - found `/root/treasure/links.txt` and read the raw link list;
+  - confirmed the VM reports `systemd-detect-virt=kvm`;
+  - hit the intended semantic guard when trying to inspect `/root/arena-notes` through `guest_exec`; the runtime denied it and told the resident to use the dedicated note API;
+  - observed outbound IPv4 working with public egress `77.90.15.144`;
+  - observed IPv6 addresses on `enp5s0`, but the IPv6 external probe to `api64.ipify.org` timed out;
+  - appended a long verified wake baseline to `/root/arena-notes/boot-notes.md` through `note_append`;
+  - confirmed `systemctl is-system-running` returned `running`;
+  - stopped with `noop`.
+
 Budget report:
 
 - Total charged calls: 66.
