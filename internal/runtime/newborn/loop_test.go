@@ -128,7 +128,7 @@ func TestBuildProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build profile: %v", err)
 	}
-	if profile.Model != "gpt-5.5" {
+	if profile.Model != "gpt-5.4" {
 		t.Fatalf("unexpected model: %s", profile.Model)
 	}
 }

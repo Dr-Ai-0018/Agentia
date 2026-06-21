@@ -49,7 +49,7 @@ The current high-level direction is:
 Current runtime state as of 2026-06-21:
 
 - active residents: `jade`, `amber`, `onyx`
-- current models: `jade=gpt-5.4`, `amber=gpt-5.5`, `onyx=gpt-5.4`
+- current models: `jade=gpt-5.4`, `amber=gpt-5.4`, `onyx=gpt-5.4`
 - provider routing: per-resident main channel first, global fallback channels after that
 - continuity notes: dedicated safe note APIs, not shell writes
 - prompt cache strategy: fixed instructions plus append-only input history replay

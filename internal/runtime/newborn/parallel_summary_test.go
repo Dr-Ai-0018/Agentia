@@ -5,7 +5,7 @@ import "testing"
 func TestSummarizeParallelReports(t *testing.T) {
 	summary := SummarizeParallelReports([]FinalReport{
 		{Resident: "jade", Model: "gpt-5.4", Rounds: 1, StoppedReason: "broker_preflight_denied: effective_window_exhausted"},
-		{Resident: "amber", Model: "gpt-5.5", Rounds: 0, StoppedReason: "broker_preflight_denied: spark_debt_active"},
+		{Resident: "amber", Model: "gpt-5.4", Rounds: 0, StoppedReason: "broker_preflight_denied: spark_debt_active"},
 		{Resident: "onyx", Model: "gpt-5.4", Rounds: 1, StoppedReason: "broker_preflight_denied: work_would_enter_debt"},
 	})
 	if summary.Residents != 3 {

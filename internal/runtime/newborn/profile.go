@@ -28,7 +28,7 @@ func BuildProfile(name string) (ResidentProfile, error) {
 	case "amber":
 		return ResidentProfile{
 			Name:     "amber",
-			Model:    "gpt-5.5",
+			Model:    "gpt-5.4",
 			Persona:  "coordinator, expressive, cooperative, communication-first",
 			Style:    "clear, readable, relational, explicit about legibility",
 			CoreBias: "reduce confusion early and leave a machine others can understand",

@@ -81,7 +81,7 @@ As of 2026-06-21:
 - Starting resource envelope is `1 vCPU`, `2 GiB RAM`, and `12 GiB disk` per resident VM.
 - The runtime uses split action tools instead of one large mixed schema.
 - Continuity files under `/root/arena-notes` are a dedicated note-tool surface, not a shell-write surface.
-- Resident model distribution is currently `jade=gpt-5.4`, `amber=gpt-5.5`, `onyx=gpt-5.4`.
+- Resident model distribution is currently `jade=gpt-5.4`, `amber=gpt-5.4`, `onyx=gpt-5.4`.
 - Provider routing supports per-resident main channels before global fallback channels.
 - Streaming is required for live provider checks and runtime calls.
 - Budget reporting can show run spend, resident balances, and cache hit ratios.
@@ -143,6 +143,52 @@ Validation:
 - `go test ./...` passes.
 - `orchestrator-20260621T124629.519830989Z`: 90-second parallel run finished in about 62 seconds with all three residents useful.
 - `orchestrator-20260621T124847.380745687Z`: 5-minute parallel run finished in about 4m10s; `onyx` completed 39 rounds and was active rather than stuck.
+
+### 2026-06-21 Cache Gate After Telemetry
+
+Validation:
+
+- 8-turn cache probe after live progress telemetry passed local prefix preservation for all residents.
+- `instructions_hash` stayed stable for all turns.
+- Observed prompt cache keys stayed stable per resident.
+- Cache health remains `watch`, not `good`, due to occasional zero-cache turns even with local prefix preservation true.
+
+Probe result:
+
+- `jade`: cache ratio `0.5316`, `previous_request_prefix_preserved=true` on all 8 turns.
+- `amber`: cache ratio `0.6469`, `previous_request_prefix_preserved=true` on all 8 turns.
+- `onyx`: cache ratio `0.6170`, `previous_request_prefix_preserved=true` on all 8 turns.
+
+Decision:
+
+- This is not a local prompt/history regression.
+- Do not rewrite history or alter resident-facing context for cache reasons.
+- Continue with short controlled probes before any 10-minute soak.
+
+### 2026-06-21 Amber Model Fallback
+
+Finding:
+
+- Short live probe `orchestrator-20260621T132734.226896373Z` showed `amber` stuck in first-turn `model_stream` while `jade` and `onyx` finished.
+- Live telemetry confirmed the stuck point was the upstream streaming model call, not guest execution, VM memory, or resident behavior.
+
+Decision:
+
+- Change `amber` from `gpt-5.5` to `gpt-5.4` for the active testbed.
+- Keep Amber's persona, style, continuity, VM, channels, and behavior semantics unchanged.
+- Treat this as model routing stability, not resident steering.
+
+Validation:
+
+- `orchestrator-20260621T133208.264839733Z`: Amber single-resident 45-second run finished in about 31.5 seconds.
+- Amber report model was `gpt-5.4`.
+- Amber completed 5 rounds and stopped on `duration_elapsed`.
+- Budget report: spent `4.5621` spark, internal USD `0.0456`, cache ratio `0.6709`.
+- No first-turn streaming hang reproduced after the model change.
+- `orchestrator-20260621T133458.976922885Z`: three-resident 60-second parallel run finished in about 48.7 seconds.
+- All three reports used `gpt-5.4`; `amber` completed 6 rounds without first-turn streaming hang.
+- Three-resident budget report: spent `18.2451` spark, internal USD `0.1825`, cache ratio `0.5600`.
+- Post-run budget status: all three residents still `work_allowed_now=true`.
 
 ## Desired System Properties
 
@@ -268,6 +314,7 @@ When resuming this project in a later conversation, the next practical step shou
 - [x] Cache probe diagnostics added for prefix preservation and instruction hash stability.
 - [x] Full Go test suite passing after cache repair.
 - [x] Host-side per-resident live progress telemetry added without resident-facing steering.
+- [x] Re-run cache probe after host-side telemetry change.
 - [ ] Improve cache hit ratio from `watch` to consistently acceptable before long soak.
 - [ ] Re-run cache probe after any resident prompt/context mutation.
 - [ ] Keep long-run launch gated on budget, provider, and cache checks.
