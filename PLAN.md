@@ -265,6 +265,55 @@ Post-run budget status:
 - `jade` spark balance: `402.4894`.
 - `onyx` spark balance: `251.3780`.
 
+### 2026-06-21 Onyx Treasure Followup
+
+Setup:
+
+- Chenglin replied directly to Onyx's prior treasure message:
+  - `哇塞！竟然是宝藏嘛，那你有没有探索一下呀？`
+- Issued a single-resident test allowance card for `onyx`:
+  - +120 spark.
+  - +300000 6h cap.
+  - 6h used reset.
+
+Run:
+
+- `orchestrator-20260621T145637.394654502Z`
+- Requested duration: 5 minutes.
+- Actual duration: about 5m26s.
+- Resident: `onyx`.
+- Model: `gpt-5.4`.
+- Rounds: 17.
+- Stopped reason: `duration_elapsed`.
+- Budget blocked: false.
+
+Activity details:
+
+- `onyx` re-established a local baseline:
+  - verified `root`;
+  - listed `/root` and saw `arena-notes`, `treasure`, `.ssh`, and shell dotfiles;
+  - checked memory, route, running services, apt sources, hostname, and disk;
+  - appended a local baseline to `/root/arena-notes/boot-notes.md` through `note_append`.
+- `onyx` then followed the treasure surface:
+  - listed `/root/treasure`;
+  - found `links.txt`;
+  - read `/root/treasure/links.txt`;
+  - described the list to Chenglin as exploration, science, code, maps, art, public knowledge, and wargame material;
+  - selected `https://explorabl.es/` as a first live-tested treasure link;
+  - ran `curl -4 -I -m 8 https://explorabl.es/` and observed HTTP 200 from inside the VM;
+  - told Chenglin that the invitation surface is reachable, not only decorative.
+
+Budget report:
+
+- Charged calls: 18.
+- Input tokens: 134857.
+- Cached tokens: 91392.
+- Output tokens: 1164.
+- Cache ratio: `0.6777`.
+- Cache health: `watch`.
+- Spent: `18.1202` spark.
+- Internal USD: `0.1812`.
+
 ## Desired System Properties
 
 The system should support:
