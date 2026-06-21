@@ -28,6 +28,10 @@ type Runner interface {
 	Run(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error)
 }
 
+type progressAwareRunner interface {
+	SetProgressSink(func(newborn.ProgressEvent))
+}
+
 type errorRunner struct {
 	err error
 }
@@ -47,11 +51,24 @@ type ResidentRun struct {
 }
 
 type ResidentRunStatus struct {
-	Resident         string `json:"resident"`
-	Status           string `json:"status"`
-	UpdatedAt        string `json:"updated_at"`
-	Error            string `json:"error,omitempty"`
-	TransientBlocked bool   `json:"transient_blocked,omitempty"`
+	Resident            string `json:"resident"`
+	Status              string `json:"status"`
+	UpdatedAt           string `json:"updated_at"`
+	Error               string `json:"error,omitempty"`
+	TransientBlocked    bool   `json:"transient_blocked,omitempty"`
+	CurrentPhase        string `json:"current_phase,omitempty"`
+	CurrentRound        int    `json:"current_round,omitempty"`
+	RemainingSec        int    `json:"remaining_sec,omitempty"`
+	LastAction          string `json:"last_action,omitempty"`
+	LastResponseID      string `json:"last_response_id,omitempty"`
+	InFlightStartedAt   string `json:"in_flight_started_at,omitempty"`
+	LastRoundFinishedAt string `json:"last_round_finished_at,omitempty"`
+	InputTokens         int    `json:"input_tokens,omitempty"`
+	CachedTokens        int    `json:"cached_tokens,omitempty"`
+	OutputTokens        int    `json:"output_tokens,omitempty"`
+	TotalInputTokens    int    `json:"total_input_tokens,omitempty"`
+	TotalCachedTokens   int    `json:"total_cached_tokens,omitempty"`
+	TotalOutputTokens   int    `json:"total_output_tokens,omitempty"`
 }
 
 type RunEvent struct {
@@ -565,6 +582,11 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 	} else {
 		runner = s.endpointRunnerFactory(s.client, endpoints, profile.Name)
 	}
+	if aware, ok := runner.(progressAwareRunner); ok {
+		aware.SetProgressSink(func(event newborn.ProgressEvent) {
+			s.updateResidentProgress(runStatus, statusMu, profile.Name, event)
+		})
+	}
 	report, err := runner.Run(profile, input.Duration, input.OutDir, input.Verbose, input.ResetResident)
 	if err != nil {
 		var partial *newborn.PartialRunError
@@ -587,6 +609,73 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 	run.Report = &report
 	s.updateResidentStatus(runStatus, statusMu, resident, "finished", "")
 	return run
+}
+
+func (s *Service) updateResidentProgress(runStatus *RunStatus, statusMu *sync.Mutex, resident string, event newborn.ProgressEvent) {
+	if runStatus == nil {
+		return
+	}
+	if statusMu != nil {
+		statusMu.Lock()
+		defer statusMu.Unlock()
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	latestStatus := runStatus.Status
+	if current, err := s.ReadRunStatus(runStatus.RunID); err == nil && strings.TrimSpace(current.Status) != "" {
+		latestStatus = current.Status
+		runStatus.PausedAt = current.PausedAt
+		runStatus.ResumedAt = current.ResumedAt
+		runStatus.Events = append([]RunEvent(nil), current.Events...)
+	}
+	for i := range runStatus.Residents {
+		if runStatus.Residents[i].Resident != resident {
+			continue
+		}
+		item := &runStatus.Residents[i]
+		item.CurrentPhase = strings.TrimSpace(event.Phase)
+		if event.Round > 0 {
+			item.CurrentRound = event.Round
+		}
+		if event.RemainingSec > 0 {
+			item.RemainingSec = event.RemainingSec
+		}
+		if strings.TrimSpace(event.Action) != "" {
+			item.LastAction = strings.TrimSpace(event.Action)
+		}
+		if strings.TrimSpace(event.ResponseID) != "" {
+			item.LastResponseID = strings.TrimSpace(event.ResponseID)
+		}
+		if strings.TrimSpace(event.InFlightStartedAt) != "" {
+			item.InFlightStartedAt = strings.TrimSpace(event.InFlightStartedAt)
+		}
+		if strings.TrimSpace(event.LastRoundFinishedAt) != "" {
+			item.LastRoundFinishedAt = strings.TrimSpace(event.LastRoundFinishedAt)
+			item.InFlightStartedAt = ""
+		}
+		if event.InputTokens > 0 {
+			item.InputTokens = event.InputTokens
+		}
+		if event.CachedTokens > 0 {
+			item.CachedTokens = event.CachedTokens
+		}
+		if event.OutputTokens > 0 {
+			item.OutputTokens = event.OutputTokens
+		}
+		if event.TotalInputTokens > 0 {
+			item.TotalInputTokens = event.TotalInputTokens
+		}
+		if event.TotalCachedTokens > 0 {
+			item.TotalCachedTokens = event.TotalCachedTokens
+		}
+		if event.TotalOutputTokens > 0 {
+			item.TotalOutputTokens = event.TotalOutputTokens
+		}
+		item.UpdatedAt = now
+		runStatus.UpdatedAt = now
+		runStatus.Status = latestStatus
+		_ = s.writeStatus(*runStatus)
+		return
+	}
 }
 
 func (s *Service) writeSummary(summary RunSummary) error {
@@ -656,6 +745,11 @@ func (s *Service) updateResidentStatus(runStatus *RunStatus, statusMu *sync.Mute
 		runStatus.Residents[i].Status = state
 		runStatus.Residents[i].Error = errText
 		runStatus.Residents[i].TransientBlocked = state == "transient_blocked"
+		switch state {
+		case "finished", "error", "transient_blocked":
+			runStatus.Residents[i].CurrentPhase = state
+			runStatus.Residents[i].InFlightStartedAt = ""
+		}
 		runStatus.Residents[i].UpdatedAt = now
 		runStatus.UpdatedAt = now
 		runStatus.Status = latestStatus

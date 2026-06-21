@@ -179,6 +179,22 @@ type RoundLog struct {
 	Broker       *BrokerUsageLog `json:"broker,omitempty"`
 }
 
+type ProgressEvent struct {
+	Phase               string `json:"phase"`
+	Round               int    `json:"round,omitempty"`
+	RemainingSec        int    `json:"remaining_sec,omitempty"`
+	Action              string `json:"action,omitempty"`
+	ResponseID          string `json:"response_id,omitempty"`
+	InFlightStartedAt   string `json:"in_flight_started_at,omitempty"`
+	LastRoundFinishedAt string `json:"last_round_finished_at,omitempty"`
+	InputTokens         int    `json:"input_tokens,omitempty"`
+	CachedTokens        int    `json:"cached_tokens,omitempty"`
+	OutputTokens        int    `json:"output_tokens,omitempty"`
+	TotalInputTokens    int    `json:"total_input_tokens,omitempty"`
+	TotalCachedTokens   int    `json:"total_cached_tokens,omitempty"`
+	TotalOutputTokens   int    `json:"total_output_tokens,omitempty"`
+}
+
 type FinalReport struct {
 	Resident         string          `json:"resident"`
 	Model            string          `json:"model"`

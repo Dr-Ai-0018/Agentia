@@ -113,6 +113,37 @@ Validation:
 - Each resident's observed prompt cache key stayed stable throughout the 8-turn probe.
 - Cache hit ratio remained in `watch`, not `good`, because the upstream cache still produced occasional zero-cache turns even when local prefix preservation was true.
 
+### 2026-06-21 Live Progress Telemetry
+
+Root issue found:
+
+- A 90-second three-resident parallel run finished normally.
+- A 5-minute three-resident parallel run initially looked stuck because `jade` and `amber` had finished while `onyx` still showed only `running`.
+- `onyx` was not stuck; it completed 39 rounds and finished normally.
+- The real defect was observability: run status only changed at resident start/end, and reports were written only at resident completion.
+- Host-side inspection could not distinguish active model streaming, action execution, settlement, memory recording, and a true hang.
+
+Fix applied:
+
+- Newborn runner emits host-only progress events for `preflight`, `model_stream`, `model_stream_done`, `action_exec`, `settle`, and `round_finished`.
+- Orchestrator status files now expose per-resident live snapshots:
+  - current phase
+  - current round
+  - remaining seconds
+  - last action
+  - last response id
+  - in-flight request start time
+  - last round finish time
+  - latest and cumulative input/cache/output tokens
+- Progress telemetry is not resident-facing and is not fed back into prompts.
+- No resident behavior, action schema, budget policy, provider routing, or freedom-of-exploration semantics were changed.
+
+Validation:
+
+- `go test ./...` passes.
+- `orchestrator-20260621T124629.519830989Z`: 90-second parallel run finished in about 62 seconds with all three residents useful.
+- `orchestrator-20260621T124847.380745687Z`: 5-minute parallel run finished in about 4m10s; `onyx` completed 39 rounds and was active rather than stuck.
+
 ## Desired System Properties
 
 The system should support:
@@ -236,6 +267,7 @@ When resuming this project in a later conversation, the next practical step shou
 - [x] Prompt-cache runtime history rebuilt to match `openai-cache` append-only replay.
 - [x] Cache probe diagnostics added for prefix preservation and instruction hash stability.
 - [x] Full Go test suite passing after cache repair.
+- [x] Host-side per-resident live progress telemetry added without resident-facing steering.
 - [ ] Improve cache hit ratio from `watch` to consistently acceptable before long soak.
 - [ ] Re-run cache probe after any resident prompt/context mutation.
 - [ ] Keep long-run launch gated on budget, provider, and cache checks.

@@ -109,6 +109,90 @@ func TestServiceRunParallelKeepsAllResidentStatuses(t *testing.T) {
 	}
 }
 
+func TestServiceWritesResidentProgressStatus(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	progressWritten := make(chan struct{}, 1)
+	release := make(chan struct{})
+	service.runnerFactory = func(client *http.Client, baseURL, apiKey, resident string) Runner {
+		return &progressRunner{
+			onProgress: func(event newborn.ProgressEvent) {
+				if event.Phase == "model_stream" {
+					progressWritten <- struct{}{}
+					<-release
+				}
+			},
+		}
+	}
+
+	done := make(chan RunSummary, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		out, err := service.Run(RunInput{
+			Residents: []string{"jade"},
+			Duration:  30 * time.Second,
+			OutDir:    filepath.Join(root, "out"),
+			Mode:      RunModeSequential,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		done <- out
+	}()
+
+	select {
+	case <-progressWritten:
+	case err := <-errCh:
+		t.Fatalf("run returned early error: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for progress status")
+	}
+	runs, err := service.ListRuns(1)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("list runs: %v %#v", err, runs)
+	}
+	status, err := service.ReadRunStatus(runs[0].RunID)
+	if err != nil {
+		t.Fatalf("read run status: %v", err)
+	}
+	got := status.Residents[0]
+	if got.CurrentPhase != "model_stream" || got.CurrentRound != 2 || got.RemainingSec != 25 {
+		t.Fatalf("unexpected progress status: %#v", got)
+	}
+	if got.LastAction != "guest_exec" || got.LastResponseID != "resp_test" || got.InFlightStartedAt == "" {
+		t.Fatalf("expected live progress details, got %#v", got)
+	}
+	if got.TotalInputTokens != 100 || got.TotalCachedTokens != 64 || got.TotalOutputTokens != 7 {
+		t.Fatalf("unexpected token progress: %#v", got)
+	}
+
+	close(release)
+	select {
+	case err := <-errCh:
+		t.Fatalf("run returned error: %v", err)
+	case out := <-done:
+		if len(out.Runs) != 1 || out.Runs[0].Status != "ok" {
+			t.Fatalf("unexpected run output: %#v", out)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for run to finish")
+	}
+	finalStatus, err := service.ReadRunStatus(runs[0].RunID)
+	if err != nil {
+		t.Fatalf("read final run status: %v", err)
+	}
+	final := finalStatus.Residents[0]
+	if final.Status != "finished" || final.CurrentPhase != "finished" || final.InFlightStartedAt != "" {
+		t.Fatalf("expected final status to clear in-flight state, got %#v", final)
+	}
+	if final.LastRoundFinishedAt == "" || final.TotalInputTokens != 180 {
+		t.Fatalf("expected final progress totals to remain visible, got %#v", final)
+	}
+}
+
 func TestServiceUsesResidentSpecificAPIKeys(t *testing.T) {
 	clearOpenAIEndpointEnv(t)
 	root := t.TempDir()
@@ -810,4 +894,51 @@ type RunnerFunc func(profile newborn.ResidentProfile, duration time.Duration, ou
 
 func (fn RunnerFunc) Run(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
 	return fn(profile, duration, outDir, verbose, resetResident)
+}
+
+type progressRunner struct {
+	progress   func(newborn.ProgressEvent)
+	onProgress func(newborn.ProgressEvent)
+}
+
+func (r *progressRunner) SetProgressSink(fn func(newborn.ProgressEvent)) {
+	r.progress = fn
+}
+
+func (r *progressRunner) emit(event newborn.ProgressEvent) {
+	if r.progress != nil {
+		r.progress(event)
+	}
+	if r.onProgress != nil {
+		r.onProgress(event)
+	}
+}
+
+func (r *progressRunner) Run(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
+	r.emit(newborn.ProgressEvent{
+		Phase:             "model_stream",
+		Round:             2,
+		RemainingSec:      25,
+		Action:            "guest_exec",
+		ResponseID:        "resp_test",
+		InFlightStartedAt: "2026-06-21T12:00:00Z",
+		TotalInputTokens:  100,
+		TotalCachedTokens: 64,
+		TotalOutputTokens: 7,
+	})
+	r.emit(newborn.ProgressEvent{
+		Phase:               "round_finished",
+		Round:               2,
+		RemainingSec:        25,
+		Action:              "guest_exec",
+		ResponseID:          "resp_test",
+		LastRoundFinishedAt: "2026-06-21T12:00:02Z",
+		InputTokens:         80,
+		CachedTokens:        72,
+		OutputTokens:        5,
+		TotalInputTokens:    180,
+		TotalCachedTokens:   136,
+		TotalOutputTokens:   12,
+	})
+	return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, Rounds: 2}, nil
 }

@@ -24,6 +24,7 @@ type Runner struct {
 	reports   *ReportWriter
 	world     *WorldBridge
 	memories  *memory.FileStore
+	progress  func(ProgressEvent)
 }
 
 type loopState struct {
@@ -75,6 +76,16 @@ func (r *Runner) postStream(payload openai.RequestPayload, verbose bool) (openai
 	return openai.PostStream(r.client, r.baseURL, r.apiKey, payload, verbose)
 }
 
+func (r *Runner) SetProgressSink(fn func(ProgressEvent)) {
+	r.progress = fn
+}
+
+func (r *Runner) emitProgress(event ProgressEvent) {
+	if r.progress != nil {
+		r.progress(event)
+	}
+}
+
 func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (FinalReport, error) {
 	started := time.Now().UTC()
 	deadline := started.Add(duration)
@@ -105,6 +116,9 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 	roundLogs := []RoundLog{}
 	stoppedReason := ""
 	round := 0
+	totalInputTokens := 0
+	totalCachedTokens := 0
+	totalOutputTokens := 0
 
 	for {
 		roundNow := time.Now().UTC()
@@ -120,6 +134,11 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			break
 		}
 		round++
+		r.emitProgress(ProgressEvent{
+			Phase:        "preflight",
+			Round:        round,
+			RemainingSec: remaining,
+		})
 
 		prepared, err := r.budget.Preflight(profile, state, roundNow)
 		if err != nil {
@@ -144,6 +163,16 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		history = appendWorkingContext(history, packet)
 		input := buildDecisionInput(stablePrefix, history)
 
+		inFlightStartedAt := time.Now().UTC().Format(time.RFC3339)
+		r.emitProgress(ProgressEvent{
+			Phase:             "model_stream",
+			Round:             round,
+			RemainingSec:      remaining,
+			InFlightStartedAt: inFlightStartedAt,
+			TotalInputTokens:  totalInputTokens,
+			TotalCachedTokens: totalCachedTokens,
+			TotalOutputTokens: totalOutputTokens,
+		})
 		result, err := r.postStream(buildDecisionToolPayload(profile, input, promptCacheKey), verbose)
 		if err != nil {
 			if len(roundLogs) > 0 {
@@ -156,6 +185,18 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			}
 			return FinalReport{}, fmt.Errorf("round %d request failed: %w", round, err)
 		}
+		r.emitProgress(ProgressEvent{
+			Phase:             "model_stream_done",
+			Round:             round,
+			RemainingSec:      remaining,
+			ResponseID:        result.ResponseID,
+			InputTokens:       result.InputTokens,
+			CachedTokens:      result.CachedTokens,
+			OutputTokens:      result.OutputTokens,
+			TotalInputTokens:  totalInputTokens,
+			TotalCachedTokens: totalCachedTokens,
+			TotalOutputTokens: totalOutputTokens,
+		})
 
 		decision, err := parseDecisionResult(result)
 		parseError := ""
@@ -170,6 +211,16 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			}
 			state.ParseFailures++
 		}
+		r.emitProgress(ProgressEvent{
+			Phase:             "action_exec",
+			Round:             round,
+			RemainingSec:      remaining,
+			Action:            decision.NextAction,
+			ResponseID:        result.ResponseID,
+			TotalInputTokens:  totalInputTokens,
+			TotalCachedTokens: totalCachedTokens,
+			TotalOutputTokens: totalOutputTokens,
+		})
 		var actionResult ActionResult
 		if parseError != "" {
 			actionResult = ActionResult{
@@ -183,6 +234,16 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			actionResult = r.actions.Execute(profile, decision)
 		}
 		observation := actionResult.Observation
+		r.emitProgress(ProgressEvent{
+			Phase:             "settle",
+			Round:             round,
+			RemainingSec:      remaining,
+			Action:            decision.NextAction,
+			ResponseID:        result.ResponseID,
+			TotalInputTokens:  totalInputTokens,
+			TotalCachedTokens: totalCachedTokens,
+			TotalOutputTokens: totalOutputTokens,
+		})
 		brokerLog, err := r.budget.Settle(profile, result, roundNow, runtimeguard.CallKindWork, actionResult.Activity)
 		if err != nil {
 			return FinalReport{}, fmt.Errorf("round %d broker settlement failed: %w", round, err)
@@ -214,6 +275,9 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		state = updatedState
 
 		history = appendDecisionExchange(history, result, observation)
+		totalInputTokens += result.InputTokens
+		totalCachedTokens += result.CachedTokens
+		totalOutputTokens += result.OutputTokens
 
 		roundLogs = append(roundLogs, RoundLog{
 			Round:        round,
@@ -230,6 +294,20 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			CachedTokens: result.CachedTokens,
 			OutputTokens: result.OutputTokens,
 			Broker:       brokerLog,
+		})
+		r.emitProgress(ProgressEvent{
+			Phase:               "round_finished",
+			Round:               round,
+			RemainingSec:        remaining,
+			Action:              decision.NextAction,
+			ResponseID:          result.ResponseID,
+			LastRoundFinishedAt: time.Now().UTC().Format(time.RFC3339),
+			InputTokens:         result.InputTokens,
+			CachedTokens:        result.CachedTokens,
+			OutputTokens:        result.OutputTokens,
+			TotalInputTokens:    totalInputTokens,
+			TotalCachedTokens:   totalCachedTokens,
+			TotalOutputTokens:   totalOutputTokens,
 		})
 		if parseError != "" {
 			stoppedReason = "structured_decision_parse_failed"
