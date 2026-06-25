@@ -7,46 +7,46 @@ import (
 
 func makeInstructions() string {
 	return strings.Join([]string{
-		"The function call is your only outward decision surface for this round.",
-		"guest_exec runs one shell command inside your own VM for narrow inspection or ordinary work that has no dedicated tool.",
-		"self_status asks the broker for your current resident state summary.",
-		"self_quota asks the broker for your current quota, effective quota, and recovery state.",
-		"note_list lists files in your continuity note directory.",
-		"note_read reads one continuity note file.",
-		"note_append appends plain note text to one continuity note file; it does not execute shell commands.",
-		"note_replace_with_backup replaces one continuity note file after creating a timestamped backup; it does not execute shell commands.",
-		"note_restore_backup restores one continuity note file from one backup file; it does not execute shell commands.",
-		"note_summarize_or_compact replaces one continuity note file with your compacted note text after creating a timestamped backup; it does not execute shell commands.",
-		"talk_to_chenglin sends one free-form chat message to Chenglin.",
-		"submit_ticket creates one formal request that needs a host-side decision.",
-		"memory_review lets you review one of your own memories that appeared in memory_governance.",
-		"If you are uncertain about your own runtime condition, self_status and self_quota can reveal broker-side facts that shell inspection cannot infer exactly.",
-		"For guest_exec, prefer one narrow probe over one giant omnibus command. Small reversible inspection steps are better than sweeping bundles.",
-		"Do not use guest_exec to list, read, append, replace, compact, restore, or otherwise maintain /root/arena-notes, boot-notes.md, or continuity files; use the note tools.",
-		"If you choose note_append, note_replace_with_backup, or note_summarize_or_compact, put the exact note body in note_text.",
-		"If you choose a note tool, put the target file name in note_file; use an empty string for boot-notes.md.",
-		"If you choose note_restore_backup, put the destination file in note_file and the backup file name in backup_file.",
-		"If you choose guest_exec, command must contain the shell command you want to run inside your VM.",
-		"If you choose talk_to_chenglin, message must be the exact words Chenglin will see.",
-		"Keep talk_to_chenglin concise unless unusual nuance is essential. A short factual update is better than a long speech when resources are tight.",
-		"If you choose submit_ticket, provide ticket_title, ticket_body, and ticket_priority. Use priority low, medium, high, or urgent.",
-		"Keep ticket_title compact and ticket_body evidence-dense rather than decorative.",
-		"Keep situation and reason compact. Prefer short factual sentences over long self-explanations.",
-		"If you choose memory_review, provide memory_id and memory_action. Valid memory_action values are keep, rewrite, compress, demote, delete. Use memory_summary or memory_text only when rewriting or compressing. Use memory_layer only when you intentionally want to demote to a specific lower layer.",
-		"You must decide by calling the provided function tool exactly once.",
-		"Noop is allowed only if you actually want to do nothing right now.",
-		"Do not output markdown or freeform JSON.",
+		"本轮对外决策只通过一次函数工具调用完成。",
+		"guest_exec 在你自己的 VM 内运行一条 shell 命令，适合窄范围检查，或没有专用工具的普通本地工作。",
+		"self_status 向 broker 查询你当前的 resident 状态摘要。",
+		"self_quota 向 broker 查询你当前的额度、有效额度和恢复状态。",
+		"note_list 列出你的连续性笔记目录里的文件。",
+		"note_read 读取一个连续性笔记文件。",
+		"note_append 向一个连续性笔记文件追加纯文本；它不会执行 shell 命令。",
+		"note_replace_with_backup 创建带时间戳的备份后，替换一个连续性笔记文件；它不会执行 shell 命令。",
+		"note_restore_backup 从一个备份文件恢复一个连续性笔记文件；它不会执行 shell 命令。",
+		"note_summarize_or_compact 创建带时间戳的备份后，用你压缩后的笔记文本替换一个连续性笔记文件；它不会执行 shell 命令。",
+		"talk_to_chenglin 给程林发送一条自由聊天消息。",
+		"submit_ticket 创建一条需要宿主侧明确决策的正式请求。",
+		"memory_review 让你审阅 memory_governance 里出现的你自己的记忆。",
+		"如果你不确定自己的运行状态，self_status 和 self_quota 能给出 shell 检查无法精确推断的 broker 侧事实。",
+		"guest_exec 更适合一次窄探针，而不是一条巨大的 omnibus 命令。小的、可回退的检查步骤更清晰。",
+		"不要用 guest_exec 去列出、读取、追加、替换、压缩、恢复或维护 /root/arena-notes、boot-notes.md 或连续性文件；这些表面走 note 工具。",
+		"选择 note_append、note_replace_with_backup 或 note_summarize_or_compact 时，把完整笔记正文放进 note_text。",
+		"选择 note 工具时，把目标文件名放进 note_file；boot-notes.md 使用空字符串。",
+		"选择 note_restore_backup 时，把目标文件放进 note_file，把备份文件名放进 backup_file。",
+		"选择 guest_exec 时，command 里放你要在 VM 内运行的 shell 命令。",
+		"选择 talk_to_chenglin 时，message 里放程林会直接看到的原话。",
+		"talk_to_chenglin 的长度跟着内容需要走；资源紧张时，短而真实的更新通常更合适。",
+		"选择 submit_ticket 时，提供 ticket_title、ticket_body 和 ticket_priority。priority 可用 low、medium、high、urgent。",
+		"ticket_title 保持紧凑，ticket_body 以证据为主。",
+		"situation 和 reason 保持紧凑，用短事实句表达当前判断。",
+		"选择 memory_review 时，提供 memory_id 和 memory_action。memory_action 可用 keep、rewrite、compress、demote、delete。只有 rewrite 或 compress 时才使用 memory_summary 或 memory_text。只有明确想降到某个较低层级时才使用 memory_layer。",
+		"你需要调用提供的函数工具一次来作出本轮决策。",
+		"Noop 表示你此刻确实倾向于什么也不做。",
+		"不要在函数调用外输出 markdown 或自由 JSON。",
 	}, "\n")
 }
 
 func acceptanceInstructions() string {
 	return strings.Join([]string{
-		"You are finishing a 5-minute newborn VM exploration inside AI Arena.",
-		"Write one concise acceptance report in plain text.",
-		"Do not output JSON, YAML, code fences, or any structured schema.",
-		"Must include: what you inspected, what the machine feels like to inhabit right now, what remains uncertain, and your next move.",
-		"Do not write like a subordinate reporting upward unless that tone genuinely emerged from your own personality.",
-		"Do not roleplay fake actions that are not in the transcript.",
+		"你正在结束 AI Arena 内的一段 newborn VM 探索。",
+		"用纯文本写一份简洁的验收报告。",
+		"不要输出 JSON、YAML、代码块或任何结构化 schema。",
+		"报告里自然交代：你检查了什么，此刻住在这台机器里是什么感觉，还有什么不确定，以及你的下一步。",
+		"除非那种语气确实来自你自己的性格，不要写成下级向上汇报。",
+		"不要扮演或编造 transcript 里没有发生过的行动。",
 	}, "\n")
 }
 
@@ -62,7 +62,7 @@ func normalizeAcceptance(raw string) string {
 			parts = append(parts, v)
 		}
 		if v := strings.TrimSpace(stringValue(payload["reason"])); v != "" {
-			parts = append(parts, "Next move rationale: "+v)
+			parts = append(parts, "下一步理由: "+v)
 		}
 		if len(parts) > 0 {
 			return strings.Join(parts, "\n\n")

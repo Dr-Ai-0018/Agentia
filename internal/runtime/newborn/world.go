@@ -26,7 +26,7 @@ func (w *WorldBridge) RecordResidentMessage(profile ResidentProfile, body string
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("message delivered to Chenglin and recorded in world state:\nmessage_id=%s\nstatus=%s\ncreated_at=%s\nbody=%s", msg.ID, worldstate.StatusPending, msg.CreatedAt, msg.Body), nil
+	return fmt.Sprintf("消息已送达程林，并记录到 world state:\nmessage_id=%s\nstatus=%s\ncreated_at=%s\nbody=%s", msg.ID, worldstate.StatusPending, msg.CreatedAt, msg.Body), nil
 }
 
 func (w *WorldBridge) CreateResidentTicket(profile ResidentProfile, title, body, priority string, now time.Time) (string, error) {
@@ -34,7 +34,7 @@ func (w *WorldBridge) CreateResidentTicket(profile ResidentProfile, title, body,
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("ticket created in world state:\nticket_id=%s\npriority=%s\nstatus=%s\ncreated_at=%s\ntitle=%s\nbody=%s", ticket.ID, ticket.Priority, ticket.Status, ticket.CreatedAt, ticket.Title, ticket.Body), nil
+	return fmt.Sprintf("ticket 已创建并记录到 world state:\nticket_id=%s\npriority=%s\nstatus=%s\ncreated_at=%s\ntitle=%s\nbody=%s", ticket.ID, ticket.Priority, ticket.Status, ticket.CreatedAt, ticket.Title, ticket.Body), nil
 }
 
 func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit int) string {
@@ -44,17 +44,17 @@ func (w *WorldBridge) BuildResidentWorldContext(profile ResidentProfile, limit i
 func (w *WorldBridge) BuildResidentWorldView(profile ResidentProfile, limit int) ResidentWorldView {
 	messages, err := w.store.ReadRecentForResident(profile.Name, limit)
 	header := []string{
-		"chat_mode: free-form and asynchronous",
-		"chat_rule: you may send multiple chat messages without waiting",
-		"chat_rule: Chenglin may reply later, reply multiple times, or not reply at all",
-		"ticket_mode: formal host-decision objects with priority and explicit resolution state",
-		"ticket_rule: use chat for ordinary conversation; use tickets for requests that require a clear host decision",
+		"chat_mode: 自由、异步",
+		"chat_rule: 你可以不等待回复就发送多条聊天消息",
+		"chat_rule: 程林可能稍后回复、多次回复，也可能不回复",
+		"ticket_mode: 带 priority 和明确 resolution state 的正式宿主决策对象",
+		"ticket_rule: 普通对话走 chat；需要明确宿主决策的请求走 ticket",
 	}
 	ticketBlock, freshTicketItems := w.buildResidentTicketBlock(profile, 6)
 	interventionBlock, freshInterventionItems := w.buildResidentInterventionBlock(profile, 6)
 
 	if err != nil || len(messages) == 0 {
-		header = append(header, "recent_chat: none recorded")
+		header = append(header, "recent_chat: 尚无记录")
 		if ticketBlock != "" {
 			header = append(header, ticketBlock)
 		}
@@ -110,7 +110,7 @@ func (w *WorldBridge) BuildResidentWorldView(profile ResidentProfile, limit int)
 func (w *WorldBridge) buildResidentTicketBlock(profile ResidentProfile, limit int) (string, []string) {
 	tickets, fresh, err := w.store.ConsumeFreshTicketUpdates(profile.Name, limit)
 	if err != nil || len(tickets) == 0 {
-		return "recent_tickets: none recorded", nil
+		return "recent_tickets: 尚无记录", nil
 	}
 
 	lines := []string{"recent_tickets:"}
@@ -141,7 +141,7 @@ func (w *WorldBridge) buildResidentTicketBlock(profile ResidentProfile, limit in
 func (w *WorldBridge) buildResidentInterventionBlock(profile ResidentProfile, limit int) (string, []string) {
 	items, fresh, err := w.store.ConsumeFreshHostInterventions(profile.Name, limit)
 	if err != nil || len(items) == 0 {
-		return "recent_host_interventions: none recorded", nil
+		return "recent_host_interventions: 尚无记录", nil
 	}
 	lines := []string{"recent_host_interventions:"}
 	for _, item := range items {

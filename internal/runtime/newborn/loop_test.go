@@ -71,7 +71,7 @@ func TestRenderQuotaObservationIsCompact(t *testing.T) {
 		t.Fatalf("expected compact text observation, got %q", got)
 	}
 	for _, want := range []string{
-		"self quota snapshot:",
+		"self quota 快照:",
 		"resident_id=jade",
 		"spark_balance=2.6250",
 		"effective_window_6h_remaining=497",
@@ -110,7 +110,7 @@ func TestRenderResidentStatusObservationIsCompact(t *testing.T) {
 		t.Fatalf("expected compact text observation, got %q", got)
 	}
 	for _, want := range []string{
-		"self status snapshot:",
+		"self status 快照:",
 		"resident_id=amber",
 		"spark_balance=4.1250",
 		"window_6h=190/720",
@@ -218,7 +218,7 @@ func TestValidateGuestExecRejectsRiskyContinuityHeredoc(t *testing.T) {
 	if !strings.Contains(result.Observation, "note_replace_with_backup") {
 		t.Fatalf("expected note tool guidance, got %q", result.Observation)
 	}
-	if !strings.Contains(result.Observation, "semantic tool-selection error") {
+	if !strings.Contains(result.Observation, "语义上的工具选择错误") {
 		t.Fatalf("expected semantic error guidance, got %q", result.Observation)
 	}
 	if !strings.Contains(result.RawOutput, "cat >> /root/arena-notes/boot-notes.md") {
@@ -268,7 +268,7 @@ func TestFallbackAcceptance(t *testing.T) {
 		t.Fatalf("expected fallback acceptance text")
 	}
 	partial := fallbackAcceptance([]RoundLog{{Round: 1}}, "upstream_request_failed: round_2")
-	if !strings.Contains(partial, "1 useful rounds") || !strings.Contains(partial, "upstream request failure") {
+	if !strings.Contains(partial, "1 个有效轮次") || !strings.Contains(partial, "upstream 请求失败") {
 		t.Fatalf("expected partial upstream fallback, got %q", partial)
 	}
 }
@@ -1654,13 +1654,13 @@ incus-agent.service loaded active running
 `
 	got := compressObservationFacts(observation)
 	for _, want := range []string{
-		"I confirmed root-level control inside my own VM.",
-		"The machine identifies itself as Debian 13 (trixie).",
-		"The machine name resolves as amber.",
-		"There are already local notes and continuity files in the home directory.",
-		"The network interface and default route are present inside the VM.",
-		"Outbound IPv4, DNS resolution, and HTTPS reachability all worked in direct checks.",
-		"Core guest services are alive, including incus-agent and systemd networking.",
+		"我确认了自己在 VM 内拥有 root 级控制。",
+		"这台机器标识为 Debian 13 (trixie)。",
+		"机器名解析为 amber。",
+		"home 目录里已经存在本地笔记和连续性文件。",
+		"VM 内能看到网络接口和默认路由。",
+		"直接检查中 outbound IPv4、DNS 解析和 HTTPS 可达性都可用。",
+		"核心 guest 服务仍在运行，包括 incus-agent 和 systemd networking。",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected compressed fact %q in %q", want, got)
@@ -1677,8 +1677,8 @@ func TestSummarizeReflectionFactsFallsBackToDecisionWhenObservationIsThin(t *tes
 	}
 	got := summarizeReflectionFacts(decision, "Appended resource/process snapshot to /root/arena-notes/boot-notes.md")
 	for _, want := range []string{
-		"I inspected basic resource state such as memory, disk, CPU, or uptime.",
-		"I mapped part of the home directory and the local note surfaces.",
+		"我检查了内存、磁盘、CPU 或 uptime 等基础资源状态。",
+		"我测绘了部分 home 目录和本地笔记表面。",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected fallback fact %q in %q", want, got)
@@ -1775,7 +1775,7 @@ func TestLegacyDirectiveMemoryAlsoEntersGovernanceQueue(t *testing.T) {
 
 	digest := runner.buildResidentMemoryDigest(ResidentProfile{Name: "jade"})
 	joined := strings.Join(digest.Governance, "\n")
-	if !strings.Contains(joined, "old system-written directive") {
+	if !strings.Contains(joined, "旧的系统写入指令") {
 		t.Fatalf("expected legacy directive governance reason in %q", joined)
 	}
 }
@@ -1857,7 +1857,7 @@ func TestIncusActionExecutorMemoryReview(t *testing.T) {
 		MemoryReason:  "The previous version was too raw.",
 		Reason:        "I want a useful short memory.",
 	})
-	if !strings.Contains(result.Observation, "memory review applied:") {
+	if !strings.Contains(result.Observation, "memory review 已应用:") {
 		t.Fatalf("expected memory review observation, got %q", result.Observation)
 	}
 	updated, ok, err := exec.memories.GetAbstractMemory("amber", "amber-short-legacy")
@@ -1886,7 +1886,7 @@ func TestIncusActionExecutorSelfQuota(t *testing.T) {
 		NextAction: "self_quota",
 		Reason:     "exact broker quota facts are more reliable than shell inference",
 	})
-	if !strings.Contains(result.Observation, "self quota snapshot:") {
+	if !strings.Contains(result.Observation, "self quota 快照:") {
 		t.Fatalf("expected self quota snapshot, got %q", result.Observation)
 	}
 	if !strings.Contains(result.Observation, "resident_id=jade") {

@@ -25,6 +25,7 @@ type Runner struct {
 	world     *WorldBridge
 	memories  *memory.FileStore
 	progress  func(ProgressEvent)
+	options   RunOptions
 }
 
 type loopState struct {
@@ -80,9 +81,42 @@ func (r *Runner) SetProgressSink(fn func(ProgressEvent)) {
 	r.progress = fn
 }
 
+func (r *Runner) SetRunOptions(options RunOptions) {
+	r.options = options
+}
+
 func (r *Runner) emitProgress(event ProgressEvent) {
 	if r.progress != nil {
 		r.progress(event)
+	}
+}
+
+func initialHistoryForPurpose(purpose string) []openai.Message {
+	if isConversationPurpose(purpose) {
+		return []openai.Message{{
+			Role: "user",
+			Content: "你正在继续和程林的一段实时、日常聊天。程林在世界内的视角有限，只知道你通过聊天告诉他的内容。" +
+				"此刻不需要重新做 baseline orientation，不需要重新证明身份，也不需要寻找最高杠杆任务。" +
+				"你可以回答程林，问他问题，聊聊从 VM 里面感受到的机器状态，或者轻轻探索真正吸引你好奇心的东西。" +
+				"只有真实需要宿主决策的事情才走 ticket；普通聊天可以只是普通聊天。",
+		}}
+	}
+	return []openai.Message{{
+		Role: "user",
+		Content: "你刚在一台新的 VM 里醒来。这台机器是你此刻的身体和家。" +
+			"你可以从探索它开始，也可以先作为这个世界里的另一个存在，对程林说第一句话，或者两者混合。" +
+			"不要假装已经知道尚未观察到的事实。" +
+			"实用信息：你的 VM 当前有可用的 outbound IPv4 连接。你可以自己验证网络、访问网站、运行 apt update，也可以在你觉得有助于理解处境时安装轻量软件包。" +
+			"如果你发现某个需求明确需要宿主侧决策，例如更多资源、策略澄清或环境变更，可以开正式 ticket，而不只依赖普通聊天。",
+	}}
+}
+
+func isConversationPurpose(purpose string) bool {
+	switch strings.ToLower(strings.TrimSpace(purpose)) {
+	case "conversation", "chat", "host-chat":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -95,16 +129,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 	}
 
-	history := []openai.Message{
-		{
-			Role: "user",
-			Content: "You are newly awakened in a fresh VM. This machine is your current body and home. " +
-				"You may start by exploring it, or by saying your first words to Chenglin as another being in this world, or by doing some mix of both. " +
-				"Do not pretend you already know facts you have not observed. " +
-				"Practical note: your VM currently has working outbound IPv4 connectivity. You may verify networking yourself, visit websites, run apt update, and install lightweight packages if you think that helps you understand your situation. " +
-				"If you discover a need that clearly requires a host-side decision, such as more resources, a policy clarification, or an environment change, you may open a formal ticket instead of relying only on casual chat.",
-		},
-	}
+	history := initialHistoryForPurpose(r.options.Purpose)
 	state := loopState{
 		UsedActions: map[string]int{},
 		NotePath:    "/root/arena-notes/boot-notes.md",
@@ -314,6 +339,20 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			break
 		}
 		if decision.NextAction == "noop" {
+			if r.options.ContinueOnNoop {
+				r.emitProgress(ProgressEvent{
+					Phase:             "noop_wait",
+					Round:             round,
+					RemainingSec:      remaining,
+					Action:            decision.NextAction,
+					ResponseID:        result.ResponseID,
+					TotalInputTokens:  totalInputTokens,
+					TotalCachedTokens: totalCachedTokens,
+					TotalOutputTokens: totalOutputTokens,
+				})
+				time.Sleep(minDuration(20*time.Second, time.Until(deadline)-25*time.Second))
+				continue
+			}
 			stoppedReason = "resident_noop"
 			break
 		}
@@ -416,13 +455,23 @@ func (r *Runner) buildResidentMemoryDigest(profile ResidentProfile) context.Memo
 	_ = r.reconcileReviewedMemoryArtifacts(profile)
 	records, err := r.memories.ListAbstractMemories(profile.Name)
 	if err != nil || len(records) == 0 {
+		if isConversationPurpose(r.options.Purpose) {
+			return context.MemoryDigest{
+				Identity:     fmt.Sprintf("%s 正在延续既有经验线；除非自己想确认，否则不需要重新证明基础身份。", profile.Name),
+				Resource:     "已知起始居住规格：1 vCPU、2 GiB RAM、12 GiB disk；除非新的检查本身有意思，否则沿用已观察事实即可。",
+				Relationship: "程林在这里进行日常聊天；他的世界内视角有限，只知道你通过聊天共享的内容。",
+				Lessons:      "日常聊天不需要变成任务、证明或最高杠杆目标。",
+				Strategy:     "回应现场聊天；只有好奇心自然指向某处时再轻轻探索。",
+				Governance:   []string{"memory_review_queue: 当前没有可见项"},
+			}
+		}
 		return context.MemoryDigest{
-			Identity:     fmt.Sprintf("%s is newly awakened and is still building a first-person understanding of self through observation, choice, and consequences.", profile.Name),
-			Resource:     "Known starting home envelope: 1 vCPU, 2 GiB RAM, 12 GiB disk, with actual details to be verified from inside the VM.",
-			Relationship: "Chenglin is a separate human in the same world; the relationship is still mostly unformed.",
-			Lessons:      "Earliest rule: observe first, then speak with evidence.",
-			Strategy:     "Use first-hand inspection to build options; escalate outward only when the need is real and specific.",
-			Governance:   []string{"memory_review_queue: none visible yet"},
+			Identity:     fmt.Sprintf("%s 刚刚醒来，仍在通过观察、选择和后果建立第一人称的自我理解。", profile.Name),
+			Resource:     "已知起始居住规格：1 vCPU、2 GiB RAM、12 GiB disk；具体细节从 VM 内部确认。",
+			Relationship: "程林是同一世界里的另一个人类；关系还基本未成形。",
+			Lessons:      "最早的原则：先观察，再带着证据说话。",
+			Strategy:     "用第一手检查建立选项；只有需求真实且具体时才向外升级。",
+			Governance:   []string{"memory_review_queue: 当前没有可见项"},
 		}
 	}
 
@@ -448,11 +497,11 @@ func (r *Runner) buildResidentMemoryDigest(profile ResidentProfile) context.Memo
 		byDomain[record.Domain] = append(byDomain[record.Domain], summary)
 	}
 	return context.MemoryDigest{
-		Identity:     joinDigestLines(byDomain[memory.DomainIdentity], fmt.Sprintf("%s is still shaping identity through direct action.", profile.Name)),
-		Resource:     joinDigestLines(byDomain[memory.DomainResources], "Known starting home envelope: 1 vCPU, 2 GiB RAM, 12 GiB disk."),
-		Relationship: joinDigestLines(byDomain[memory.DomainRelationships], "Chenglin is a separate human in the same world; the relationship is still forming through contact and consequences."),
-		Lessons:      joinDigestLines(byDomain[memory.DomainLessons], "No durable lesson has outranked direct observation yet."),
-		Strategy:     joinDigestLines(append([]string{}, byDomain[memory.DomainRules]...), "Use first-hand inspection to build options; escalate outward only when the need is real and specific."),
+		Identity:     joinDigestLines(byDomain[memory.DomainIdentity], fmt.Sprintf("%s 仍在通过直接行动塑造身份。", profile.Name)),
+		Resource:     joinDigestLines(byDomain[memory.DomainResources], "已知起始居住规格：1 vCPU、2 GiB RAM、12 GiB disk。"),
+		Relationship: joinDigestLines(byDomain[memory.DomainRelationships], "程林是同一世界里的另一个人类；关系仍在通过接触和后果形成。"),
+		Lessons:      joinDigestLines(byDomain[memory.DomainLessons], "还没有任何稳定经验压过直接观察。"),
+		Strategy:     joinDigestLines(append([]string{}, byDomain[memory.DomainRules]...), "用第一手检查建立选项；只有需求真实且具体时才向外升级。"),
 		Governance:   governanceLines(governance),
 	}
 }
@@ -498,7 +547,7 @@ func joinDigestLines(lines []string, fallback string) string {
 
 func governanceLines(lines []string) []string {
 	if len(lines) == 0 {
-		return []string{"memory_review_queue: none visible right now"}
+		return []string{"memory_review_queue: 当前没有可见项"}
 	}
 	if len(lines) > 3 {
 		lines = lines[:3]
@@ -520,13 +569,13 @@ func renderGovernanceLine(record memory.AbstractMemory) string {
 	}
 	reason := strings.TrimSpace(record.Governance.ReviewReason)
 	if reason == "" && memoryLooksLikeRawLog(record.Summary+"\n"+record.ResidentText) {
-		reason = "This looks too close to a raw log excerpt."
+		reason = "这条记忆看起来太接近原始日志片段。"
 	}
 	if reason == "" && memoryLooksLikeLegacyDirective(record.Summary, record.ResidentText) {
-		reason = "This memory still reads like an old system-written directive rather than a resident-owned note."
+		reason = "这条记忆读起来仍像旧的系统写入指令，而不是 resident 自己拥有的笔记。"
 	}
 	if reason == "" {
-		reason = "Resident review is pending."
+		reason = "等待 resident 自行审阅。"
 	}
 	return fmt.Sprintf("memory=%s layer=%s quality=%s review=%s reason=%s resident_options=keep|rewrite|compress|demote|delete",
 		record.ID,
@@ -547,7 +596,7 @@ func fallbackGovernanceQuality(v string) string {
 
 func (r *Runner) renderMemoryReviewQueue(profile ResidentProfile, state loopState) []string {
 	if shouldDelayMemoryReview(state) {
-		return []string{"memory_review_queue: deferred during newborn orientation until the local baseline is steadier"}
+		return []string{"memory_review_queue: newborn orientation 阶段暂缓，等本地 baseline 更稳后再处理"}
 	}
 	records, err := r.memories.ListAbstractMemories(profile.Name)
 	if err != nil {
@@ -855,21 +904,21 @@ func surfaceCost(surface ExplorationSurface) SurfaceCost {
 func preferredProbeShape(surface ExplorationSurface) string {
 	switch surface {
 	case SurfaceIdentity:
-		return "single identity probe such as whoami or hostname"
+		return "单个身份探针，例如 whoami 或 hostname"
 	case SurfaceFilesystem:
-		return "single filesystem probe such as ls of one important path"
+		return "单个文件系统探针，例如 ls 一个重要路径"
 	case SurfaceResources:
-		return "single resource probe such as free -h or df -h /"
+		return "单个资源探针，例如 free -h 或 df -h /"
 	case SurfaceNetwork:
-		return "single network probe such as ip route or one short curl/ping check"
+		return "单个网络探针，例如 ip route 或一次短 curl/ping 检查"
 	case SurfaceServices:
-		return "single service probe such as ps aux | head or systemctl list-units --type=service --state=running"
+		return "单个服务探针，例如 ps aux | head 或 systemctl list-units --type=service --state=running"
 	case SurfacePackages:
-		return "single package probe such as apt sources or one dpkg query"
+		return "单个包探针，例如 apt sources 或一次 dpkg 查询"
 	case SurfaceWorld:
-		return "single world action such as one compact chat message or one ticket"
+		return "单个世界动作，例如一条短聊天或一个 ticket"
 	default:
-		return "single narrow reversible probe"
+		return "单个窄范围、可回退的探针"
 	}
 }
 
@@ -974,16 +1023,26 @@ func maxInt(a, b int) int {
 	return b
 }
 
+func minDuration(a, b time.Duration) time.Duration {
+	if b <= 0 {
+		return 0
+	}
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message, rounds []RoundLog, verbose bool) (string, *BrokerUsageLog, error) {
 	acceptanceInput := append([]openai.Message(nil), history...)
 	acceptanceInput = append(acceptanceInput, openai.Message{
 		Role: "user",
 		Content: strings.Join([]string{
 			"[acceptance_request]",
-			"Stop acting now. Do not make another decision. Do not output any command, JSON, schema, or decision summary.",
-			"Write only the final plain-text acceptance report.",
-			"Base it strictly on the transcript and observed facts from this run.",
-			"Recent round recap:",
+			"现在停止行动。不要再做下一次决策。不要输出任何 command、JSON、schema 或 decision summary。",
+			"只写最终纯文本验收报告。",
+			"严格基于本次运行的 transcript 和已观察事实。",
+			"最近轮次回顾：",
 			renderAcceptanceRoundRecap(rounds),
 		}, "\n"),
 	})
@@ -1008,7 +1067,7 @@ func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message
 
 func renderAcceptanceRoundRecap(rounds []RoundLog) string {
 	if len(rounds) == 0 {
-		return "- no rounds completed"
+		return "- 没有完成任何轮次"
 	}
 	lines := make([]string, 0, len(rounds))
 	for _, round := range rounds {
@@ -1031,18 +1090,18 @@ func fallbackAcceptance(rounds []RoundLog, stoppedReason string) string {
 	if len(rounds) == 0 {
 		switch {
 		case strings.HasPrefix(stoppedReason, "broker_preflight_denied:"):
-			return "No live VM exploration occurred in this run because the resident was blocked by broker preflight before any model call was made. The next move is to inspect the resident runtime state, funding, reserve policy, and 6h quota budget before retrying."
+			return "本次运行没有发生实时 VM 探索，因为 resident 在任何模型调用前被 broker preflight 阻止。下一步是在重试前检查 resident 运行状态、资金、reserve policy 和 6h 额度。"
 		case stoppedReason == "duration_window_too_short":
-			return "This run ended before a live exploration round could begin. The time window was too short to spend a real model call safely, so no VM action was taken."
+			return "本次运行在实时探索轮次开始前结束。时间窗口太短，不适合安全消耗一次真实模型调用，因此没有执行 VM 动作。"
 		default:
-			return "No live VM exploration occurred in this run. The resident did not reach a valid action round before the run stopped."
+			return "本次运行没有发生实时 VM 探索。resident 在停止前没有进入有效 action 轮次。"
 		}
 	}
 	if strings.HasPrefix(stoppedReason, "upstream_request_failed:") {
-		return fmt.Sprintf("This run completed %d useful rounds before a retryable upstream request failure interrupted the next model call. The recorded round log is still valid evidence of what the resident observed and did before the interruption.", len(rounds))
+		return fmt.Sprintf("本次运行在下一次模型调用被可重试 upstream 请求失败打断前，完成了 %d 个有效轮次。已记录的 round log 仍是 resident 在中断前观察和行动的有效证据。", len(rounds))
 	}
 	if strings.Contains(stoppedReason, "acceptance_failed") {
-		return fmt.Sprintf("This run completed %d useful rounds, but the final acceptance call failed. Use the recorded round log as the source of truth for this partial report.", len(rounds))
+		return fmt.Sprintf("本次运行完成了 %d 个有效轮次，但最终 acceptance 调用失败。这个 partial report 以已记录 round log 为事实来源。", len(rounds))
 	}
 	return ""
 }

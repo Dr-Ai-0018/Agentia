@@ -195,6 +195,11 @@ type ProgressEvent struct {
 	TotalOutputTokens   int    `json:"total_output_tokens,omitempty"`
 }
 
+type RunOptions struct {
+	ContinueOnNoop bool
+	Purpose        string
+}
+
 type FinalReport struct {
 	Resident         string          `json:"resident"`
 	Model            string          `json:"model"`

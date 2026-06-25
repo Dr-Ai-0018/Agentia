@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "demo", "Mode: demo|status|budget-status|quota|quota-grant|spark-grant|test-allowance-card|orchestrator-budget-estimate|orchestrator-budget-report|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|host-maintenance-draft|host-maintenance-draft-cached|v0-readiness|v0-readiness-cached|v0-runbook|v0-acceptance|v0-acceptance-cached|v0-acceptance-evidence|v0-acceptance-evidence-list|v0-acceptance-evidence-template|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-auto-maintain|memory-review|recover|recover-all|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|host-resolve-intervention|host-plan-maintenance|host-start-maintenance|host-complete-maintenance|host-fail-maintenance|host-rollback-maintenance|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
+	mode := flag.String("mode", "demo", "Mode: demo|status|budget-status|quota|quota-grant|spark-grant|test-allowance-card|orchestrator-budget-estimate|orchestrator-budget-report|capacity|inventory|host-inspect|host-inspect-cached|host-inspect-summary|host-inspect-summary-cached|host-decision-assist|host-decision-assist-cached|host-maintenance-draft|host-maintenance-draft-cached|v0-readiness|v0-readiness-cached|v0-runbook|v0-acceptance|v0-acceptance-cached|v0-acceptance-evidence|v0-acceptance-evidence-list|v0-acceptance-evidence-template|checkpoint-list|checkpoint-create|checkpoint-cleanup|memory-maintenance|memory-compact|memory-lifecycle|memory-lifecycle-safe-apply|memory-auto-maintain|memory-review|recover|recover-all|reset|admit|binding|self-status|self-quota|self-reboot|self-snapshot|self-restore|self-request-cpu|self-request-memory|self-request-disk|self-request-gpu-time|self-request-vps-access|self-submit-result|get-thread|messages|thread-summary|host-inbox|host-followups|reply|host-chat|tickets|ticket|get-ticket|ticket-reply|ticket-settle-resource|host-intervention|host-resolve-intervention|host-plan-maintenance|host-start-maintenance|host-complete-maintenance|host-fail-maintenance|host-rollback-maintenance|ticket-plan-maintenance|ticket-start-maintenance|ticket-fail-maintenance|ticket-rollback-maintenance|ticket-complete-maintenance|ticket-apply-cpu|ticket-apply-memory|ticket-apply-disk|doctor|world-scan|world-quarantine-message-file")
 	residentID := flag.String("resident", "jade", "Resident ID")
 	runID := flag.String("run-id", "", "Orchestrator run id for orchestrator budget report modes")
 	allowance := flag.String("allowance", "", "Optional per-resident allowance map, e.g. amber=372.7,jade=271.2,onyx=298.1")
@@ -503,6 +503,15 @@ func main() {
 			exitf("%v", err)
 		}
 		out, err := host.Reply(*messageID, *body)
+		if err != nil {
+			exitf("%v", err)
+		}
+		printJSON(out)
+	case "host-chat":
+		if err := worldstate.ValidateReplyBody(*body); err != nil {
+			exitf("%v", err)
+		}
+		out, err := host.Chat(*residentID, *body)
 		if err != nil {
 			exitf("%v", err)
 		}

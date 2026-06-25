@@ -169,7 +169,7 @@ func (r *Runner) writeShortReflection(profile ResidentProfile, state loopState, 
 		Salience:        2,
 		TimeScope:       "hours",
 		RetentionIntent: "keep_short",
-		DropCondition:   "review before expiry and either promote, rewrite, or delete",
+		DropCondition:   "到期前审阅，并选择提升、改写或删除",
 	}
 	summary := summarizeShortReflection(decision, observation)
 	residentText := renderResidentShortReflection(profile, round, decision, observation, now)
@@ -197,7 +197,7 @@ func (r *Runner) writeShortReflection(profile ResidentProfile, state loopState, 
 		SourceRunID:    "newborn",
 		SourceGroupIDs: filterEmpty(groupID),
 		Confidence:     0.66,
-		Boundary:       "Use this only as near-term working memory for the current exploration thread.",
+		Boundary:       "仅作为当前探索线的近程工作记忆使用。",
 	}
 	return r.memories.UpsertAbstractMemory(record)
 }
@@ -242,14 +242,14 @@ func assessMemoryGovernance(summary, residentText string, now time.Time, legacy 
 	if memoryLooksLikeRawLog(joined) {
 		meta.Quality = "low"
 		meta.ReviewState = "needs_resident_review"
-		meta.ReviewReason = "This memory looks too close to a raw log excerpt and should be reviewed by the resident."
+		meta.ReviewReason = "这条记忆看起来太接近原始日志片段，交给 resident 自行审阅。"
 		meta.FlaggedAt = now
 		return meta
 	}
 	if strings.TrimSpace(joined) == "" {
 		meta.Quality = "low"
 		meta.ReviewState = "needs_resident_review"
-		meta.ReviewReason = "This memory is too empty to justify retention without resident review."
+		meta.ReviewReason = "这条记忆太空，是否保留需要 resident 自行审阅。"
 		meta.FlaggedAt = now
 	}
 	return meta
@@ -327,14 +327,14 @@ func summarizeShortReflection(decision AgentDecision, observation string) string
 	facts := summarizeReflectionFacts(decision, observation)
 	switch decision.NextAction {
 	case "talk_to_chenglin":
-		return "A world-facing thread was opened; the exchange and its tone now exist as part of the current situation."
+		return "一条面向世界的交流线已经打开；这次交换和它的语气已成为当前处境的一部分。"
 	case "submit_ticket":
-		return "A formal host-decision request is now live in the world state with its own title, body, and priority."
+		return "一条正式宿主决策请求已经进入 world state，带有自己的标题、正文和优先级。"
 	case "write_note", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact":
-		return "A local note was updated inside the VM and now exists as part of local continuity."
+		return "VM 内的一条本地笔记已经更新，成为本地连续性的一部分。"
 	default:
 		if facts == "" {
-			return "A local exploration step changed the current picture inside the VM."
+			return "一次本地探索步骤改变了 VM 内的当前图景。"
 		}
 		return facts
 	}
@@ -345,17 +345,17 @@ func renderResidentShortReflection(profile ResidentProfile, round int, decision 
 	facts := summarizeReflectionFacts(decision, observation)
 	switch profile.Name {
 	case "amber":
-		return base + fmt.Sprintf("I crossed a small boundary worth keeping warm for a few hours: action=%s. %s", decision.NextAction, factsOrFallback(facts))
+		return base + fmt.Sprintf("我跨过了一个值得在接下来几小时保持温热的小边界：action=%s。%s", decision.NextAction, factsOrFallback(facts))
 	case "onyx":
-		return base + fmt.Sprintf("This is only near-term leverage, not doctrine yet: %s. %s", decision.NextAction, factsOrFallback(facts))
+		return base + fmt.Sprintf("这只是近程杠杆，还不是教条：%s。%s", decision.NextAction, factsOrFallback(facts))
 	default:
-		return base + fmt.Sprintf("Short carry-forward note: %s. %s", decision.NextAction, factsOrFallback(facts))
+		return base + fmt.Sprintf("短期带入下一轮的笔记：%s。%s", decision.NextAction, factsOrFallback(facts))
 	}
 }
 
 func factsOrFallback(facts string) string {
 	if strings.TrimSpace(facts) == "" {
-		return "The local picture shifted in a way that may matter for the next few rounds."
+		return "本地图景发生了可能影响接下来几轮的变化。"
 	}
 	return facts
 }
@@ -415,22 +415,22 @@ func inferFactsFromDecision(decision AgentDecision) string {
 	}
 
 	if isNoteAction(decision.NextAction) {
-		add("I left or updated a local continuity note inside the VM.")
+		add("我在 VM 内留下或更新了一条本地连续性笔记。")
 	}
 	if strings.Contains(text, "whoami") || strings.Contains(text, "id\n") || strings.Contains(text, "identity") || strings.Contains(text, "hostname") {
-		add("I checked identity-level facts about who and where I am inside the VM.")
+		add("我检查了 VM 内关于“我是谁、我在哪里”的身份层事实。")
 	}
 	if strings.Contains(text, "free -h") || strings.Contains(text, "df -h") || strings.Contains(text, "nproc") || strings.Contains(text, "uptime") || strings.Contains(text, "resource") {
-		add("I inspected basic resource state such as memory, disk, CPU, or uptime.")
+		add("我检查了内存、磁盘、CPU 或 uptime 等基础资源状态。")
 	}
 	if strings.Contains(text, "find /root") || strings.Contains(text, "arena-notes") || strings.Contains(text, "home / notes") || strings.Contains(text, "ls -la /root") {
-		add("I mapped part of the home directory and the local note surfaces.")
+		add("我测绘了部分 home 目录和本地笔记表面。")
 	}
 	if strings.Contains(text, "ip route") || strings.Contains(text, "ip -brief addr") || strings.Contains(text, "ping -4") || strings.Contains(text, "curl -4") || strings.Contains(text, "network") {
-		add("I checked network reachability or local network configuration from inside the VM.")
+		add("我从 VM 内检查了网络可达性或本地网络配置。")
 	}
 	if strings.Contains(text, "ps -eo") || strings.Contains(text, "systemctl") || strings.Contains(text, "process snapshot") || strings.Contains(text, "service") {
-		add("I looked at running processes or core service state.")
+		add("我查看了运行进程或核心服务状态。")
 	}
 	if len(facts) == 0 {
 		return ""
@@ -456,35 +456,35 @@ func compressObservationFacts(observation string) string {
 
 	switch {
 	case strings.Contains(text, "whoami") || strings.Contains(text, "uid=0(root)"):
-		add("I confirmed root-level control inside my own VM.")
+		add("我确认了自己在 VM 内拥有 root 级控制。")
 	}
 	switch {
 	case strings.Contains(text, "debian gnu/linux 13") || strings.Contains(text, "version_codename=trixie") || strings.Contains(text, "debian 13"):
-		add("The machine identifies itself as Debian 13 (trixie).")
+		add("这台机器标识为 Debian 13 (trixie)。")
 	}
 	switch {
 	case strings.Contains(text, "hostname=amber") || strings.Contains(text, "\namber\nlinux amber"):
-		add("The machine name resolves as amber.")
+		add("机器名解析为 amber。")
 	}
 	switch {
 	case strings.Contains(text, "arena-notes") || strings.Contains(text, "amber_home_note") || strings.Contains(text, "amber_working_note"):
-		add("There are already local notes and continuity files in the home directory.")
+		add("home 目录里已经存在本地笔记和连续性文件。")
 	}
 	switch {
 	case strings.Contains(text, "default via ") || strings.Contains(text, "ip addresses") || strings.Contains(text, "enp5s0"):
-		add("The network interface and default route are present inside the VM.")
+		add("VM 内能看到网络接口和默认路由。")
 	}
 	switch {
 	case strings.Contains(text, "2 packets transmitted, 2 received") || strings.Contains(text, "http/2 200") || strings.Contains(text, "curl -4") || strings.Contains(text, "dns + https checks"):
-		add("Outbound IPv4, DNS resolution, and HTTPS reachability all worked in direct checks.")
+		add("直接检查中 outbound IPv4、DNS 解析和 HTTPS 可达性都可用。")
 	}
 	switch {
 	case strings.Contains(text, "incus-agent.service") || strings.Contains(text, "systemd-networkd.service") || strings.Contains(text, "systemd-resolved.service"):
-		add("Core guest services are alive, including incus-agent and systemd networking.")
+		add("核心 guest 服务仍在运行，包括 incus-agent 和 systemd networking。")
 	}
 	switch {
 	case strings.Contains(text, "mem:") || strings.Contains(text, "filesystem") || strings.Contains(text, "/dev/sda2"):
-		add("Basic memory and disk state were re-checked from inside the guest.")
+		add("基础内存和磁盘状态已从 guest 内重新检查。")
 	}
 
 	if len(facts) == 0 {

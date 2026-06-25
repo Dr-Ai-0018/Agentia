@@ -314,6 +314,31 @@ Budget report:
 - Spent: `18.1202` spark.
 - Internal USD: `0.1812`.
 
+### 2026-06-25 Chinese Default Context Pass
+
+Goal:
+
+- Make the resident-facing default context naturally Chinese-first without turning "speak Chinese" into a hard resident task or behavioral law.
+- Preserve tool names, schema field names, status keys, and machine-facing labels where they are part of the API surface.
+
+Changes:
+
+- Converted fixed decision instructions, acceptance request text, newborn initial history, conversation-purpose initial history, resident identity/world packet text, world chat context, note/tool feedback, short reflection summaries, and default resident persona/style/core-bias text into Chinese natural language.
+- Added a soft world-context fact that Chenglin normally communicates in Chinese and the current everyday conversation context naturally leans Chinese, while expression still follows relationship, content, and resident personality.
+- Kept split action tool names and fields unchanged: `guest_exec`, `note_read`, `talk_to_chenglin`, `situation`, `reason`, `message`, and related API fields stay stable.
+- Kept the prompt-cache structure unchanged: fixed tool policy in `instructions`, stable resident/world/memory context as the first ordinary input message, and append-only run history.
+
+Validation:
+
+- `go test ./...` passes.
+- 8-turn cache probe after the Chinese context mutation preserved the previous request prefix on every turn for all residents.
+- `instructions_hash` stayed stable across all cache-probe turns.
+- Cache probe result:
+  - `jade`: cache ratio `0.8091`, cache health `good`, `previous_request_prefix_preserved=true` on all 8 turns.
+  - `amber`: cache ratio `0.7679`, cache health `good`, `previous_request_prefix_preserved=true` on all 8 turns.
+  - `onyx`: cache ratio `0.7471`, cache health `watch`, `previous_request_prefix_preserved=true` on all 8 turns.
+- Onyx's ratio was pulled below `good` mainly by a cold first turn with `cached_tokens=0`; later turns were stable around `0.78` to `0.86`.
+
 ## Desired System Properties
 
 The system should support:
@@ -439,6 +464,8 @@ When resuming this project in a later conversation, the next practical step shou
 - [x] Full Go test suite passing after cache repair.
 - [x] Host-side per-resident live progress telemetry added without resident-facing steering.
 - [x] Re-run cache probe after host-side telemetry change.
+- [x] Resident-facing default context converted to Chinese-first natural language without a hard language mandate.
+- [x] Re-run cache probe after Chinese prompt/context mutation.
 - [ ] Improve cache hit ratio from `watch` to consistently acceptable before long soak.
 - [ ] Re-run cache probe after any resident prompt/context mutation.
 - [ ] Keep long-run launch gated on budget, provider, and cache checks.

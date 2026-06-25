@@ -65,7 +65,7 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 		return executeNoteSummarizeOrCompact(profile, decision)
 	case "guest_exec":
 		if strings.TrimSpace(decision.Command) == "" {
-			return actionError("guest_exec denied: command is required", "validation_error", "")
+			return actionError("guest_exec denied: command 是必填项", "validation_error", "")
 		}
 		if result, denied := validateGuestExecCommand(decision.Command); denied {
 			return result
@@ -77,7 +77,7 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 		return ActionResult{Observation: e.executeSelfQuota(profile), Activity: tokenledger.ActivityStatusCheck}
 	case "talk_to_chenglin":
 		if strings.TrimSpace(decision.Message) == "" {
-			return ActionResult{Observation: "talk_to_chenglin denied: message is required", Activity: tokenledger.ActivityLightWork}
+			return ActionResult{Observation: "talk_to_chenglin denied: message 是必填项", Activity: tokenledger.ActivityLightWork}
 		}
 		observation, err := e.world.RecordResidentMessage(profile, decision.Message, time.Now().UTC())
 		if err != nil {
@@ -93,7 +93,7 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 	case "memory_review":
 		return ActionResult{Observation: e.executeMemoryReview(profile, decision), Activity: tokenledger.ActivityLightWork}
 	default:
-		return ActionResult{Observation: "no operation executed", Activity: tokenledger.ActivityStatusCheck}
+		return ActionResult{Observation: "没有执行任何操作", Activity: tokenledger.ActivityStatusCheck}
 	}
 }
 
@@ -106,10 +106,10 @@ func (e *IncusActionExecutor) executeNoteAppend(profile ResidentProfile, decisio
 		text = strings.TrimSpace(decision.Message)
 	}
 	if text == "" {
-		return actionError("note_append denied: provide note text in note_text; shell commands are not executed for note tools", "validation_error", decision.Command)
+		return actionError("note_append denied: 请在 note_text 提供笔记正文；note 工具不会执行 shell 命令", "validation_error", decision.Command)
 	}
 	if len(text) > noteTextMaxChars {
-		return actionError(fmt.Sprintf("note_append denied: note text exceeds %d characters", noteTextMaxChars), "validation_error", text)
+		return actionError(fmt.Sprintf("note_append denied: note_text 超过 %d 字符", noteTextMaxChars), "validation_error", text)
 	}
 	result := appendGuestNote(profile.Instance, decision.NoteFile, text)
 	if result.Error {
@@ -120,7 +120,7 @@ func (e *IncusActionExecutor) executeNoteAppend(profile ResidentProfile, decisio
 
 func (e *IncusActionExecutor) executeSelfStatus(profile ResidentProfile) string {
 	if e.broker == nil {
-		return "self_status failed: broker app is not configured"
+		return "self_status failed: broker app 未配置"
 	}
 	out, err := e.broker.RunStatus(profile.Name)
 	if err != nil {
@@ -131,7 +131,7 @@ func (e *IncusActionExecutor) executeSelfStatus(profile ResidentProfile) string 
 
 func (e *IncusActionExecutor) executeSelfQuota(profile ResidentProfile) string {
 	if e.broker == nil {
-		return "self_quota failed: broker app is not configured"
+		return "self_quota failed: broker app 未配置"
 	}
 	out, err := e.broker.RunQuota(profile.Name)
 	if err != nil {
@@ -142,7 +142,7 @@ func (e *IncusActionExecutor) executeSelfQuota(profile ResidentProfile) string {
 
 func renderResidentStatusObservation(status brokerstate.ResidentStatus) string {
 	lines := []string{
-		"self status snapshot:",
+		"self status 快照:",
 		fmt.Sprintf("resident_id=%s", status.ResidentID),
 		fmt.Sprintf("spark_balance=%.4f", status.SparkBalance),
 		fmt.Sprintf("fatigue=%d", status.Fatigue),
@@ -173,7 +173,7 @@ func renderResidentStatusObservation(status brokerstate.ResidentStatus) string {
 
 func renderQuotaObservation(out broker.QuotaOutput) string {
 	lines := []string{
-		"self quota snapshot:",
+		"self quota 快照:",
 		fmt.Sprintf("resident_id=%s", out.Status.ResidentID),
 		fmt.Sprintf("spark_balance=%.4f", out.Status.SparkBalance),
 		fmt.Sprintf("debt_active=%t", out.Status.DebtActive),
@@ -203,16 +203,16 @@ func compactValue(s string) string {
 
 func (e *IncusActionExecutor) executeMemoryReview(profile ResidentProfile, decision AgentDecision) string {
 	if strings.TrimSpace(decision.MemoryID) == "" {
-		return "memory_review denied: memory_id is required"
+		return "memory_review denied: memory_id 是必填项"
 	}
 	if strings.TrimSpace(decision.MemoryAction) == "" {
-		return "memory_review denied: memory_action is required"
+		return "memory_review denied: memory_action 是必填项"
 	}
 	updated, err := e.memories.ReviewAbstractMemory(profile.Name, decision.MemoryID, time.Now().UTC(), decision.MemoryReviewRequest())
 	if err != nil {
 		return "memory_review failed: " + err.Error()
 	}
-	return fmt.Sprintf("memory review applied:\nmemory_id=%s\naction=%s\nstatus=%s\nlayer=%s\nreview_state=%s\nsummary=%s",
+	return fmt.Sprintf("memory review 已应用:\nmemory_id=%s\naction=%s\nstatus=%s\nlayer=%s\nreview_state=%s\nsummary=%s",
 		updated.ID,
 		decision.MemoryAction,
 		updated.Status,
@@ -226,11 +226,11 @@ func suppressDuplicateAction(profile ResidentProfile, decision AgentDecision) (b
 	switch {
 	case decision.NextAction == "talk_to_chenglin":
 		if repeatedChat(profile.Name, decision.Message) {
-			return true, "duplicate action suppressed: a very similar chat message is already in the recent world thread; wait for new facts or send a meaningfully different message"
+			return true, "duplicate action suppressed: 最近 world thread 里已经有非常相似的聊天消息；等新事实出现，或发送语义上不同的消息"
 		}
 	case decision.NextAction == "submit_ticket":
 		if repeatedTicket(profile.Name, decision.TicketTitle, decision.TicketBody, decision.TicketPriority) {
-			return true, "duplicate action suppressed: a very similar ticket already exists; update the situation with new evidence instead of reopening the same request"
+			return true, "duplicate action suppressed: 已存在非常相似的 ticket；用新证据更新情况，而不是重复开启同一个请求"
 		}
 	}
 	return false, ""
@@ -278,11 +278,11 @@ func classifyGuestExecActivity(command string) tokenledger.ActivityType {
 func validateGuestExecCommand(command string) (ActionResult, bool) {
 	trimmed := strings.TrimSpace(command)
 	if trimmed == "" {
-		return actionError("guest_exec denied: command is required", "validation_error", command), true
+		return actionError("guest_exec denied: command 是必填项", "validation_error", command), true
 	}
 	if targetsContinuitySurface(strings.ToLower(trimmed)) {
 		return actionError(
-			"guest_exec denied: continuity files under /root/arena-notes must use the dedicated note API: note_list, note_read, note_append, note_replace_with_backup, note_restore_backup, or note_summarize_or_compact. This is a semantic tool-selection error, not a shell quoting problem.",
+			"guest_exec denied: /root/arena-notes 下的连续性文件必须使用专用 note API：note_list、note_read、note_append、note_replace_with_backup、note_restore_backup 或 note_summarize_or_compact。这是语义上的工具选择错误，不是 shell 引号问题。",
 			"continuity_surface_requires_note_tool",
 			command,
 		), true
@@ -366,7 +366,7 @@ func executeNoteList(profile ResidentProfile) ActionResult {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
 		return ActionResult{Observation: "note_list failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_list_failed", RawOutput: raw}
 	}
-	return ActionResult{Observation: "note_list files under /root/arena-notes:\n" + string(out), Activity: tokenledger.ActivityLightWork}
+	return ActionResult{Observation: "note_list 列出 /root/arena-notes 下的文件:\n" + string(out), Activity: tokenledger.ActivityLightWork}
 }
 
 func executeNoteRead(profile ResidentProfile, decision AgentDecision) ActionResult {
@@ -388,7 +388,7 @@ func executeNoteRead(profile ResidentProfile, decision AgentDecision) ActionResu
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
 		return ActionResult{Observation: "note_read failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_read_failed", RawOutput: raw}
 	}
-	return ActionResult{Observation: "note_read /root/arena-notes/" + file + ":\n" + string(out), Activity: tokenledger.ActivityLightWork}
+	return ActionResult{Observation: "note_read 读取 /root/arena-notes/" + file + ":\n" + string(out), Activity: tokenledger.ActivityLightWork}
 }
 
 func appendGuestNote(instance, noteFile, text string) ActionResult {
@@ -419,7 +419,7 @@ func appendGuestNote(instance, noteFile, text string) ActionResult {
 			RawOutput:   raw,
 		}
 	}
-	return ActionResult{Observation: "note_append appended plain text to /root/arena-notes/" + file + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
+	return ActionResult{Observation: "note_append 已向 /root/arena-notes/" + file + " 追加纯文本\n" + string(out), Activity: tokenledger.ActivityLightWork}
 }
 
 func executeNoteReplaceWithBackup(profile ResidentProfile, decision AgentDecision) ActionResult {
@@ -437,10 +437,10 @@ func replaceGuestNoteWithBackup(profile ResidentProfile, decision AgentDecision,
 	}
 	text := strings.TrimSpace(decision.NoteText)
 	if text == "" {
-		return actionError(action+" denied: note_text is required", "validation_error", "")
+		return actionError(action+" denied: note_text 是必填项", "validation_error", "")
 	}
 	if len(text) > noteTextMaxChars {
-		return actionError(fmt.Sprintf("%s denied: note text exceeds %d characters", action, noteTextMaxChars), "validation_error", text)
+		return actionError(fmt.Sprintf("%s denied: note_text 超过 %d 字符", action, noteTextMaxChars), "validation_error", text)
 	}
 	script := strings.Join([]string{
 		"set -euo pipefail",
@@ -463,7 +463,7 @@ func replaceGuestNoteWithBackup(profile ResidentProfile, decision AgentDecision,
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
 		return ActionResult{Observation: action + " failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_replace_failed", RawOutput: raw}
 	}
-	return ActionResult{Observation: action + " replaced /root/arena-notes/" + file + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
+	return ActionResult{Observation: action + " 已替换 /root/arena-notes/" + file + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
 }
 
 func executeNoteRestoreBackup(profile ResidentProfile, decision AgentDecision) ActionResult {
@@ -473,7 +473,7 @@ func executeNoteRestoreBackup(profile ResidentProfile, decision AgentDecision) A
 	}
 	backup, err := safeNoteFile(decision.BackupFile)
 	if err != nil {
-		return actionError("note_restore_backup denied: invalid backup_file: "+err.Error(), "note_path_invalid", decision.BackupFile)
+		return actionError("note_restore_backup denied: backup_file 无效: "+err.Error(), "note_path_invalid", decision.BackupFile)
 	}
 	script := strings.Join([]string{
 		"set -euo pipefail",
@@ -492,7 +492,7 @@ func executeNoteRestoreBackup(profile ResidentProfile, decision AgentDecision) A
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
 		return ActionResult{Observation: "note_restore_backup failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_restore_failed", RawOutput: raw}
 	}
-	return ActionResult{Observation: "note_restore_backup restored /root/arena-notes/" + file + " from " + backup + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
+	return ActionResult{Observation: "note_restore_backup 已从 " + backup + " 恢复 /root/arena-notes/" + file + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
 }
 
 func safeNoteFile(value string) (string, error) {
@@ -501,11 +501,11 @@ func safeNoteFile(value string) (string, error) {
 		return "boot-notes.md", nil
 	}
 	if value == "" || strings.Contains(value, "/") || strings.Contains(value, `\`) {
-		return "", fmt.Errorf("note_file must be a file name under /root/arena-notes")
+		return "", fmt.Errorf("note_file 必须是 /root/arena-notes 下的文件名")
 	}
 	cleaned := filepath.Clean(value)
 	if cleaned == "." || cleaned == ".." || strings.Contains(cleaned, "..") {
-		return "", fmt.Errorf("note_file cannot traverse directories")
+		return "", fmt.Errorf("note_file 不能跨目录")
 	}
 	return cleaned, nil
 }

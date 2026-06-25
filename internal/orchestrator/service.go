@@ -32,6 +32,10 @@ type progressAwareRunner interface {
 	SetProgressSink(func(newborn.ProgressEvent))
 }
 
+type optionAwareRunner interface {
+	SetRunOptions(newborn.RunOptions)
+}
+
 type errorRunner struct {
 	err error
 }
@@ -83,14 +87,16 @@ type RunEvent struct {
 }
 
 type RunContract struct {
-	RunID         string        `json:"run_id"`
-	RetryOf       string        `json:"retry_of,omitempty"`
-	Mode          RunMode       `json:"mode"`
-	Residents     []string      `json:"residents"`
-	Duration      time.Duration `json:"duration"`
-	OutDir        string        `json:"out_dir"`
-	ResetResident bool          `json:"reset_resident"`
-	Verbose       bool          `json:"verbose"`
+	RunID          string        `json:"run_id"`
+	RetryOf        string        `json:"retry_of,omitempty"`
+	Mode           RunMode       `json:"mode"`
+	Residents      []string      `json:"residents"`
+	Duration       time.Duration `json:"duration"`
+	OutDir         string        `json:"out_dir"`
+	ResetResident  bool          `json:"reset_resident"`
+	Verbose        bool          `json:"verbose"`
+	ContinueOnNoop bool          `json:"continue_on_noop,omitempty"`
+	Purpose        string        `json:"purpose,omitempty"`
 }
 
 type RunSummary struct {
@@ -160,12 +166,14 @@ type RunRecord struct {
 }
 
 type RunInput struct {
-	Residents     []string
-	Duration      time.Duration
-	OutDir        string
-	Verbose       bool
-	ResetResident bool
-	Mode          RunMode
+	Residents      []string
+	Duration       time.Duration
+	OutDir         string
+	Verbose        bool
+	ResetResident  bool
+	Mode           RunMode
+	ContinueOnNoop bool
+	Purpose        string
 }
 
 type Service struct {
@@ -375,14 +383,16 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 	}
 	started := time.Now().UTC()
 	contract := RunContract{
-		RunID:         fmt.Sprintf("orchestrator-%s", started.Format("20060102T150405.000000000Z")),
-		RetryOf:       strings.TrimSpace(retryOf),
-		Mode:          input.Mode,
-		Residents:     append([]string(nil), input.Residents...),
-		Duration:      input.Duration,
-		OutDir:        input.OutDir,
-		ResetResident: input.ResetResident,
-		Verbose:       input.Verbose,
+		RunID:          fmt.Sprintf("orchestrator-%s", started.Format("20060102T150405.000000000Z")),
+		RetryOf:        strings.TrimSpace(retryOf),
+		Mode:           input.Mode,
+		Residents:      append([]string(nil), input.Residents...),
+		Duration:       input.Duration,
+		OutDir:         input.OutDir,
+		ResetResident:  input.ResetResident,
+		Verbose:        input.Verbose,
+		ContinueOnNoop: input.ContinueOnNoop,
+		Purpose:        strings.TrimSpace(input.Purpose),
 	}
 	runStatus := RunStatus{
 		RunID:     contract.RunID,
@@ -495,12 +505,14 @@ func (s *Service) RetryFailedRun(runID string) (RunSummary, error) {
 		return RunSummary{}, fmt.Errorf("run %s has no failed residents to retry", runID)
 	}
 	return s.runWithRetryOf(RunInput{
-		Residents:     failed,
-		Duration:      summary.Contract.Duration,
-		OutDir:        summary.Contract.OutDir,
-		Verbose:       summary.Contract.Verbose,
-		ResetResident: summary.Contract.ResetResident,
-		Mode:          summary.Contract.Mode,
+		Residents:      failed,
+		Duration:       summary.Contract.Duration,
+		OutDir:         summary.Contract.OutDir,
+		Verbose:        summary.Contract.Verbose,
+		ResetResident:  summary.Contract.ResetResident,
+		Mode:           summary.Contract.Mode,
+		ContinueOnNoop: summary.Contract.ContinueOnNoop,
+		Purpose:        summary.Contract.Purpose,
 	}, runID)
 }
 
@@ -585,6 +597,12 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 	if aware, ok := runner.(progressAwareRunner); ok {
 		aware.SetProgressSink(func(event newborn.ProgressEvent) {
 			s.updateResidentProgress(runStatus, statusMu, profile.Name, event)
+		})
+	}
+	if aware, ok := runner.(optionAwareRunner); ok {
+		aware.SetRunOptions(newborn.RunOptions{
+			ContinueOnNoop: input.ContinueOnNoop,
+			Purpose:        input.Purpose,
 		})
 	}
 	report, err := runner.Run(profile, input.Duration, input.OutDir, input.Verbose, input.ResetResident)

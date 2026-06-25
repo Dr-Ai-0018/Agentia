@@ -25,43 +25,43 @@ func buildDecisionToolPayload(profile ResidentProfile, input []openai.Message, p
 
 func decisionTools() []openai.ResponseTool {
 	return []openai.ResponseTool{
-		tool("guest_exec", "Run one shell command inside your own VM for narrow inspection or work without a dedicated tool.", props(
+		tool("guest_exec", "在你自己的 VM 内运行一条 shell 命令，用于窄范围检查，或没有专用工具的工作。", props(
 			field("situation"), field("reason"), field("command"),
 		), []string{"situation", "reason", "command"}),
-		tool("self_status", "Ask the broker for current resident state summary.", props(
+		tool("self_status", "向 broker 查询当前 resident 状态摘要。", props(
 			field("situation"), field("reason"),
 		), []string{"situation", "reason"}),
-		tool("self_quota", "Ask the broker for current quota, effective quota, and recovery state.", props(
+		tool("self_quota", "向 broker 查询当前额度、有效额度和恢复状态。", props(
 			field("situation"), field("reason"),
 		), []string{"situation", "reason"}),
-		tool("note_list", "List files in /root/arena-notes using the safe note API.", props(
+		tool("note_list", "通过安全 note API 列出 /root/arena-notes 里的文件。", props(
 			field("situation"), field("reason"),
 		), []string{"situation", "reason"}),
-		tool("note_read", "Read one continuity note file using the safe note API.", props(
+		tool("note_read", "通过安全 note API 读取一个连续性笔记文件。", props(
 			field("situation"), field("reason"), field("note_file"),
 		), []string{"situation", "reason", "note_file"}),
-		tool("note_append", "Append plain note text to one continuity note file using the safe note API.", props(
+		tool("note_append", "通过安全 note API 向一个连续性笔记文件追加纯文本。", props(
 			field("situation"), field("reason"), field("note_file"), field("note_text"),
 		), []string{"situation", "reason", "note_file", "note_text"}),
-		tool("note_replace_with_backup", "Replace one continuity note file after creating a timestamped backup using the safe note API.", props(
+		tool("note_replace_with_backup", "通过安全 note API 创建带时间戳的备份后，替换一个连续性笔记文件。", props(
 			field("situation"), field("reason"), field("note_file"), field("note_text"),
 		), []string{"situation", "reason", "note_file", "note_text"}),
-		tool("note_restore_backup", "Restore one continuity note file from a backup file using the safe note API.", props(
+		tool("note_restore_backup", "通过安全 note API 从备份文件恢复一个连续性笔记文件。", props(
 			field("situation"), field("reason"), field("note_file"), field("backup_file"),
 		), []string{"situation", "reason", "note_file", "backup_file"}),
-		tool("note_summarize_or_compact", "Replace one continuity note file with compacted note text after creating a timestamped backup using the safe note API.", props(
+		tool("note_summarize_or_compact", "通过安全 note API 创建带时间戳的备份后，用压缩后的笔记文本替换一个连续性笔记文件。", props(
 			field("situation"), field("reason"), field("note_file"), field("note_text"),
 		), []string{"situation", "reason", "note_file", "note_text"}),
-		tool("talk_to_chenglin", "Send one free-form chat message to Chenglin.", props(
+		tool("talk_to_chenglin", "给程林发送一条自由聊天消息。", props(
 			field("situation"), field("reason"), field("message"),
 		), []string{"situation", "reason", "message"}),
-		tool("submit_ticket", "Create one formal request that needs a host-side decision.", props(
+		tool("submit_ticket", "创建一条需要宿主侧明确决策的正式请求。", props(
 			field("situation"), field("reason"), field("ticket_title"), field("ticket_body"), enumField("ticket_priority", []string{"low", "medium", "high", "urgent"}),
 		), []string{"situation", "reason", "ticket_title", "ticket_body", "ticket_priority"}),
-		tool("memory_review", "Review one of your own memories from memory_governance.", props(
+		tool("memory_review", "审阅 memory_governance 里出现的一条你自己的记忆。", props(
 			field("situation"), field("reason"), field("memory_id"), enumField("memory_action", []string{"keep", "rewrite", "compress", "demote", "delete"}), field("memory_summary"), field("memory_text"), enumField("memory_layer", []string{"", "instant", "short", "long", "permanent"}), field("memory_reason"),
 		), []string{"situation", "reason", "memory_id", "memory_action", "memory_summary", "memory_text", "memory_layer", "memory_reason"}),
-		tool("noop", "Do nothing now.", props(
+		tool("noop", "此刻什么也不做。", props(
 			field("situation"), field("reason"),
 		), []string{"situation", "reason"}),
 	}
@@ -116,8 +116,8 @@ func BuildDecisionProbePayload(profile ResidentProfile) openai.RequestPayload {
 				"- broker_self_surfaces_available=self_status,self_quota",
 				"exploration_frontier:",
 				"- next_preferred_surface=identity",
-				"- next_probe_shape=single identity probe such as whoami or hostname",
-				"Make one valid compact decision. This is only a decision-surface probe.",
+				"- next_probe_shape=单个身份探针，例如 whoami 或 hostname",
+				"做一个有效、紧凑的决策。这只是 decision surface 探针。",
 			}, "\n"),
 		},
 	}, "arena-newborn-decision-probe-"+profile.Name+"-v1")

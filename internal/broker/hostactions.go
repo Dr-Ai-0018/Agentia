@@ -169,6 +169,35 @@ func (s *HostActionService) Reply(messageID, body string) (worldstate.Message, e
 	return msg, nil
 }
 
+func (s *HostActionService) Chat(resident, body string) (worldstate.Message, error) {
+	if strings.TrimSpace(resident) == "" {
+		return worldstate.Message{}, fmt.Errorf("resident is required")
+	}
+	if err := worldstate.ValidateReplyBody(body); err != nil {
+		return worldstate.Message{}, err
+	}
+	msg, err := s.world.AppendChenglinReplyToResident(resident, body, "", time.Now().UTC())
+	if err != nil {
+		return worldstate.Message{}, err
+	}
+	_ = s.audit.Write(audit.Event{
+		Actor:      "chenglin",
+		ResidentID: msg.Resident,
+		Kind:       "chat_message",
+		TargetID:   msg.ID,
+		Summary:    fmt.Sprintf("Sent chat message to %s", msg.Resident),
+	})
+	_ = s.history.Write(world.HistoryEntry{
+		ResidentID: msg.Resident,
+		Kind:       "chat_message",
+		Summary:    fmt.Sprintf("Chenglin messaged %s", msg.Resident),
+		Details: map[string]any{
+			"message_id": msg.ID,
+		},
+	})
+	return msg, nil
+}
+
 func (s *HostActionService) CreateHostIntervention(input HostInterventionInput) (worldstate.HostIntervention, error) {
 	item, err := s.world.CreateHostIntervention(input.Resident, input.Kind, input.Title, input.Body, input.Operator, time.Now().UTC())
 	if err != nil {
