@@ -1,4 +1,4 @@
-import { Activity, MessageSquare, MonitorCog, Radio, Server, Settings, Users } from "lucide-react";
+import { Activity, MessageSquare, Orbit, Radio, Server, Settings, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { dataMode } from "../../lib/api/client";
 
@@ -22,12 +22,16 @@ type ConsoleShellProps = {
 export function ConsoleShell({ activePage, onNavigate, children }: ConsoleShellProps) {
   return (
     <div className="console-shell">
-      <aside className="sidebar">
+      <div className="ambient ambient--blue" />
+      <div className="ambient ambient--green" />
+      <header className="topbar">
         <div className="brand">
-          <MonitorCog size={24} />
+          <div className="brand__mark">
+            <Orbit size={20} />
+          </div>
           <div>
-            <strong>AI Arena</strong>
-            <span>Operator Console</span>
+            <strong>AI ARENA</strong>
+            <span>Private Operator Console</span>
           </div>
         </div>
         <nav className="nav">
@@ -42,15 +46,17 @@ export function ConsoleShell({ activePage, onNavigate, children }: ConsoleShellP
               >
                 <Icon size={17} />
                 <span>{item.label}</span>
+                {item.id === "world-chat" && <em>3</em>}
               </button>
             );
           })}
         </nav>
-        <div className="sidebar__footer">
+        <div className="topbar__status">
           <span>Data mode</span>
           <strong>{dataMode}</strong>
+          <i />
         </div>
-      </aside>
+      </header>
       <main className="content">{children}</main>
     </div>
   );

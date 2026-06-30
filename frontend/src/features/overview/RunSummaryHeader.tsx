@@ -9,7 +9,7 @@ export function RunSummaryHeader({ run }: { run: ActiveRun }) {
         <p className="eyebrow">Private Operator Console</p>
         <h1>24h No-Admin Autonomy Soak</h1>
         <p className="hero-copy">
-          Live observation surface for the arena residents, quota recovery, world-safe inbox, and acceptance evidence.
+          Live surface for resident autonomy, quota recovery, world-safe inbox, and pre-release evidence.
         </p>
       </div>
       <div className="run-hero__metrics">
