@@ -29,6 +29,44 @@ location /arena/ {
 
 The web/API server should listen on `127.0.0.1`, not directly on a public interface.
 
+## Current skrime.killerbest.com Layout
+
+The current host uses nginx and Certbot:
+
+```txt
+https://skrime.killerbest.com/      -> http://127.0.0.1:8787
+https://skrime.killerbest.com/api/  -> http://127.0.0.1:8788
+```
+
+`127.0.0.1:8787` is currently the Vite dev server for the frontend. `127.0.0.1:8788` is `arena-console-server` managed by systemd:
+
+```bash
+systemctl status arena-console-server
+journalctl -u arena-console-server -f
+```
+
+The backend service is built from:
+
+```bash
+env GOCACHE=/root/ai-arena/.cache/go-build /usr/local/go/bin/go build \
+  -o /root/ai-arena/bin/arena-console-server ./cmd/arena-console-server
+```
+
+The service listens with:
+
+```txt
+ARENA_CONSOLE_ADDR=127.0.0.1:8788
+ARENA_ROOT=.agents
+```
+
+Smoke checks:
+
+```bash
+curl -sS https://skrime.killerbest.com/api/health
+curl -sS https://skrime.killerbest.com/api/runs?limit=1
+curl -sS https://skrime.killerbest.com/api/summary?limit=2
+```
+
 ## Security
 
 P0 deployment requirements:
