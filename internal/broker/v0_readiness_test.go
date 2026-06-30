@@ -38,7 +38,8 @@ func TestBuildV0ReadinessReportsWarningsForKnownGaps(t *testing.T) {
 	if !hasRecommendedStep(out, "cpu_maintenance_regression") ||
 		!hasRecommendedStep(out, "disk_maintenance_regression") ||
 		!hasRecommendedStep(out, "checkpoint_cleanup_apply_regression") ||
-		!hasRecommendedStep(out, "final_acceptance_manual_pass") {
+		!hasRecommendedStep(out, "final_acceptance_manual_pass") ||
+		!hasRecommendedStep(out, "ultra_long_soak_pre_release") {
 		t.Fatalf("expected split manual validation steps: %#v", out.Completion.RecommendedSteps)
 	}
 	cpuStep, ok := findRecommendedStep(out, "cpu_maintenance_regression")
@@ -82,11 +83,67 @@ func TestBuildV0ReadinessUsesManualValidationEvidence(t *testing.T) {
 		t.Fatalf("completed manual validations should not remain recommended steps: %#v", out.Completion.RecommendedSteps)
 	}
 	if !hasBlockingRecommendedStep(out, "final_acceptance_manual_pass") {
-		t.Fatalf("expected only final acceptance blocker to remain: %#v", out.Completion.RecommendedSteps)
+		t.Fatalf("expected final acceptance blocker to remain: %#v", out.Completion.RecommendedSteps)
+	}
+	if !hasBlockingRecommendedStep(out, "ultra_long_soak_pre_release") {
+		t.Fatalf("expected ultra-long soak blocker to remain: %#v", out.Completion.RecommendedSteps)
 	}
 	item := findReadinessItem(out, "known_manual_gaps")
-	if item.Status != v0ReadinessWarn || len(item.Evidence) != 1 || !strings.Contains(item.Evidence[0], "v0 should only be declared") {
-		t.Fatalf("expected known manual gaps to reflect only missing final acceptance: %#v", item)
+	if item.Status != v0ReadinessWarn || len(item.Evidence) != 2 {
+		t.Fatalf("expected known manual gaps to reflect final acceptance and ultra-long soak: %#v", item)
+	}
+	if !strings.Contains(strings.Join(item.Evidence, "\n"), "v0 should only be declared") ||
+		!strings.Contains(strings.Join(item.Evidence, "\n"), "administrator-layer intervention is forbidden") {
+		t.Fatalf("expected final acceptance and ultra-long soak evidence text: %#v", item)
+	}
+}
+
+func TestBuildV0ReadinessTreatsNonBlockingBacklogAsReleaseCandidate(t *testing.T) {
+	now := time.Date(2026, 6, 26, 10, 56, 25, 0, time.UTC)
+	out := BuildV0ReadinessWithEvidence(HostInspectSummary{
+		CollectedAt:               "2026-06-26T10:56:25Z",
+		ResidentCount:             3,
+		ResidentsRunning:          3,
+		PendingChatResidents:      3,
+		MemoryItemsAttention:      375,
+		MemoryResidentReviewQueue: 375,
+		Capacity: HostCapacityReport{Pools: []ResourcePoolSummary{
+			{Resource: "cpu", AllocatableTotal: 4, AllocatableFree: 1, Unit: "vcpu"},
+			{Resource: "memory", AllocatableTotal: 19991, AllocatableFree: 13589, Unit: "MiB"},
+			{Resource: "disk", AllocatableTotal: 107, AllocatableFree: 66, Unit: "GiB"},
+		}},
+		RecentMaintenanceRuns: []MaintenanceRunRecord{
+			{ID: "maintenance-amber-1", ResidentID: "amber", Resource: "memory", Amount: "noop", State: "completed", CreatedAt: "2026-06-26T09:00:00Z", InventoryRefreshed: true},
+		},
+		LatestOrchestrator: &OrchestratorInspectionDigest{
+			RunID: "orchestrator-20260621T153938.239228513Z",
+		},
+	}, now, "test", []V0AcceptanceEvidenceRecord{
+		passedAcceptanceEvidence("host_only_maintenance_smoke", "2026-06-20T12:40:00Z"),
+		passedAcceptanceEvidence("cpu_maintenance_regression", "2026-06-20T12:41:00Z"),
+		passedAcceptanceEvidence("disk_maintenance_regression", "2026-06-20T12:42:00Z"),
+		passedAcceptanceEvidence("checkpoint_cleanup_apply_regression", "2026-06-20T12:43:00Z"),
+		passedAcceptanceEvidence("final_acceptance_manual_pass", "2026-06-20T12:44:00Z"),
+		passedAcceptanceEvidence("ultra_long_soak_pre_release", "2026-06-20T12:45:00Z"),
+	})
+
+	if out.Status != "ready_with_warnings" {
+		t.Fatalf("expected non-blocking backlog to keep warning state, got %#v", out)
+	}
+	if out.Completion.WeightedPercent < 90 {
+		t.Fatalf("expected non-blocking backlog to remain above 90 weighted completion, got %#v", out.Completion)
+	}
+	if out.Completion.ReleaseGate != "release_candidate" {
+		t.Fatalf("expected release candidate gate once blockers and manual gaps are closed, got %#v", out.Completion)
+	}
+	if findReadinessItem(out, "world_followups").Status != v0ReadinessWarn {
+		t.Fatalf("expected world followups to remain a warning: %#v", out)
+	}
+	if findReadinessItem(out, "memory_governance").Status != v0ReadinessWarn {
+		t.Fatalf("expected resident-owned memory queue to remain a warning: %#v", out)
+	}
+	if stream, ok := findWorkstream(out, "s5_memory"); !ok || stream.Status != "resident_queue_pending" || stream.Percent < 90 {
+		t.Fatalf("expected resident-owned memory backlog to stay high-progress: %#v", out.Completion.Workstreams)
 	}
 }
 
@@ -211,6 +268,9 @@ func TestBuildV0ReadinessMarksLongSoakAsApprovalRequired(t *testing.T) {
 	if step.Title != "Estimate and issue test allowance before another orchestrator probe" {
 		t.Fatalf("expected budget-blocked soak step to point at budget estimate first, got %#v", step)
 	}
+	if !strings.Contains(step.Reason, "not valid evidence for the no-admin ultra-long pre-release test") {
+		t.Fatalf("expected allowance boundary in reason, got %#v", step)
+	}
 	if !strings.Contains(step.Command, "orchestrator-budget-estimate") || !strings.Contains(step.Command, "probe_allowance_by_resident") || !strings.Contains(step.Command, "--duration 45s") {
 		t.Fatalf("expected budget estimate plus short probe command, got %#v", step)
 	}
@@ -245,4 +305,13 @@ func findRecommendedStep(out V0ReadinessOutput, id string) (V0RecommendedStep, b
 		}
 	}
 	return V0RecommendedStep{}, false
+}
+
+func findWorkstream(out V0ReadinessOutput, id string) (V0WorkstreamProgress, bool) {
+	for _, stream := range out.Completion.Workstreams {
+		if stream.ID == id {
+			return stream, true
+		}
+	}
+	return V0WorkstreamProgress{}, false
 }

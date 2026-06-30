@@ -24,7 +24,7 @@ func (b *BudgetController) ResetResident(residentID string, now time.Time) error
 }
 
 func (b *BudgetController) Preflight(profile ResidentProfile, state loopState, startedAt time.Time) (*brokerstate.PreparedAdmission, error) {
-	if _, err := b.brokerApp.RunRecoverToNow(profile.Name, startedAt); err != nil {
+	if _, err := b.brokerApp.RunRecoverToNowWithMode(profile.Name, startedAt, recoveryModeForPreflight(state)); err != nil {
 		return nil, err
 	}
 	spec := preflightSpec(profile, state, startedAt)
@@ -33,6 +33,13 @@ func (b *BudgetController) Preflight(profile ResidentProfile, state loopState, s
 		return nil, err
 	}
 	return &prepared, nil
+}
+
+func recoveryModeForPreflight(state loopState) string {
+	if state.LastDecision != nil && state.LastDecision.NextAction == "sleep" {
+		return "rest"
+	}
+	return "idle"
 }
 
 func (b *BudgetController) Settle(profile ResidentProfile, result openai.StreamResult, startedAt time.Time, kind runtimeguard.CallKind, activity tokenledger.ActivityType) (*BrokerUsageLog, error) {

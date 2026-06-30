@@ -72,11 +72,13 @@ func TestRenderQuotaObservationIsCompact(t *testing.T) {
 	}
 	for _, want := range []string{
 		"self quota 快照:",
+		"quota_model=natural_recovery_budget",
 		"resident_id=jade",
 		"spark_balance=2.6250",
 		"effective_window_6h_remaining=497",
 		"work_allowed_now=true",
 		"next_recovery_at=2026-06-07T09:15:00Z",
+		"sleep_hint=如果 6h 额度紧张",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in %q", want, got)
@@ -133,6 +135,31 @@ func TestBuildProfile(t *testing.T) {
 	}
 }
 
+func TestPromptAndWorldContextTreatChatAsAsyncPeerRelationship(t *testing.T) {
+	instructions := makeInstructions()
+	for _, want := range []string{
+		"不是 owner/assistant、主人/副手或雇佣关系",
+		"pending 只表示程林尚未回复",
+		"没有新的程林回复或没有新的用户请求，不是选择 noop 的充分理由",
+	} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("expected instruction %q in %q", want, instructions)
+		}
+	}
+
+	world := NewWorldBridge(t.TempDir())
+	view := world.BuildResidentWorldView(ResidentProfile{Name: "jade"}, 10)
+	for _, want := range []string{
+		"chat_mode: 自由、异步",
+		"pending 只是异步消息状态，不是暂停、等待命令或停止探索的理由",
+		"你和程林不是主人/副手或雇佣关系",
+	} {
+		if !strings.Contains(view.RenderedChat, want) {
+			t.Fatalf("expected world context %q in %q", want, view.RenderedChat)
+		}
+	}
+}
+
 func TestPreflightSpecBootstrap(t *testing.T) {
 	spec := preflightSpec(ResidentProfile{Name: "amber", Model: "gpt-5.5"}, loopState{}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC))
 	if spec.Usage.InputTokens != 1100 {
@@ -176,6 +203,18 @@ func TestPreflightSpecUsesLastActionActivityShape(t *testing.T) {
 	}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC))
 	if spec.Activity != tokenledger.ActivityLightWork {
 		t.Fatalf("expected light work preflight for narrow probe, got %s", spec.Activity)
+	}
+}
+
+func TestRecoveryModeForPreflightUsesRestAfterSleep(t *testing.T) {
+	if got := recoveryModeForPreflight(loopState{}); got != "idle" {
+		t.Fatalf("expected idle without previous sleep, got %q", got)
+	}
+	if got := recoveryModeForPreflight(loopState{LastDecision: &AgentDecision{NextAction: "self_quota"}}); got != "idle" {
+		t.Fatalf("expected idle after non-sleep action, got %q", got)
+	}
+	if got := recoveryModeForPreflight(loopState{LastDecision: &AgentDecision{NextAction: "sleep", SleepMinutes: 12}}); got != "rest" {
+		t.Fatalf("expected rest after sleep, got %q", got)
 	}
 }
 
@@ -371,6 +410,32 @@ func TestParseDecisionResultSupportsSelfQuota(t *testing.T) {
 	}
 	if decision.Command != "" {
 		t.Fatalf("expected self_quota command to be cleared, got %q", decision.Command)
+	}
+}
+
+func TestParseDecisionResultSupportsSleep(t *testing.T) {
+	result := openai.StreamResult{
+		FunctionCalls: []openai.ResponseItem{
+			{
+				Type:      "function_call",
+				CallName:  "sleep",
+				Arguments: `{"situation":"My 6h budget is tight and a background command can continue without another model call.","reason":"Rest for a short interval instead of burning quota.","sleep_minutes":12,"command":"echo no"}`,
+			},
+		},
+	}
+
+	decision, err := parseDecisionResult(result)
+	if err != nil {
+		t.Fatalf("parse sleep decision result: %v", err)
+	}
+	if decision.NextAction != "sleep" {
+		t.Fatalf("unexpected next action: %s", decision.NextAction)
+	}
+	if decision.SleepMinutes != 12 {
+		t.Fatalf("expected sleep minutes to survive normalization, got %d", decision.SleepMinutes)
+	}
+	if decision.Command != "" {
+		t.Fatalf("expected sleep command to be cleared, got %q", decision.Command)
 	}
 }
 
@@ -770,6 +835,7 @@ func TestBuildDecisionToolPayloadUsesStableInstructions(t *testing.T) {
 	assertToolHasProperty(t, tools["note_replace_with_backup"], "note_text")
 	assertToolHasProperty(t, tools["note_summarize_or_compact"], "note_text")
 	assertToolHasProperty(t, tools["note_restore_backup"], "backup_file")
+	assertToolHasProperty(t, tools["sleep"], "sleep_minutes")
 }
 
 func assertToolHasProperty(t *testing.T, tool openai.ResponseTool, name string) {
@@ -1041,6 +1107,78 @@ func TestRunnerStopsAfterResidentNoop(t *testing.T) {
 	}
 	if report.AcceptanceBroker.AfterStatus.FinalNoticeUsed {
 		t.Fatalf("normal acceptance must not consume final notice state")
+	}
+}
+
+func TestRunnerSleepDoesNotRequestModelDuringSleep(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		header := http.Header{}
+		header.Set("Content-Type", "text/event-stream")
+		header.Set("x-request-id", fmt.Sprintf("req-%d", requests))
+		var body string
+		switch requests {
+		case 1:
+			body = renderSSECompleted(t, map[string]any{
+				"id": "resp-decision",
+				"usage": map[string]any{
+					"input_tokens":  100,
+					"output_tokens": 40,
+				},
+				"output": []map[string]any{
+					{
+						"type":      "function_call",
+						"name":      "sleep",
+						"arguments": `{"situation":"Quota is tight and sleeping is better than another probe.","reason":"Rest briefly without asking Chenglin or burning another model turn.","sleep_minutes":1}`,
+					},
+				},
+			})
+		case 2:
+			body = renderSSECompleted(t, map[string]any{
+				"id":          "resp-acceptance",
+				"output_text": "I chose to sleep briefly to conserve budget.",
+				"usage": map[string]any{
+					"input_tokens":  80,
+					"output_tokens": 20,
+				},
+			})
+		default:
+			t.Fatalf("unexpected model request during resident sleep: %d", requests)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})}
+
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = fakeActionExecutor{result: ActionResult{Observation: "sleep scheduled", Activity: tokenledger.ActivityStatusCheck}}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 27*time.Second, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if report.Rounds != 1 || len(report.RoundLogs) != 1 {
+		t.Fatalf("expected one sleep round, got %#v", report)
+	}
+	if report.RoundLogs[0].Decision.NextAction != "sleep" {
+		t.Fatalf("expected sleep action, got %#v", report.RoundLogs[0].Decision)
+	}
+	if report.RoundLogs[0].Decision.SleepMinutes != 1 {
+		t.Fatalf("expected sleep_minutes to be preserved, got %#v", report.RoundLogs[0].Decision)
+	}
+	if !strings.Contains(report.RoundLogs[0].Observation, "sleep scheduled") {
+		t.Fatalf("expected sleep observation in round log, got %q", report.RoundLogs[0].Observation)
+	}
+	if requests != 2 {
+		t.Fatalf("expected decision plus acceptance requests only, got %d", requests)
 	}
 }
 

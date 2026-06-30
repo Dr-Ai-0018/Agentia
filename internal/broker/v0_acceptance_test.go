@@ -22,7 +22,7 @@ func TestBuildV0AcceptanceBlocksOnManualValidation(t *testing.T) {
 	if out.Gate != "blocked_by_manual_validation" {
 		t.Fatalf("expected manual validation blocker, got %#v", out)
 	}
-	if out.Summary.ManualBlocking != 4 || out.Summary.ApprovalRequired != 5 {
+	if out.Summary.ManualBlocking != 5 || out.Summary.ApprovalRequired != 6 {
 		t.Fatalf("expected manual blocking approval summary: %#v", out.Summary)
 	}
 	if !hasAcceptanceCheck(out, "host_only_maintenance_smoke", v0AcceptanceWarn) {
@@ -34,7 +34,8 @@ func TestBuildV0AcceptanceBlocksOnManualValidation(t *testing.T) {
 	if !hasAcceptanceCheck(out, "cpu_maintenance_regression", v0AcceptancePending) ||
 		!hasAcceptanceCheck(out, "disk_maintenance_regression", v0AcceptancePending) ||
 		!hasAcceptanceCheck(out, "checkpoint_cleanup_apply_regression", v0AcceptancePending) ||
-		!hasAcceptanceCheck(out, "final_acceptance_manual_pass", v0AcceptancePending) {
+		!hasAcceptanceCheck(out, "final_acceptance_manual_pass", v0AcceptancePending) ||
+		!hasAcceptanceCheck(out, "ultra_long_soak_pre_release", v0AcceptancePending) {
 		t.Fatalf("expected split manual validation pending checks: %#v", out.Checks)
 	}
 	check, ok := findAcceptanceCheck(out, "cpu_maintenance_regression")
@@ -107,6 +108,40 @@ func TestBuildV0AcceptancePassesManualChecksWithEvidence(t *testing.T) {
 	}, now, "test")
 
 	evidence := []V0AcceptanceEvidenceRecord{
+		passedAcceptanceEvidence("host_only_maintenance_smoke", "2026-06-18T08:00:00Z"),
+		passedAcceptanceEvidence("cpu_maintenance_regression", "2026-06-18T08:01:00Z"),
+		passedAcceptanceEvidence("disk_maintenance_regression", "2026-06-18T08:02:00Z"),
+		passedAcceptanceEvidence("checkpoint_cleanup_apply_regression", "2026-06-18T08:03:00Z"),
+		passedAcceptanceEvidence("final_acceptance_manual_pass", "2026-06-18T08:04:00Z"),
+		passedAcceptanceEvidence("ultra_long_soak_pre_release", "2026-06-18T08:05:00Z"),
+	}
+	out := BuildV0Acceptance(readiness, BuildV0Runbook(now), evidence, now, "test")
+
+	if out.Gate != "ready_with_warnings" {
+		t.Fatalf("expected manual evidence to clear blocker while automatic warnings remain, got %#v", out)
+	}
+	if out.Summary.ManualBlocking != 0 || out.Summary.ManualPending != 0 || out.Summary.EvidenceRecords != 6 {
+		t.Fatalf("expected evidence to clear manual blockers: %#v", out.Summary)
+	}
+	if !hasAcceptanceCheck(out, "cpu_maintenance_regression", v0AcceptancePass) ||
+		!hasAcceptanceCheck(out, "final_acceptance_manual_pass", v0AcceptancePass) ||
+		!hasAcceptanceCheck(out, "ultra_long_soak_pre_release", v0AcceptancePass) {
+		t.Fatalf("expected manual checks to pass with evidence: %#v", out.Checks)
+	}
+}
+
+func TestBuildV0AcceptanceBlocksUntilUltraLongSoakEvidence(t *testing.T) {
+	now := time.Date(2026, 6, 30, 4, 10, 0, 0, time.UTC)
+	readiness := BuildV0Readiness(HostInspectSummary{
+		ResidentCount:    3,
+		ResidentsRunning: 3,
+		Capacity:         HostCapacityReport{Pools: []ResourcePoolSummary{{Resource: "cpu", AllocatableTotal: 8, AllocatableFree: 4, Unit: "vcpu"}}},
+		LatestOrchestrator: &OrchestratorInspectionDigest{
+			RunID: "orchestrator-ok",
+		},
+	}, now, "test")
+
+	evidence := []V0AcceptanceEvidenceRecord{
 		passedAcceptanceEvidence("cpu_maintenance_regression", "2026-06-18T08:01:00Z"),
 		passedAcceptanceEvidence("disk_maintenance_regression", "2026-06-18T08:02:00Z"),
 		passedAcceptanceEvidence("checkpoint_cleanup_apply_regression", "2026-06-18T08:03:00Z"),
@@ -114,15 +149,15 @@ func TestBuildV0AcceptancePassesManualChecksWithEvidence(t *testing.T) {
 	}
 	out := BuildV0Acceptance(readiness, BuildV0Runbook(now), evidence, now, "test")
 
-	if out.Gate != "ready_with_warnings" {
-		t.Fatalf("expected manual evidence to clear blocker while automatic warnings remain, got %#v", out)
+	if out.Gate != "blocked_by_manual_validation" {
+		t.Fatalf("expected ultra-long soak to block formal release, got %#v", out)
 	}
-	if out.Summary.ManualBlocking != 0 || out.Summary.ManualPending != 0 || out.Summary.EvidenceRecords != 4 {
-		t.Fatalf("expected evidence to clear manual blockers: %#v", out.Summary)
+	if out.Summary.ManualBlocking != 1 || out.Summary.ManualPending != 1 {
+		t.Fatalf("expected only ultra-long soak manual blocker: %#v", out.Summary)
 	}
-	if !hasAcceptanceCheck(out, "cpu_maintenance_regression", v0AcceptancePass) ||
-		!hasAcceptanceCheck(out, "final_acceptance_manual_pass", v0AcceptancePass) {
-		t.Fatalf("expected manual checks to pass with evidence: %#v", out.Checks)
+	check, ok := findAcceptanceCheck(out, "ultra_long_soak_pre_release")
+	if !ok || check.Status != v0AcceptancePending || !check.BlocksRelease {
+		t.Fatalf("expected pending release-blocking ultra-long soak check: %#v", out.Checks)
 	}
 }
 

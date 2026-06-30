@@ -3,6 +3,7 @@ package newborn
 import (
 	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/memory"
+	"strconv"
 	"strings"
 )
 
@@ -54,6 +55,7 @@ type AgentDecision struct {
 	MemoryText     string `json:"memory_text,omitempty"`
 	MemoryLayer    string `json:"memory_layer,omitempty"`
 	MemoryReason   string `json:"memory_reason,omitempty"`
+	SleepMinutes   int    `json:"sleep_minutes,omitempty"`
 	Reason         string `json:"reason"`
 }
 
@@ -101,6 +103,10 @@ func (d AgentDecision) CompactForHistory() string {
 		}
 		if v := truncateForModel(strings.TrimSpace(d.MemoryAction), 40); v != "" {
 			parts = append(parts, "memory_action="+v)
+		}
+	case "sleep":
+		if d.SleepMinutes > 0 {
+			parts = append(parts, "sleep_minutes="+strconv.Itoa(d.SleepMinutes))
 		}
 	}
 	return strings.Join(parts, "\n")

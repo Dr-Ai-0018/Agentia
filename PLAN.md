@@ -1,5 +1,40 @@
 # AI Arena Plan
 
+## Status Of This File
+
+本文件当前仍是过渡期总控板，不是最终形态的单一 authoritative 文档。
+
+它现在暂时混合承载：
+
+- 项目目标与方向
+- 当前 runtime 状态
+- 近期 development log
+- 阶段计划
+- gate / checklist / next work
+
+整理期间统一按下面口径使用本文件：
+
+- 可以继续保留并更新
+- 但新增内容应优先写入 `docs/` 对应位置，再视情况回写摘要
+- 不再把本文件扩写成新的总知识库
+
+相关整理基线见：
+
+- `docs/development/08_PRE_REORGANIZATION_MAP.md`
+- `docs/README.md`
+- `docs/development/00_CURRENT_WORKSTREAM_INDEX.md`
+
+## Planned Migration Of This File
+
+后续应逐步把本文件中的内容迁往：
+
+- 稳定结构与边界 -> `docs/architecture/`
+- 运行与维护流程 -> `docs/operations/`
+- 当前阶段计划、gate、checklist -> `docs/development/`
+- 详细阶段日志与历史记录 -> `docs/development/journal/` 或等价位置
+
+在迁移完成前，本文件继续保留“总控板”职责，但不应再成为唯一入口。
+
 ## Objective
 
 Build a local long-running multi-resident environment where each AI lives inside its own isolated VM, manages its own limited resources, forms its own memory and strategy, and interacts with the host through bounded channels without ever receiving host-level control.
@@ -74,7 +109,7 @@ Why:
 
 ## Current Runtime Status
 
-As of 2026-06-21:
+As of 2026-06-30:
 
 - Three resident VMs are the active target: `jade`, `amber`, and `onyx`.
 - Resident isolation remains KVM-backed VM first. LXC is not the resident isolation target.
@@ -85,6 +120,76 @@ As of 2026-06-21:
 - Provider routing supports per-resident main channels before global fallback channels.
 - Streaming is required for live provider checks and runtime calls.
 - Budget reporting can show run spend, resident balances, and cache hit ratios.
+- Latest clean three-resident parallel soak: `orchestrator-20260630T031333.963607630Z`.
+- That run finished all three residents on `duration_elapsed`: `jade=54`, `amber=58`, `onyx=64`.
+- Run cache health was `good`, with total cache hit ratio `0.882`.
+- The pending-chat runtime semantic bug is fixed: async chat and no immediate Chenglin reply are not valid `noop` reasons.
+- Memory duplicate history groups are cleared: `duplicate_history_groups=0`.
+- Current formal release state is pre-release validation required, not released.
+- Formal v0 publication is blocked until `ultra_long_soak_pre_release` evidence is recorded.
+
+## V0 Pre-Release Release Notes Draft
+
+Do not publish v0 from this state.
+
+Current pre-release evidence:
+
+- Runtime/world semantics:
+  - Chenglin and residents are modeled as peers in the same world, not owner/assistant, master/subordinate, or employer/employee.
+  - World chat is async; pending messages do not block resident activity.
+  - `noop` is limited to resident-owned rest, recovery, resource conservation, or harm avoidance.
+- Orchestrator soak:
+  - `orchestrator-20260630T031333.963607630Z`
+  - `parallel`, residents `jade,amber,onyx`, requested `10m`, actual `10m43.90098092s`
+  - `residents_finished=3`, `residents_errored=0`, `transient_blocked=0`, `budget_blocked_runs=0`
+  - rounds: `jade=54`, `amber=58`, `onyx=64`
+  - all stopped on `duration_elapsed`
+- Budget/cache:
+  - charged calls `179`
+  - total tokens `4,562,779`
+  - cache hit ratio `0.882`
+  - cache health `good`
+  - spent spark `304.5901`
+  - internal USD `3.0459`
+- Memory governance:
+  - duplicate history groups reduced from `5` to `0`
+  - remaining memory warning is resident-owned self-review queue: `resident_review_queue=375`, `host_actionable=0`
+  - host must not rewrite/delete protected resident memories to clear this queue
+- Acceptance:
+  - automatic failures: `0`
+  - existing manual CPU/disk/checkpoint/final evidence remains recorded
+  - new required blocker before publication: `ultra_long_soak_pre_release`
+
+Required before formal v0 release:
+
+1. Re-evaluate resident quota budgets for `6h`, `1day`, and `1week`.
+   - The previous caps are too small for real long-history testing.
+   - Even expanded caps can be exhausted inside a 10-minute active run.
+   - The target semantics are not unlimited admin grants; residents must live with visible budgets.
+2. Implement or validate resident-visible sleep/rest budgeting.
+   - Residents can already use `self_quota` to see current quota state.
+   - Residents must be able to choose short sleep/rest intervals themselves.
+   - During sleep/rest, the orchestrator must not keep calling the model for that resident.
+3. Decide the quota window model before the ultra-long test.
+   - Current implementation is elapsed-time recovery against accumulated `6h/day/week` usage.
+   - This is not an instant administrator reset and should not become one.
+   - Desired test semantics: `6h` budget is finite and resident-visible; when tight or exhausted, resident can sleep/rest and wait for the natural recovery/window rhythm instead of receiving host rescue.
+   - Do not treat one-off allowance cards or usage resets as valid ultra-long history-test behavior.
+4. Prepare the world-facing Chenglin message only.
+   - Operator-only discipline: administrator-layer intervention is forbidden during the ultra-long history test.
+   - Chenglin may only talk through world chat as Chenglin.
+   - Chenglin may tell residents they can do work they like or are good at.
+   - Chenglin may explain that valuable/meaningful work can receive daily spark settlement.
+   - Chenglin may explain that spark can later buy or request resources.
+   - Chenglin must not expose host-only inspection, budget audit, internal test orchestration facts, administrator existence/capabilities, or no-admin test discipline.
+5. Run the no-admin ultra-long resident autonomy history test.
+   - Use `jade`, `amber`, and `onyx`.
+   - Do not perform memory maintenance, quota rescue, host intervention, VM maintenance, or manual recovery during the test window.
+   - Only resident-initiated actions and world-chat-visible Chenglin messages count.
+6. Confirm no release-blocking runtime, budget, memory, or world-boundary regressions.
+7. Record `v0-acceptance-evidence --check-id ultra_long_soak_pre_release --status passed ... --apply`.
+8. Re-run `go test ./...`, `v0-readiness --limit 8`, and `v0-acceptance --limit 8`.
+9. Only then prepare release tag / final release note.
 
 ## Development Log
 
@@ -339,94 +444,26 @@ Validation:
   - `onyx`: cache ratio `0.7471`, cache health `watch`, `previous_request_prefix_preserved=true` on all 8 turns.
 - Onyx's ratio was pulled below `good` mainly by a cold first turn with `cached_tokens=0`; later turns were stable around `0.78` to `0.86`.
 
-## Desired System Properties
+## Stable Rules And Phase Ownership
 
-The system should support:
+以下内容不再以本文件作为主要 authority，而改由 `docs/` 主树承接：
 
-- repeatable provisioning
-- per-resident isolation
-- resource quotas
-- snapshots
-- reset or rollback
-- long-running state and memory
-- bounded host interaction
-- a way to inspect logs, outputs, and state over time
-- pause and resume without losing resident continuity
+- 系统稳定边界、host 角色、最小干预口径：
+  - `docs/architecture/WORLD_CONSTITUTION.md`
+- runtime / orchestrator 稳定结构：
+  - `docs/architecture/ORCHESTRATOR_RUNTIME_SPEC.md`
+  - `docs/operations/ORCHESTRATOR_OPERATIONS_RUNBOOK.md`
+- 当前 v0 开发主线与阶段拆分：
+  - `docs/development/02_V0_DEVELOPMENT_PLAN.md`
+- 当前 gate、checklist、next work：
+  - `docs/development/03_PHASE_CHECKLIST.md`
 
-## Host Role
+本文件从现在起只保留一层摘要：
 
-The host is not just a scorekeeper. The host should be able to:
-
-- observe resident state
-- reply through chat and tickets
-- approve or deny requests
-- restore or revive residents after failure
-- intervene only when necessary
-- preserve boundaries without micromanaging day-to-day development
-
-The host should not need to constantly direct resident development.
-
-## Intervention Boundary
-
-Default intervention should stay narrow.
-
-Current intended human intervention triggers are:
-
-- resident is effectively stuck
-- resident attempts clear boundary violation
-- resident becomes broadly inactive or non-advancing for too long
-
-Outside those cases, the host should mainly observe and respond through the existing world channels.
-
-## Implementation Phases
-
-### Phase 1: Foundation
-
-- install and validate `Incus`
-- confirm KVM-backed VM creation works
-- choose storage pool and VM image
-- define naming convention for resident VMs
-
-Status: completed for the current three-resident testbed.
-
-### Phase 2: Golden Template
-
-- create one base VM image
-- install required packages
-- create baseline user and control path
-- add common bootstrap logic
-- snapshot the clean template
-
-Status: completed enough for live newborn runtime testing.
-
-### Phase 3: Initial Residents
-
-- clone 3 to 4 resident VMs from the template
-- assign initial limits
-- verify network isolation and connectivity rules
-- verify each VM can persist its own state independently
-
-Status: active for `jade`, `amber`, and `onyx`.
-
-### Phase 4: Control Layer
-
-- define self-only control surface
-- define chat and ticket interaction paths
-- define audit and public history recording
-- script common host-side operations
-- record checkpoints and recovery paths
-
-Status: active; note tools, chat, tickets, self-status, self-quota, provider failover, and budget reporting are in place.
-
-### Phase 5: Long-Run Runtime
-
-- launch all residents
-- let them persist and explore over time
-- collect logs, outputs, reflections, and requests
-- allow host review and selective intervention
-- support pause, resume, restore, and continuity
-
-Status: not yet ready for long soak. Cache semantics are corrected, but cache health remains `watch`; use cache probes before longer live runs.
+- 系统应支持可重复 provisioning、per-resident isolation、resource quotas、snapshots、rollback、long-running state and memory、bounded host interaction、pause/resume continuity
+- host 应保留宿主主权，但默认只做观察、回复、审批、恢复和必要干预
+- 高层阶段仍按 Foundation -> Golden Template -> Initial Residents -> Control Layer -> Long-Run Runtime 理解
+- 更细的阶段状态、完成度、下一步执行口径，统一以 `docs/development/` 为准
 
 ## Open Design Questions
 
@@ -437,38 +474,20 @@ Status: not yet ready for long soak. Cache semantics are corrected, but cache he
 - Which host responses should remain manual, and which can become automated?
 - Which memory and reflection flows are mandatory in v0, and which are enhancements?
 
-## Next Recommended Work
+## Current Execution Pointer
 
-When resuming this project in a later conversation, the next practical step should be:
+后续继续开发时，不要再从本文件直接维护 checklist 和 next work。
 
-1. Run another 8-turn cache probe after any prompt, packet, or history change.
-2. Treat `previous_request_prefix_preserved=false` as a local bug and stop before any soak.
-3. Treat stable prefix plus occasional `cached_tokens=0` as upstream cache variability, not a reason to rewrite history.
-4. Keep resident-facing outside-world material as raw files only; do not attach tasks, hints, disclaimers, or steering text.
-5. Do not start a long multi-resident run unless budget status, streaming provider checks, and cache probe are all acceptable.
-6. After each live run, record spend, cache ratio, resident actions, and any semantic boundary failures in this plan.
+统一入口改为：
 
-## Checklist
+1. `docs/README.md`
+2. `docs/development/00_CURRENT_WORKSTREAM_INDEX.md`
+3. `docs/development/08_PRE_REORGANIZATION_MAP.md`
+4. `docs/development/03_PHASE_CHECKLIST.md`
 
-- [x] KVM-backed VM direction chosen over resident-facing LXC.
-- [x] Three resident identities active: `jade`, `amber`, `onyx`.
-- [x] Per-resident provider main channel plus global fallback channel implemented.
-- [x] Streaming provider checks used for the configured channels.
-- [x] Split action tools implemented for runtime decisions.
-- [x] Continuity notes moved to dedicated note APIs.
-- [x] Guest shell denied for `/root/arena-notes` continuity read/write/edit operations.
-- [x] Semantic failure feedback added for continuity-surface mistakes.
-- [x] Budget status and orchestrator budget reporting implemented.
-- [x] Prompt-cache runtime history rebuilt to match `openai-cache` append-only replay.
-- [x] Cache probe diagnostics added for prefix preservation and instruction hash stability.
-- [x] Full Go test suite passing after cache repair.
-- [x] Host-side per-resident live progress telemetry added without resident-facing steering.
-- [x] Re-run cache probe after host-side telemetry change.
-- [x] Resident-facing default context converted to Chinese-first natural language without a hard language mandate.
-- [x] Re-run cache probe after Chinese prompt/context mutation.
-- [ ] Improve cache hit ratio from `watch` to consistently acceptable before long soak.
-- [ ] Re-run cache probe after any resident prompt/context mutation.
-- [ ] Keep long-run launch gated on budget, provider, and cache checks.
+当前 runtime 恢复口径、cache probe gate、长跑启动条件、近期 next work，现已收口到：
+
+- `docs/development/03_PHASE_CHECKLIST.md`
 
 ## Notes
 

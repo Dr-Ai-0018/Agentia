@@ -63,6 +63,7 @@ var validV0AcceptanceEvidenceChecks = map[string]struct{}{
 	"disk_maintenance_regression":         {},
 	"checkpoint_cleanup_apply_regression": {},
 	"final_acceptance_manual_pass":        {},
+	"ultra_long_soak_pre_release":         {},
 	"longer_orchestrator_soak":            {},
 }
 

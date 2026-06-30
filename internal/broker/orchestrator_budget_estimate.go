@@ -192,6 +192,7 @@ func EstimateOrchestratorBudget(root string, limit, probeSeconds, soakSeconds in
 		Notes: []string{
 			"estimate is based on applied historical work-call spark deltas from orchestrator summary.json files",
 			"probe allowance is intentionally small; soak allowance is separate and should be issued only after stop-before-debt probe verification",
+			"test allowance cards are for controlled probe/ordinary soak recovery only; they must not be used as evidence for ultra_long_soak_pre_release",
 		},
 	}
 

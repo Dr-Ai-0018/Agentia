@@ -338,6 +338,27 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			stoppedReason = "structured_decision_parse_failed"
 			break
 		}
+		if decision.NextAction == "sleep" {
+			sleepDuration := time.Duration(clampSleepMinutes(decision.SleepMinutes)) * time.Minute
+			remainingBeforeDeadline := time.Until(deadline) - 25*time.Second
+			if remainingBeforeDeadline <= 0 {
+				stoppedReason = "duration_elapsed"
+				break
+			}
+			sleepDuration = minDuration(sleepDuration, remainingBeforeDeadline)
+			r.emitProgress(ProgressEvent{
+				Phase:             "resident_sleep",
+				Round:             round,
+				RemainingSec:      remaining,
+				Action:            decision.NextAction,
+				ResponseID:        result.ResponseID,
+				TotalInputTokens:  totalInputTokens,
+				TotalCachedTokens: totalCachedTokens,
+				TotalOutputTokens: totalOutputTokens,
+			})
+			time.Sleep(sleepDuration)
+			continue
+		}
 		if decision.NextAction == "noop" {
 			if r.options.ContinueOnNoop {
 				r.emitProgress(ProgressEvent{

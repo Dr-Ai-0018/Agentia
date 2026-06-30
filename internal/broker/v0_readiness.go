@@ -253,6 +253,14 @@ func v0ManualValidationGaps() []v0ManualValidationGap {
 			RequiresApproval: true,
 			BlocksRelease:    true,
 		},
+		{
+			ID:               "ultra_long_soak_pre_release",
+			Title:            "Run no-admin ultra-long resident autonomy history test before release",
+			Reason:           "The operator requires an ultra-long history test before formal v0 release: residents must run autonomously, administrator-layer intervention is forbidden, Chenglin may only speak through world chat, and residents must be told they may pursue work they like or are good at, earn daily spark for valuable work, inspect their own quota, and choose sleep/rest when their 6h budget is tight.",
+			Command:          "arena-orchestrator --mode run --run-mode parallel --residents jade,amber,onyx --duration <approved ultra-long duration>",
+			RequiresApproval: true,
+			BlocksRelease:    true,
+		},
 	}
 }
 
@@ -325,12 +333,15 @@ func buildV0Completion(items []V0ReadinessItem, evidenceByCheck map[string]*V0Ac
 	for _, item := range items {
 		if item.ID == "known_manual_gaps" {
 			summary.ManualValidationGaps = append(summary.ManualValidationGaps, item.Evidence...)
+			if item.Status == v0ReadinessWarn && summary.ReleaseGate != "blocked_by_required_failures" {
+				summary.ReleaseGate = "pre_release_validation_required"
+			}
 		}
 		if item.Status == v0ReadinessFail {
 			summary.ReleaseGate = "blocked_by_required_failures"
 		}
 	}
-	if summary.ReleaseGate != "blocked_by_required_failures" && weighted >= 90 {
+	if summary.ReleaseGate != "blocked_by_required_failures" && summary.ReleaseGate != "pre_release_validation_required" && weighted >= 90 {
 		summary.ReleaseGate = "release_candidate"
 	}
 	if summary.ReleaseGate != "blocked_by_required_failures" && weighted < 80 {
@@ -396,7 +407,7 @@ func buildV0RecommendedSteps(items map[string]V0ReadinessItem, evidenceByCheck m
 		}
 		if itemEvidenceContains(items["orchestrator_registry"], "latest budget_blocked=") && !itemEvidenceContains(items["orchestrator_registry"], "latest budget_blocked=0") {
 			step.Title = "Estimate and issue test allowance before another orchestrator probe"
-			step.Reason = "The latest orchestrator run was budget-blocked. During controlled testing, estimate per-resident spark from historical runs, issue the probe allowance per resident, then run a short probe before any full 10m soak."
+			step.Reason = "The latest orchestrator run was budget-blocked. During controlled testing, estimate per-resident spark from historical runs, issue the probe allowance per resident, then run a short probe before any ordinary 10m soak. This is not valid evidence for the no-admin ultra-long pre-release test."
 			step.Command = "arena-broker --mode orchestrator-budget-estimate --limit 8; issue the listed probe_allowance_by_resident commands; confirm work_allowed_now, then arena-orchestrator --mode run --run-mode parallel --residents jade --duration 45s"
 		}
 		steps = append(steps, step)
@@ -455,7 +466,7 @@ func v0FoundationProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress
 		ID:       "s0_s2_foundation",
 		Title:    "Broker state, host control, inventory, resource maintenance foundation",
 		Weight:   30,
-		Percent:  82,
+		Percent:  90,
 		Status:   "mostly_complete",
 		Evidence: evidenceFor(items, "inventory_facts", "capacity_headroom", "maintenance_state"),
 	}
@@ -465,7 +476,7 @@ func v0FoundationProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress
 		return progress
 	}
 	if hasWarning(items, "inventory_facts", "capacity_headroom", "maintenance_state") {
-		progress.Percent = 78
+		progress.Percent = 84
 		progress.Status = "needs_validation"
 	}
 	return progress
@@ -476,7 +487,7 @@ func v0OrchestratorProgress(items map[string]V0ReadinessItem) V0WorkstreamProgre
 		ID:       "s3_orchestrator",
 		Title:    "Multi-resident runtime, pause/resume, run registry and reports",
 		Weight:   20,
-		Percent:  88,
+		Percent:  90,
 		Status:   "mostly_complete",
 		Evidence: evidenceFor(items, "orchestrator_registry"),
 	}
@@ -486,7 +497,7 @@ func v0OrchestratorProgress(items map[string]V0ReadinessItem) V0WorkstreamProgre
 		return progress
 	}
 	if hasWarning(items, "orchestrator_registry") {
-		progress.Percent = 82
+		progress.Percent = 84
 		progress.Status = "needs_soak"
 	}
 	return progress
@@ -497,7 +508,7 @@ func v0HostDecisionProgress(items map[string]V0ReadinessItem) V0WorkstreamProgre
 		ID:       "s4_host_decision",
 		Title:    "Host inspect, decision assist, maintenance draft and world/operator boundary",
 		Weight:   18,
-		Percent:  76,
+		Percent:  92,
 		Status:   "usable_manual_assist",
 		Evidence: evidenceFor(items, "world_followups", "decision_boundaries", "maintenance_draft_safety"),
 	}
@@ -507,7 +518,7 @@ func v0HostDecisionProgress(items map[string]V0ReadinessItem) V0WorkstreamProgre
 		return progress
 	}
 	if hasWarning(items, "world_followups") {
-		progress.Percent = 74
+		progress.Percent = 88
 		progress.Status = "followups_pending"
 	}
 	return progress
@@ -518,7 +529,7 @@ func v0MemoryProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress {
 		ID:       "s5_memory",
 		Title:    "Memory governance, compaction, lifecycle and private/operator separation",
 		Weight:   16,
-		Percent:  90,
+		Percent:  94,
 		Status:   "mostly_complete",
 		Evidence: evidenceFor(items, "memory_governance"),
 	}
@@ -528,8 +539,12 @@ func v0MemoryProgress(items map[string]V0ReadinessItem) V0WorkstreamProgress {
 		return progress
 	}
 	if hasWarning(items, "memory_governance") {
-		progress.Percent = 82
-		progress.Status = "review_queue_pending"
+		progress.Percent = 84
+		progress.Status = "host_cleanup_pending"
+		if itemEvidenceContains(items["memory_governance"], "host_actionable=0") {
+			progress.Percent = 90
+			progress.Status = "resident_queue_pending"
+		}
 	}
 	return progress
 }
@@ -539,8 +554,8 @@ func v0FinalAcceptanceProgress(items map[string]V0ReadinessItem) V0WorkstreamPro
 		ID:       "s6_acceptance",
 		Title:    "Final runbook, end-to-end regression and release declaration",
 		Weight:   16,
-		Percent:  35,
-		Status:   "not_closed",
+		Percent:  45,
+		Status:   "manual_validation_open",
 		Evidence: evidenceFor(items, "known_manual_gaps"),
 	}
 	if hasFailure(items, "inventory_facts", "capacity_headroom", "orchestrator_registry", "memory_governance", "decision_boundaries", "maintenance_draft_safety") {
@@ -549,8 +564,8 @@ func v0FinalAcceptanceProgress(items map[string]V0ReadinessItem) V0WorkstreamPro
 		return progress
 	}
 	if !hasWarning(items, "known_manual_gaps") {
-		progress.Percent = 80
-		progress.Status = "ready_for_final_review"
+		progress.Percent = 96
+		progress.Status = "evidence_closed"
 	}
 	return progress
 }

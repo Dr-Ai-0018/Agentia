@@ -96,6 +96,10 @@ func TestV0AcceptanceEvidenceCommandTemplateUsesKnownCheckIDs(t *testing.T) {
 	if want := "--check-id disk_maintenance_regression"; !containsAll(cmd, "--mode v0-acceptance-evidence", want, "--apply") {
 		t.Fatalf("unexpected command template: %q", cmd)
 	}
+	ultraLong := v0AcceptanceEvidenceCommandTemplate("ultra_long_soak_pre_release")
+	if !containsAll(ultraLong, "--mode v0-acceptance-evidence", "--check-id ultra_long_soak_pre_release", "--apply") {
+		t.Fatalf("unexpected ultra-long soak command template: %q", ultraLong)
+	}
 	if got := v0AcceptanceEvidenceCommandTemplate("typo_manual_check"); got != "" {
 		t.Fatalf("expected no template for unknown check id, got %q", got)
 	}

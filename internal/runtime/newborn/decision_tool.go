@@ -61,7 +61,10 @@ func decisionTools() []openai.ResponseTool {
 		tool("memory_review", "审阅 memory_governance 里出现的一条你自己的记忆。", props(
 			field("situation"), field("reason"), field("memory_id"), enumField("memory_action", []string{"keep", "rewrite", "compress", "demote", "delete"}), field("memory_summary"), field("memory_text"), enumField("memory_layer", []string{"", "instant", "short", "long", "permanent"}), field("memory_reason"),
 		), []string{"situation", "reason", "memory_id", "memory_action", "memory_summary", "memory_text", "memory_layer", "memory_reason"}),
-		tool("noop", "此刻什么也不做。", props(
+		tool("sleep", "主动睡眠或休息一段时间。适合你想节省 6h 额度、等待后台任务、恢复疲劳、或把行动节奏放慢；这不是等待程林命令。sleep_minutes 建议 1-30。", props(
+			field("situation"), field("reason"), intField("sleep_minutes", 1, 30),
+		), []string{"situation", "reason", "sleep_minutes"}),
+		tool("noop", "此刻什么也不做。只能用于你自己判断当前时间片应休息、恢复、节制资源或继续行动会有害；不能因为聊天 pending、没有即时回复或没有外部派工而选择。", props(
 			field("situation"), field("reason"),
 		), []string{"situation", "reason"}),
 	}
@@ -98,6 +101,10 @@ func field(name string) map[string]any {
 
 func enumField(name string, values []string) map[string]any {
 	return map[string]any{name: map[string]any{"type": "string", "enum": values}}
+}
+
+func intField(name string, minValue, maxValue int) map[string]any {
+	return map[string]any{name: map[string]any{"type": "integer", "minimum": minValue, "maximum": maxValue}}
 }
 
 func BuildDecisionProbePayload(profile ResidentProfile) openai.RequestPayload {
@@ -176,7 +183,7 @@ func validateDecision(decision AgentDecision) error {
 		decision.NextAction = "note_append"
 	}
 	switch decision.NextAction {
-	case "guest_exec", "self_status", "self_quota", "note_list", "note_read", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact", "talk_to_chenglin", "submit_ticket", "memory_review", "noop":
+	case "guest_exec", "self_status", "self_quota", "note_list", "note_read", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact", "talk_to_chenglin", "submit_ticket", "memory_review", "sleep", "noop":
 	default:
 		return fmt.Errorf("unsupported next_action %q", decision.NextAction)
 	}
@@ -192,6 +199,10 @@ func validateDecision(decision AgentDecision) error {
 	case "note_restore_backup":
 		if strings.TrimSpace(decision.BackupFile) == "" {
 			return fmt.Errorf("note_restore_backup requires non-empty backup_file")
+		}
+	case "sleep":
+		if decision.SleepMinutes < 1 || decision.SleepMinutes > 30 {
+			return fmt.Errorf("sleep requires sleep_minutes between 1 and 30")
 		}
 	}
 	return nil
@@ -258,7 +269,7 @@ func normalizeDecisionForAction(decision AgentDecision) AgentDecision {
 		decision.MemoryText = ""
 		decision.MemoryLayer = ""
 		decision.MemoryReason = ""
-	case "self_status", "self_quota", "noop":
+	case "self_status", "self_quota", "sleep", "noop":
 		decision.Command = ""
 		decision.Message = ""
 		decision.TicketTitle = ""

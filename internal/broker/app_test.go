@@ -119,6 +119,9 @@ func TestRunOrchestratorBudgetEstimateUsesHistoricalSpark(t *testing.T) {
 	if !strings.Contains(out.Recommended.SoakAllowanceByResident[0], "test-allowance-card") || !strings.Contains(out.Recommended.SoakRun, "--duration 10m") {
 		t.Fatalf("expected recommended commands, got %#v", out.Recommended)
 	}
+	if !strings.Contains(strings.Join(out.Notes, "\n"), "must not be used as evidence for ultra_long_soak_pre_release") {
+		t.Fatalf("expected no-admin ultra-long boundary note, got %#v", out.Notes)
+	}
 	if strings.Contains(out.Recommended.SoakAllowanceByResident[0], "jade,amber") {
 		t.Fatalf("allowance command must be per-resident, got %#v", out.Recommended.SoakAllowanceByResident)
 	}
@@ -478,6 +481,26 @@ func TestAppRunRecoverToNow(t *testing.T) {
 	}
 	if out.Status.NextRecoveryAt == "" {
 		t.Fatalf("expected next recovery timestamp")
+	}
+}
+
+func TestAppRunQuotaRecoversToNowBeforeSnapshot(t *testing.T) {
+	app := New(t.TempDir())
+	now := time.Now().UTC().Add(-30 * time.Minute)
+
+	if _, err := app.RunReset("jade", now); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	out, err := app.RunQuota("jade")
+	if err != nil {
+		t.Fatalf("quota: %v", err)
+	}
+	if out.Status.LastRecoveryAt.Before(now.Add(20 * time.Minute)) {
+		t.Fatalf("expected quota query to recover toward now, last_recovery_at=%s reset_at=%s", out.Status.LastRecoveryAt, now)
+	}
+	if out.Quota.NextRecoveryAt == "" || out.Quota.RecoveryTickMinutes == 0 {
+		t.Fatalf("expected quota recovery timing in snapshot: %#v", out.Quota)
 	}
 }
 

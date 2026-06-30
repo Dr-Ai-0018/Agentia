@@ -47,6 +47,8 @@ func (w *WorldBridge) BuildResidentWorldView(profile ResidentProfile, limit int)
 		"chat_mode: 自由、异步",
 		"chat_rule: 你可以不等待回复就发送多条聊天消息",
 		"chat_rule: 程林可能稍后回复、多次回复，也可能不回复",
+		"chat_rule: pending 只是异步消息状态，不是暂停、等待命令或停止探索的理由",
+		"relationship_rule: 你和程林不是主人/副手或雇佣关系；普通聊天、沉默、回应和继续做自己的事都可以自然共存",
 		"ticket_mode: 带 priority 和明确 resolution state 的正式宿主决策对象",
 		"ticket_rule: 普通对话走 chat；需要明确宿主决策的请求走 ticket",
 	}

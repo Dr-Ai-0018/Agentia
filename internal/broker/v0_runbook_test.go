@@ -27,6 +27,7 @@ func TestBuildV0RunbookMarksRiskySteps(t *testing.T) {
 	out := BuildV0Runbook(time.Date(2026, 6, 18, 7, 10, 0, 0, time.UTC))
 
 	assertStepFlags(t, out, "long_parallel_soak", true, false, true)
+	assertStepFlags(t, out, "ultra_long_no_admin_soak", true, false, true)
 	assertStepFlags(t, out, "host_plan_maintenance", true, true, true)
 	assertStepFlags(t, out, "host_start_maintenance", true, true, false)
 	assertStepFlags(t, out, "host_complete_maintenance", true, true, true)
@@ -40,6 +41,30 @@ func TestBuildV0RunbookMarksRiskySteps(t *testing.T) {
 	assertStepFlags(t, out, "world_reply", true, true, false)
 	assertStepFlags(t, out, "safe_lifecycle_apply", true, false, true)
 	assertStepFlags(t, out, "readiness_cached", false, false, false)
+}
+
+func TestBuildV0RunbookIncludesUltraLongNoAdminSoak(t *testing.T) {
+	out := BuildV0Runbook(time.Date(2026, 6, 30, 4, 50, 0, 0, time.UTC))
+
+	step, ok := findRunbookStep(out, "ultra_long_no_admin_soak")
+	if !ok {
+		t.Fatalf("expected ultra-long no-admin soak step: %#v", out.Sections)
+	}
+	notes := strings.Join(step.Notes, "\n")
+	for _, want := range []string{
+		"formal v0 publication",
+		"Do not use test-allowance-card",
+		"quota rescue",
+		"world chat as Chenglin",
+		"use self_quota",
+		"choose sleep/rest",
+		"must not mention administrators",
+		"no administrator-layer intervention",
+	} {
+		if !strings.Contains(notes, want) {
+			t.Fatalf("expected %q in ultra-long notes, got %#v", want, step)
+		}
+	}
 }
 
 func TestBuildV0RunbookIncludesBaselineRecoveryBoundary(t *testing.T) {

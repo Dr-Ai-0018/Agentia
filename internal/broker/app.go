@@ -574,6 +574,14 @@ func (a *App) RunStatus(residentID string) (brokerstate.ResidentStatus, error) {
 }
 
 func (a *App) RunQuota(residentID string) (QuotaOutput, error) {
+	recovered, err := a.RunRecoverToNow(residentID, time.Now().UTC())
+	if err == nil {
+		status := recovered.Status
+		return QuotaOutput{
+			Status: status,
+			Quota:  brokerstate.BuildQuotaSnapshot(status),
+		}, nil
+	}
 	status, err := a.service(false).SelfStatus(residentID)
 	if err != nil {
 		return QuotaOutput{}, err

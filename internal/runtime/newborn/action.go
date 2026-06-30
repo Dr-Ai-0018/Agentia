@@ -92,9 +92,25 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 		return ActionResult{Observation: observation, Activity: tokenledger.ActivityLightWork}
 	case "memory_review":
 		return ActionResult{Observation: e.executeMemoryReview(profile, decision), Activity: tokenledger.ActivityLightWork}
+	case "sleep":
+		minutes := clampSleepMinutes(decision.SleepMinutes)
+		return ActionResult{
+			Observation: fmt.Sprintf("sleep scheduled: you chose to rest for %d minute(s); your next turn will resume after that interval", minutes),
+			Activity:    tokenledger.ActivityStatusCheck,
+		}
 	default:
 		return ActionResult{Observation: "没有执行任何操作", Activity: tokenledger.ActivityStatusCheck}
 	}
+}
+
+func clampSleepMinutes(minutes int) int {
+	if minutes < 1 {
+		return 1
+	}
+	if minutes > 30 {
+		return 30
+	}
+	return minutes
 }
 
 func (e *IncusActionExecutor) executeNoteAppend(profile ResidentProfile, decision AgentDecision) ActionResult {
@@ -174,6 +190,7 @@ func renderResidentStatusObservation(status brokerstate.ResidentStatus) string {
 func renderQuotaObservation(out broker.QuotaOutput) string {
 	lines := []string{
 		"self quota 快照:",
+		"quota_model=natural_recovery_budget",
 		fmt.Sprintf("resident_id=%s", out.Status.ResidentID),
 		fmt.Sprintf("spark_balance=%.4f", out.Status.SparkBalance),
 		fmt.Sprintf("debt_active=%t", out.Status.DebtActive),
@@ -187,6 +204,8 @@ func renderQuotaObservation(out broker.QuotaOutput) string {
 		fmt.Sprintf("effective_week_remaining=%d", out.Quota.EffectiveWeekRemaining),
 		fmt.Sprintf("work_allowed_now=%t", out.Quota.WorkAllowedNow),
 		fmt.Sprintf("next_recovery_at=%s", compactValue(out.Quota.NextRecoveryAt)),
+		fmt.Sprintf("recovery_tick_minutes=%d", out.Quota.RecoveryTickMinutes),
+		"sleep_hint=如果 6h 额度紧张，可以主动 sleep 几分钟或十几分钟；睡眠期间不会继续消耗模型调用，醒来后再查 self_quota。",
 	}
 	if reason := compactValue(out.Quota.BlockingReason); reason != "" {
 		lines = append(lines, "blocking_reason="+reason)
@@ -550,7 +569,7 @@ func decisionSignature(decision AgentDecision) string {
 		return decision.NextAction + ":" + normalize(decision.NoteFile+" "+decision.BackupFile)
 	case "note_list":
 		return decision.NextAction
-	case "self_status", "self_quota":
+	case "self_status", "self_quota", "sleep":
 		return decision.NextAction
 	case "talk_to_chenglin":
 		return decision.NextAction + ":" + normalize(decision.Message)
