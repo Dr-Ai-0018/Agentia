@@ -1,0 +1,100 @@
+# Operator Console API Contract
+
+The current backend is CLI/state-file based, so this frontend uses an adapter boundary. UI components depend on `ArenaConsoleApi`, not on CLI names or JSON files.
+
+## P0 Read Endpoints
+
+```txt
+GET /api/summary
+GET /api/runs?limit=20
+GET /api/runs/:runId/status
+GET /api/runs/:runId/summary
+GET /api/runs/:runId/report
+GET /api/budget
+GET /api/followups?limit=20
+GET /api/inbox?limit=20
+GET /api/messages/:resident?status=pending&limit=50
+GET /api/messages/:resident/thread?limit=100
+GET /api/tickets?resident=&status=&priority=&limit=50
+GET /api/tickets/:ticketId
+GET /api/system/inspect-summary
+GET /api/acceptance
+GET /api/acceptance/evidence?limit=20
+```
+
+## P0 Write Endpoints
+
+```txt
+POST /api/reply
+POST /api/ticket-reply
+POST /api/runs/:runId/pause
+POST /api/runs/:runId/resume
+POST /api/runs/:runId/retry-failed
+```
+
+All write endpoints require authentication and CSRF protection or an equivalent same-site deployment control. Do not expose anonymous writes.
+
+## Reply Boundary
+
+`POST /api/reply` represents only a Chenglin world reply. It must not carry telemetry, run state, budgets, token/cache metrics, operator notes, acceptance gates, hidden test rules, or auto-generated dashboard summaries.
+
+Current frontend draft payload:
+
+```ts
+type ReplyRequest = {
+  resident_id: "jade" | "amber" | "onyx";
+  thread_id: string;
+  target_id: string;
+  kind: "chat_reply" | "ticket_reply";
+  body: string;
+  client_nonce: string;
+};
+```
+
+If the server chooses a narrower message-id contract, keep the same negative boundary:
+
+```ts
+type ServerReplyRequest = {
+  message_id: string;
+  body: string;
+  boundary_ack: true;
+};
+```
+
+Do not design a request like:
+
+```ts
+type BadReplyRequest = {
+  body: string;
+  run?: unknown;
+  budget?: unknown;
+  telemetry?: unknown;
+  context_summary?: string;
+};
+```
+
+## Adapter Plan
+
+- `MockArenaConsoleApi`: UI development fixtures.
+- `HttpArenaConsoleApi`: browser-side HTTP adapter.
+- `CliShimArenaConsoleApi`: optional local server-side shim that maps HTTP to `arena-broker` / `arena-orchestrator`. This must not run in the browser.
+
+Responses should be JSON. Error shape:
+
+```ts
+type ApiError = {
+  error: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+};
+```
+
+Polling defaults:
+
+- run status: 5 seconds
+- budget and inbox: 15-30 seconds
+- system health: 30-60 seconds
+
+SSE/WebSocket can be added later behind the same adapter boundary.
