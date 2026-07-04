@@ -51,6 +51,14 @@ func TestHandlerRequiresTokenWhenConfigured(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req.Header.Set("X-Arena-Console-Token", "wrong")
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d for wrong token; body=%s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	req.Header.Set("X-Arena-Console-Token", "secret")
 	rec = httptest.NewRecorder()
 	server.Handler().ServeHTTP(rec, req)

@@ -1,6 +1,7 @@
 package consoleapi
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -115,12 +116,20 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("X-Arena-Console-Token") != s.token {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !s.authorized(r.Header.Get("X-Arena-Console-Token")) {
 			writeError(w, http.StatusUnauthorized, "unauthorized", errors.New("unauthorized"))
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) authorized(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" || len(token) != len(s.token) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
 }
 
 func withJSONHeaders(next http.Handler) http.Handler {
