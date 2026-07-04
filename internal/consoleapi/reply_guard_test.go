@@ -13,6 +13,11 @@ func TestValidateWorldReplyRejectsPrivateTerms(t *testing.T) {
 		"dashboard 显示你需要休息",
 		"这个 run id 看起来没问题",
 		"后台测试规则是这样的",
+		"orchestrator-20260630T031333Z 这轮没有问题",
+		"你的 phase 和 round 看起来正常",
+		"预算和审计显示你需要维护",
+		"spark 余额还有 381",
+		"这不是 P0，只是 billing spend 问题",
 	} {
 		if err := validateWorldReply(body, true); err == nil {
 			t.Fatalf("expected private boundary term rejection for %q", body)

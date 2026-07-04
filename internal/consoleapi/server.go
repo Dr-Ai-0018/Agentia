@@ -2,6 +2,7 @@ package consoleapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 
 type Server struct {
 	root         string
+	token        string
 	broker       *broker.App
 	world        *worldstate.Store
 	actions      *broker.HostActionService
@@ -23,8 +25,9 @@ type Server struct {
 }
 
 type Options struct {
-	Root string
-	Now  func() time.Time
+	Root  string
+	Token string
+	Now   func() time.Time
 }
 
 func New(options Options) *Server {
@@ -39,6 +42,7 @@ func New(options Options) *Server {
 	app := broker.New(root)
 	return &Server{
 		root:         root,
+		token:        strings.TrimSpace(options.Token),
 		broker:       app,
 		world:        worldstate.New(root),
 		actions:      broker.NewHostActionService(root),
@@ -65,7 +69,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/acceptance/evidence", s.handleAcceptanceEvidence)
 	mux.HandleFunc("POST /api/reply", s.handleReply)
 	mux.HandleFunc("POST /api/ticket-reply", s.handleTicketReply)
-	return withJSONHeaders(mux)
+	return s.withAuth(withJSONHeaders(mux))
+}
+
+func (s *Server) withAuth(next http.Handler) http.Handler {
+	if s.token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("X-Arena-Console-Token") != s.token {
+			writeError(w, http.StatusUnauthorized, "unauthorized", errors.New("unauthorized"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func withJSONHeaders(next http.Handler) http.Handler {
@@ -82,7 +99,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":           true,
 		"generated_at": s.now().Format(time.RFC3339),
-		"root":         s.root,
 	})
 }
 
@@ -180,7 +196,12 @@ func (s *Server) handleRunReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBudget(w http.ResponseWriter, r *http.Request) {
-	out, err := s.broker.RunBudgetStatus(splitCSV(r.URL.Query().Get("resident")))
+	residents, err := s.allowedResidents(splitCSV(r.URL.Query().Get("resident")))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_resident", err)
+		return
+	}
+	out, err := s.broker.RunBudgetStatus(residents)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "budget_unavailable", err)
 		return
@@ -253,6 +274,7 @@ func (s *Server) handleAcceptanceEvidence(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 	var input ReplyRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_json", err)
@@ -275,6 +297,7 @@ func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTicketReply(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
 	var input TicketReplyRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_json", err)
@@ -320,11 +343,33 @@ func splitCSV(raw string) []string {
 	return out
 }
 
+func (s *Server) allowedResidents(residents []string) ([]string, error) {
+	if len(residents) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(residents))
+	for _, resident := range residents {
+		resident = strings.TrimSpace(resident)
+		if resident == "" {
+			continue
+		}
+		if _, ok := s.broker.Binding(resident); !ok {
+			return nil, fmt.Errorf("unknown resident: %s", resident)
+		}
+		out = append(out, resident)
+	}
+	return out, nil
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 
 func writeError(w http.ResponseWriter, status int, code string, err error) {
-	writeJSON(w, status, ErrorEnvelope{Error: APIError{Code: code, Message: err.Error()}})
+	message := http.StatusText(status)
+	if status == http.StatusBadRequest || status == http.StatusUnauthorized || status == http.StatusForbidden {
+		message = code
+	}
+	writeJSON(w, status, ErrorEnvelope{Error: APIError{Code: code, Message: message}})
 }
