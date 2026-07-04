@@ -1,4 +1,8 @@
-import type { ReplyRequest, ResidentId } from "../../types/domain";
+import type {
+  ResidentId,
+  WorldChatReplyRequest,
+  WorldTicketReplyRequest,
+} from "../../types/domain";
 import type { ArenaConsoleApi } from "./types";
 
 type HttpOptions = {
@@ -52,9 +56,19 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
     return parseJson(await fetch(this.url(`/messages/${encodeURIComponent(resident)}/thread`)));
   }
 
-  async sendWorldReply(input: ReplyRequest) {
+  async sendWorldChatReply(input: WorldChatReplyRequest) {
     return parseJson(
       await fetch(this.url("/reply"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    );
+  }
+
+  async sendWorldTicketReply(input: WorldTicketReplyRequest) {
+    return parseJson(
+      await fetch(this.url("/ticket-reply"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),

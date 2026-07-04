@@ -25,41 +25,39 @@ GET /api/acceptance/evidence?limit=20
 ## P0 Write Endpoints
 
 ```txt
-POST /api/reply
-POST /api/ticket-reply
-POST /api/runs/:runId/pause
-POST /api/runs/:runId/resume
-POST /api/runs/:runId/retry-failed
+POST /api/reply           (implemented)
+POST /api/ticket-reply    (implemented)
+POST /api/runs/:runId/pause         (deferred — no-admin soak disallows pause/resume from UI)
+POST /api/runs/:runId/resume        (deferred — same as above)
+POST /api/runs/:runId/retry-failed  (deferred — post v0)
 ```
 
-All write endpoints require authentication and CSRF protection or an equivalent same-site deployment control. Do not expose anonymous writes.
+All write endpoints require authentication (nginx basic auth + backend `X-Arena-Console-Token`) and CSRF protection or an equivalent same-site deployment control. Do not expose anonymous writes.
 
 ## Reply Boundary
 
-`POST /api/reply` represents only a Chenglin world reply. It must not carry telemetry, run state, budgets, token/cache metrics, operator notes, acceptance gates, hidden test rules, or auto-generated dashboard summaries.
+`POST /api/reply` and `POST /api/ticket-reply` represent only Chenglin world replies. They must not carry telemetry, run state, budgets, token/cache metrics, operator notes, acceptance gates, hidden test rules, or auto-generated dashboard summaries.
 
-Current frontend draft payload:
+The server picked the narrow message-id contract, so the on-wire shapes are:
 
 ```ts
-type ReplyRequest = {
-  resident_id: "jade" | "amber" | "onyx";
-  thread_id: string;
-  target_id: string;
-  kind: "chat_reply" | "ticket_reply";
-  body: string;
-  client_nonce: string;
+// POST /api/reply
+type WorldChatReplyRequest = {
+  message_id: string;   // opaque server id of the message being replied to
+  body: string;         // world-visible text
+  boundary_ack: true;   // must be literally true; server rejects false
 };
-```
 
-If the server chooses a narrower message-id contract, keep the same negative boundary:
-
-```ts
-type ServerReplyRequest = {
-  message_id: string;
+// POST /api/ticket-reply
+type WorldTicketReplyRequest = {
+  ticket_id: string;
   body: string;
+  close: boolean;       // whether to close the ticket after replying
   boundary_ack: true;
 };
 ```
+
+Frontend keeps a richer `ReplyDraft` shape locally (resident id, thread id, kind, client nonce, closeTicket, boundaryAck) for UX, but the wire adapters — `buildChatReplyRequest` and `buildTicketReplyRequest` in `src/lib/reply.ts` — strip it down to the exact server shape above. **Never widen the wire shape without matching a backend change** — the narrow shape is a structural boundary that keeps operator context out of the world.
 
 Do not design a request like:
 

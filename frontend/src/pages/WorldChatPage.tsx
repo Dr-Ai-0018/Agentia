@@ -1,18 +1,28 @@
+// WorldChatPage is the entry to the WORLD-VISIBLE surface. Its props are
+// pinned to a narrow shape via AssertNoGodViewLeak so that any future attempt
+// to widen them with a god-view field (telemetry, budgets, runs, alerts, etc.)
+// fails at type-check. Do not weaken this boundary — the reply composer subtree
+// downstream depends on it.
+
 import { useEffect, useMemo, useState } from "react";
 import { Panel } from "../components/ui/Panel";
 import { arenaApi } from "../lib/api/client";
-import { buildReplyRequest } from "../lib/reply";
+import { buildChatReplyRequest, buildTicketReplyRequest } from "../lib/reply";
 import { ReplyComposer } from "../features/world-chat/ReplyComposer";
 import { WorldChatThread } from "../features/world-chat/WorldChatThread";
 import { draftFromThread } from "../features/world-chat/worldSafeMappers";
-import type { ReplyDraft, WorldVisibleThread } from "../types/domain";
+import type {
+  AssertNoGodViewLeak,
+  ReplyDraft,
+  WorldVisibleThread,
+} from "../types/domain";
 import { residentLabel } from "../features/residents/residentTheme";
 
-type WorldChatPageProps = {
+type WorldChatPageProps = AssertNoGodViewLeak<{
   threads: WorldVisibleThread[];
   activeThreadId: string;
   onSelectThread: (threadId: string) => void;
-};
+}>;
 
 export function WorldChatPage({ threads, activeThreadId, onSelectThread }: WorldChatPageProps) {
   const activeThread = threads.find((thread) => thread.threadId === activeThreadId) ?? threads[0];
@@ -32,8 +42,17 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
 
   async function submitDraft(input: ReplyDraft) {
     setSendState("sending");
-    await arenaApi.sendWorldReply(buildReplyRequest(input));
-    setSendState("sent");
+    try {
+      if (input.kind === "ticket_reply") {
+        await arenaApi.sendWorldTicketReply(buildTicketReplyRequest(input));
+      } else {
+        await arenaApi.sendWorldChatReply(buildChatReplyRequest(input));
+      }
+      setSendState("sent");
+    } catch (submitError) {
+      setSendState("idle");
+      throw submitError;
+    }
   }
 
   if (!activeThread || !draft) {
@@ -72,7 +91,7 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
           }}
           onSubmit={submitDraft}
         />
-        {sendState === "sent" && <div className="sent-banner">Mock adapter accepted the reply payload.</div>}
+        {sendState === "sent" && <div className="sent-banner">Reply accepted.</div>}
       </div>
     </div>
   );

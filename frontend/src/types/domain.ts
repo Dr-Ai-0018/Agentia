@@ -131,6 +131,8 @@ export interface WorldVisibleThread {
   messages: WorldMessage[];
 }
 
+// ReplyDraft is the local editing state for the reply composer. It stays
+// inside the world-chat feature — never merge god-view telemetry into it.
 export interface ReplyDraft {
   residentId: ResidentId;
   threadId: string;
@@ -139,13 +141,39 @@ export interface ReplyDraft {
   body: string;
   boundaryAck: boolean;
   clientNonce: string;
+  closeTicket?: boolean;
 }
 
-export interface ReplyRequest {
-  resident_id: ResidentId;
-  thread_id: string;
-  target_id: string;
-  kind: ReplyKind;
+// Server-facing request shapes — match backend /api/reply and /api/ticket-reply
+// exactly. Field names are snake_case to survive JSON.stringify without a
+// mapping layer. The narrow shape is intentional: it is a hard structural
+// boundary that prevents run ids, budgets, phases, and other operator-only
+// context from ever reaching the world through this door.
+export interface WorldChatReplyRequest {
+  message_id: string;
   body: string;
-  client_nonce: string;
+  boundary_ack: true;
 }
+
+export interface WorldTicketReplyRequest {
+  ticket_id: string;
+  body: string;
+  close: boolean;
+  boundary_ack: true;
+}
+
+// Compile-time guard: proves a props type P has no keys overlapping with
+// the operator god-view (OperatorTelemetry). Used at world-visible component
+// boundaries to make "no telemetry here" a type-check, not a convention.
+//
+// Usage:
+//   type WorldChatPageProps = AssertNoGodViewLeak<{
+//     threads: WorldVisibleThread[];
+//     ...
+//   }>;
+//
+// If any future maintainer adds `telemetry: OperatorTelemetry` or a matching
+// key like `alerts`, `budgets`, `runs`, etc., the type collapses to `never`
+// and any component using those props fails to compile.
+export type AssertNoGodViewLeak<P> =
+  Extract<keyof P, keyof OperatorTelemetry> extends never ? P : never;

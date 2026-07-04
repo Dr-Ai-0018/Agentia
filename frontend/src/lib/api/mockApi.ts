@@ -42,7 +42,12 @@ export class MockArenaConsoleApi implements ArenaConsoleApi {
     return Object.values(threads).filter((thread) => thread.resident === resident);
   }
 
-  async sendWorldReply() {
+  async sendWorldChatReply() {
+    await wait(140);
+    return { ok: true as const, acceptedAt: new Date().toISOString() };
+  }
+
+  async sendWorldTicketReply() {
     await wait(140);
     return { ok: true as const, acceptedAt: new Date().toISOString() };
   }

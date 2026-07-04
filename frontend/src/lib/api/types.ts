@@ -2,9 +2,10 @@ import type {
   AlertItem,
   FollowupItem,
   OperatorTelemetry,
-  ReplyRequest,
   ResidentId,
   RunRecord,
+  WorldChatReplyRequest,
+  WorldTicketReplyRequest,
   WorldVisibleThread,
 } from "../../types/domain";
 
@@ -15,6 +16,7 @@ export interface ArenaConsoleApi {
   getWorldThread(threadId: string): Promise<WorldVisibleThread>;
   listWorldThreads(): Promise<WorldVisibleThread[]>;
   listAlerts(): Promise<AlertItem[]>;
-  sendWorldReply(input: ReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
   getResidentThreads(resident: ResidentId): Promise<WorldVisibleThread[]>;
+  sendWorldChatReply(input: WorldChatReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
+  sendWorldTicketReply(input: WorldTicketReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
 }
