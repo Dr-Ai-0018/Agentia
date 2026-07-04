@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-arena/internal/broker"
@@ -22,6 +24,7 @@ type Server struct {
 	actions      *broker.HostActionService
 	orchestrator *orchestrator.Service
 	now          func() time.Time
+	limiter      *rateLimiter
 }
 
 type Options struct {
@@ -41,13 +44,15 @@ func New(options Options) *Server {
 	}
 	app := broker.New(root)
 	return &Server{
-		root:         root,
-		token:        strings.TrimSpace(options.Token),
-		broker:       app,
-		world:        worldstate.New(root),
-		actions:      broker.NewHostActionService(root),
+		root:    root,
+		token:   strings.TrimSpace(options.Token),
+		broker:  app,
+		world:   worldstate.New(root),
+		actions: broker.NewHostActionService(root),
+		// Empty endpoint/auth args select the local filesystem-backed run registry.
 		orchestrator: orchestrator.New(app, &http.Client{Timeout: 30 * time.Second}, "", ""),
 		now:          now,
+		limiter:      newRateLimiter(10, 20),
 	}
 }
 
@@ -62,6 +67,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/budget", s.handleBudget)
 	mux.HandleFunc("GET /api/inbox", s.handleInbox)
 	mux.HandleFunc("GET /api/followups", s.handleFollowups)
+	mux.HandleFunc("GET /api/tickets", s.handleTickets)
+	mux.HandleFunc("GET /api/tickets/{ticketID}", s.handleTicket)
 	mux.HandleFunc("GET /api/messages/{resident}", s.handleMessages)
 	mux.HandleFunc("GET /api/messages/{resident}/thread", s.handleThread)
 	mux.HandleFunc("GET /api/system/inspect-summary", s.handleInspectSummary)
@@ -69,7 +76,38 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/acceptance/evidence", s.handleAcceptanceEvidence)
 	mux.HandleFunc("POST /api/reply", s.handleReply)
 	mux.HandleFunc("POST /api/ticket-reply", s.handleTicketReply)
-	return s.withAuth(withJSONHeaders(mux))
+	return s.withAccessLog(withJSONHeaders(s.withRateLimit(s.withAuth(mux))))
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (s *Server) withAccessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			log.Printf("consoleapi method=%s path=%s status=%d latency=%s remote=%s", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Millisecond), r.RemoteAddr)
+		}
+	})
+}
+
+func (s *Server) withRateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !s.limiter.allow(clientIP(r)) {
+			writeError(w, http.StatusTooManyRequests, "rate_limited", errors.New("rate limited"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
@@ -228,6 +266,38 @@ func (s *Server) handleFollowups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) handleTickets(w http.ResponseWriter, r *http.Request) {
+	residents, err := s.allowedResidents(splitCSV(r.URL.Query().Get("resident")))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_resident", err)
+		return
+	}
+	resident := ""
+	if len(residents) > 0 {
+		resident = residents[0]
+	}
+	out, err := s.world.ReadTickets(resident, r.URL.Query().Get("status"), r.URL.Query().Get("priority"), queryInt(r, "limit", 50))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "tickets_unavailable", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request) {
+	ticketID, err := safeTicketID(r.PathValue("ticketID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_ticket_id", err)
+		return
+	}
+	out, err := s.world.ReadTicket(ticketID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "ticket_unavailable", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	out, err := s.world.ReadMessagesByStatus(r.PathValue("resident"), r.URL.Query().Get("status"), queryInt(r, "limit", 50))
 	if err != nil {
@@ -359,6 +429,81 @@ func (s *Server) allowedResidents(residents []string) ([]string, error) {
 		out = append(out, resident)
 	}
 	return out, nil
+}
+
+func safeTicketID(raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if !strings.HasPrefix(id, "ticket-") {
+		return "", fmt.Errorf("invalid ticket id")
+	}
+	for _, r := range id {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return "", fmt.Errorf("invalid ticket id")
+	}
+	return id, nil
+}
+
+func clientIP(r *http.Request) string {
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		if comma := strings.Index(forwarded, ","); comma >= 0 {
+			forwarded = forwarded[:comma]
+		}
+		return strings.TrimSpace(forwarded)
+	}
+	host := r.RemoteAddr
+	if colon := strings.LastIndex(host, ":"); colon > 0 {
+		return host[:colon]
+	}
+	return host
+}
+
+type rateLimiter struct {
+	mu      sync.Mutex
+	rate    float64
+	burst   float64
+	clients map[string]*rateClient
+	now     func() time.Time
+}
+
+type rateClient struct {
+	tokens float64
+	seen   time.Time
+}
+
+func newRateLimiter(ratePerSecond, burst int) *rateLimiter {
+	return &rateLimiter{
+		rate:    float64(ratePerSecond),
+		burst:   float64(burst),
+		clients: map[string]*rateClient{},
+		now:     time.Now,
+	}
+}
+
+func (l *rateLimiter) allow(key string) bool {
+	if key == "" {
+		key = "unknown"
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	client := l.clients[key]
+	if client == nil {
+		l.clients[key] = &rateClient{tokens: l.burst - 1, seen: now}
+		return true
+	}
+	elapsed := now.Sub(client.seen).Seconds()
+	client.seen = now
+	client.tokens += elapsed * l.rate
+	if client.tokens > l.burst {
+		client.tokens = l.burst
+	}
+	if client.tokens < 1 {
+		return false
+	}
+	client.tokens--
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
