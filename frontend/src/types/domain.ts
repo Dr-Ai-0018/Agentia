@@ -99,6 +99,25 @@ export interface EvidenceItem {
   state: "ready" | "pending" | "failed";
 }
 
+export type PreflightStatus = "good" | "watch" | "unknown";
+
+export interface PreflightCheck {
+  id: string;
+  section: string;
+  label: string;
+  status: PreflightStatus;
+  required: boolean;
+  detail: string;
+  data?: Record<string, unknown>;
+}
+
+export interface PreflightResponse {
+  generated_at: string;
+  overall: PreflightStatus;
+  summary: string;
+  checks: PreflightCheck[];
+}
+
 export interface OperatorTelemetry {
   activeRun: ActiveRun;
   residents: ResidentRuntime[];

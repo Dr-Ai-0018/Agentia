@@ -75,4 +75,8 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
       }),
     );
   }
+
+  async getPreflight() {
+    return parseJson(await fetch(this.url("/preflight")));
+  }
 }

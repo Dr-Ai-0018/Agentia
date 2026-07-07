@@ -1,4 +1,4 @@
-import type { OperatorTelemetry, ResidentId, WorldVisibleThread } from "../types/domain";
+import type { OperatorTelemetry, PreflightResponse, ResidentId, WorldVisibleThread } from "../types/domain";
 
 export const residentAccent: Record<ResidentId, { label: string; color: string; soft: string; border: string }> = {
   jade: {
@@ -271,4 +271,106 @@ export const threads: Record<string, WorldVisibleThread> = {
       },
     ],
   },
+};
+
+export const mockPreflight: PreflightResponse = {
+  generated_at: "2026-06-30T14:42:18Z",
+  overall: "good",
+  summary: "长测前核心检查通过。",
+  checks: [
+    {
+      id: "service_running",
+      section: "service",
+      label: "console 服务",
+      status: "good",
+      required: true,
+      detail: "console API 正在运行。",
+      data: { started_at: "2026-06-30T08:15:00Z", uptime_sec: 22638 },
+    },
+    {
+      id: "backend_token",
+      section: "auth",
+      label: "后端通行口令",
+      status: "good",
+      required: true,
+      detail: "后端 /api 需要 nginx 注入的通行口令。",
+    },
+    {
+      id: "public_basic_auth",
+      section: "auth",
+      label: "公网入口",
+      status: "unknown",
+      required: false,
+      detail: "basic auth 在 nginx 层，后端只能通过外部 smoke 验证。",
+    },
+    {
+      id: "runs_readable",
+      section: "storage",
+      label: "运行记录",
+      status: "good",
+      required: true,
+      detail: "可读取。",
+      data: { sample_count: 2 },
+    },
+    {
+      id: "budget_readable",
+      section: "storage",
+      label: "额度账本",
+      status: "good",
+      required: true,
+      detail: "可读取。",
+    },
+    {
+      id: "inbox_readable",
+      section: "storage",
+      label: "程林回话队列",
+      status: "good",
+      required: true,
+      detail: "可读取。",
+    },
+    {
+      id: "followups_readable",
+      section: "storage",
+      label: "待回应线索",
+      status: "good",
+      required: true,
+      detail: "可读取。",
+      data: { sample_count: 3 },
+    },
+    {
+      id: "tickets_readable",
+      section: "storage",
+      label: "住户请求",
+      status: "good",
+      required: true,
+      detail: "可读取。",
+      data: { sample_count: 1 },
+    },
+    {
+      id: "recent_5xx",
+      section: "health",
+      label: "接口错误",
+      status: "good",
+      required: true,
+      detail: "本服务进程启动后没有记录到 5xx。",
+      data: { total_5xx: 0 },
+    },
+    {
+      id: "rate_limit",
+      section: "health",
+      label: "请求节奏",
+      status: "good",
+      required: false,
+      detail: "本服务进程启动后没有触发 rate limit。",
+      data: { rate_limited: 0 },
+    },
+    {
+      id: "soak_gate",
+      section: "gate",
+      label: "长测闸门",
+      status: "good",
+      required: true,
+      detail: "长测前核心检查通过。",
+    },
+  ],
 };

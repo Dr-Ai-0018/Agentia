@@ -2,6 +2,7 @@ import type {
   AlertItem,
   FollowupItem,
   OperatorTelemetry,
+  PreflightResponse,
   ResidentId,
   RunRecord,
   WorldChatReplyRequest,
@@ -19,4 +20,5 @@ export interface ArenaConsoleApi {
   getResidentThreads(resident: ResidentId): Promise<WorldVisibleThread[]>;
   sendWorldChatReply(input: WorldChatReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
   sendWorldTicketReply(input: WorldTicketReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
+  getPreflight(): Promise<PreflightResponse>;
 }

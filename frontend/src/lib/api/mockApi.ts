@@ -1,4 +1,4 @@
-import { telemetry, threads } from "../../data/mockConsole";
+import { mockPreflight, telemetry, threads } from "../../data/mockConsole";
 import type { ResidentId } from "../../types/domain";
 import type { ArenaConsoleApi } from "./types";
 
@@ -50,5 +50,10 @@ export class MockArenaConsoleApi implements ArenaConsoleApi {
   async sendWorldTicketReply() {
     await wait(140);
     return { ok: true as const, acceptedAt: new Date().toISOString() };
+  }
+
+  async getPreflight() {
+    await wait();
+    return mockPreflight;
   }
 }

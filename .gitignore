@@ -18,7 +18,7 @@ experiments/*/output/
 experiments/*/logs-real/
 experiments/*/output-real/
 experiments/ticket-roundtrip/
-runs/
+/runs/
 tmp/
 
 # Local env / secrets
