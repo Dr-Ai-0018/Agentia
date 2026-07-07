@@ -71,7 +71,8 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
               key={f.targetId}
               type="button"
               className="pending-list__row"
-              onClick={() => onOpenThread(f.threadId)}
+              onClick={() => f.threadId ? onOpenThread(f.threadId) : undefined}
+              disabled={!f.threadId}
             >
               <div className="pending-list__avatar">{residentLabel(f.resident).charAt(0)}</div>
               <div className="pending-list__who">
@@ -185,7 +186,7 @@ function ageToMinutes(age: string): number {
 
 function pendingCountHint(count: number, followups: FollowupItem[]): string {
   if (count === 0) return "都回上了";
-  const urgent = followups.some((f) => f.priority === "high");
+  const urgent = followups.some((f) => f.priority === "high" || f.priority === "urgent");
   return urgent ? `${count} 条 · 有要紧的` : `${count} 条 · 都不急`;
 }
 

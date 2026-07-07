@@ -75,11 +75,11 @@ export interface FollowupItem {
   kind: FollowupKind;
   resident: ResidentId;
   targetId: string;
-  threadId: string;
+  threadId?: string;
   createdAt: string;
   age: string;
   status: "pending" | "open" | "replied" | "closed";
-  priority?: "low" | "medium" | "high";
+  priority?: "low" | "medium" | "high" | "urgent";
   preview: string;
 }
 

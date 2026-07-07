@@ -11,7 +11,12 @@ export function InboxPreview({ followups, onOpenThread }: InboxPreviewProps) {
   return (
     <div className="inbox-list">
       {followups.map((item) => (
-        <button className="inbox-row" key={item.targetId} onClick={() => onOpenThread(item.threadId)}>
+        <button
+          className="inbox-row"
+          key={item.targetId}
+          onClick={() => item.threadId ? onOpenThread(item.threadId) : undefined}
+          disabled={!item.threadId}
+        >
           <MessageSquare size={16} />
           <span className="inbox-row__meta">
             <strong>{residentLabel(item.resident)}</strong>

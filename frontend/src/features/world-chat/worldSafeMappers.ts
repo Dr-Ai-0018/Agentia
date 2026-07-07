@@ -13,5 +13,6 @@ export function draftFromThread(thread: WorldVisibleThread): ReplyDraft {
 }
 
 export function threadIdFromFollowup(followup: FollowupItem): string {
+  if (!followup.threadId) throw new Error(`Followup has no world thread: ${followup.targetId}`);
   return followup.threadId;
 }
