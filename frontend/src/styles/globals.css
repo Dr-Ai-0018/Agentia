@@ -680,7 +680,7 @@ button {
 
 .world-chat-page {
   display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   gap: 20px;
   align-items: start;
   max-width: 1520px;
@@ -689,12 +689,34 @@ button {
 .thread-list {
   min-width: 0;
   align-self: start;
-  display: grid;
-  gap: 8px;
-  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
   background: var(--bg-panel);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-panel);
+}
+
+.thread-list__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 4px 4px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 6px;
+}
+
+.thread-list__title-h {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.thread-list__title-n {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .thread-list button {
@@ -703,28 +725,42 @@ button {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
   background: var(--bg-panel);
-  padding: 12px;
+  padding: 10px 12px;
   text-align: left;
-  display: grid;
-  gap: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
 }
 
-.thread-list button:hover,
+.thread-list button:hover {
+  background: var(--bg-hover);
+}
+
 .thread-list button.active {
   background: var(--bg-canvas);
   border-color: var(--border-default);
 }
 
+.thread-list__row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .thread-list strong {
   font-size: 13px;
   font-weight: 600;
+  color: var(--text-primary);
 }
 
-.thread-list span {
-  color: var(--text-muted);
+.thread-list__row-head span {
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
 }
 
 .thread-list small {
@@ -733,12 +769,27 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
 }
 
 .world-chat-main {
   min-width: 0;
   display: grid;
   gap: 16px;
+}
+
+.world-chat-empty {
+  padding: 32px;
+  background: var(--bg-panel);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-panel);
+  color: var(--text-secondary);
+}
+
+.world-chat-empty h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: var(--text-primary);
 }
 
 .world-thread,
@@ -754,6 +805,7 @@ button {
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 16px;
 }
 
@@ -763,11 +815,18 @@ button {
   font-weight: 600;
 }
 
-.world-thread__header > span {
+.world-thread__sub {
+  margin: 2px 0 0;
   color: var(--text-muted);
-  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.world-thread__kind {
+  color: var(--text-muted);
   font-size: 11px;
-  letter-spacing: 0.3px;
+  border: 1px solid var(--border-subtle);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
 }
 
 .world-thread__messages {
@@ -778,7 +837,7 @@ button {
 
 .world-message {
   max-width: min(760px, 100%);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-panel);
   padding: 12px 14px;
   background: var(--bg-panel);
@@ -786,22 +845,28 @@ button {
 
 .world-message--chenglin {
   margin-left: auto;
-  border-color: rgba(26, 127, 55, 0.28);
-  background: var(--accent-good-soft);
+  border-color: var(--border-default);
+  background: var(--bg-canvas);
 }
 
 .world-message header {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 12px;
+}
+
+.world-message header strong {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .world-message p {
   margin: 8px 0 0;
   line-height: 1.7;
   overflow-wrap: anywhere;
+  color: var(--text-primary);
 }
 
 .reply-composer {
@@ -811,22 +876,26 @@ button {
 }
 
 .reply-boundary {
-  border: 1px solid rgba(26, 127, 55, 0.2);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-panel);
-  background: var(--accent-good-soft);
+  background: var(--bg-canvas);
   color: var(--text-secondary);
-  padding: 10px;
+  padding: 12px;
   display: flex;
   gap: 10px;
+  align-items: flex-start;
 }
 
 .reply-boundary strong {
   color: var(--text-primary);
+  display: block;
+  margin-bottom: 4px;
 }
 
 .reply-boundary p {
-  margin: 4px 0 0;
-  line-height: 1.45;
+  margin: 0;
+  line-height: 1.55;
+  font-size: 13px;
 }
 
 .reply-composer textarea {
@@ -839,6 +908,8 @@ button {
   color: var(--text-primary);
   padding: 12px 14px;
   line-height: 1.65;
+  font-family: inherit;
+  font-size: 14px;
 }
 
 .reply-composer textarea:focus {
@@ -846,12 +917,47 @@ button {
   border-color: var(--accent-info);
 }
 
+.reply-composer__textarea--warn {
+  border-color: var(--accent-danger);
+}
+
+.reply-composer__textarea--warn:focus {
+  outline-color: rgba(207, 34, 46, 0.18);
+  border-color: var(--accent-danger);
+}
+
 .reply-warning {
-  border: 1px solid rgba(207, 34, 46, 0.3);
-  border-radius: var(--radius-control);
-  color: var(--accent-danger);
-  padding: 8px 10px;
+  border: 1px solid var(--accent-danger);
+  border-radius: var(--radius-panel);
+  color: var(--text-primary);
+  padding: 10px 12px;
   background: var(--accent-danger-soft);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.reply-warning__lead {
+  color: var(--accent-danger);
+  font-weight: 500;
+}
+
+.reply-warning__chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reply-warning__chip {
+  background: var(--bg-panel);
+  border: 1px solid var(--accent-danger);
+  color: var(--accent-danger);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 
 .boundary-check,
@@ -865,15 +971,52 @@ button {
 
 .reply-composer__footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
 }
 
-.reply-composer__footer small {
-  min-width: 0;
+.reply-debug {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+.reply-debug__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  cursor: pointer;
   color: var(--text-muted);
-  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.reply-debug__toggle:hover {
+  color: var(--text-secondary);
+}
+
+.reply-debug__hint {
+  color: var(--text-subtle);
+  font-size: 11px;
+}
+
+.reply-debug__body {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow: auto;
 }
 
 .primary-button {
@@ -888,6 +1031,7 @@ button {
   gap: 8px;
   white-space: nowrap;
   font-weight: 600;
+  cursor: pointer;
 }
 
 .primary-button:disabled {

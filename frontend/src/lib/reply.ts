@@ -48,9 +48,18 @@ const forbiddenPatterns: RegExp[] = [
 ];
 
 export function findForbiddenReplyTerms(body: string): string[] {
-  return forbiddenPatterns
-    .filter((pattern) => pattern.test(body))
-    .map((pattern) => pattern.source.replace(/\\/g, ""));
+  const hits: string[] = [];
+  const seen = new Set<string>();
+  for (const pattern of forbiddenPatterns) {
+    const match = body.match(pattern);
+    if (!match) continue;
+    const term = match[0];
+    const key = term.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    hits.push(term);
+  }
+  return hits;
 }
 
 export function canSendReply(draft: ReplyDraft): boolean {

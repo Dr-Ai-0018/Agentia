@@ -9,7 +9,7 @@
 // page boundary; this file relies on that upstream contract.
 
 import { Send } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   buildChatReplyRequest,
   buildTicketReplyRequest,
@@ -30,6 +30,7 @@ export function ReplyComposer({ draft, onDraftChange, onSubmit, isSending = fals
   const forbiddenTerms = useMemo(() => findForbiddenReplyTerms(draft.body), [draft.body]);
   const sendable = canSendReply(draft) && !isSending;
   const isTicket = draft.kind === "ticket_reply";
+  const [showPayload, setShowPayload] = useState(false);
 
   const payloadPreview = useMemo(() => {
     if (!draft.boundaryAck || draft.body.trim().length === 0) return null;
@@ -44,6 +45,7 @@ export function ReplyComposer({ draft, onDraftChange, onSubmit, isSending = fals
     <section className="reply-composer">
       <ReplyBoundaryNotice />
       <textarea
+        className={forbiddenTerms.length > 0 ? "reply-composer__textarea--warn" : undefined}
         value={draft.body}
         onChange={(event) => {
           const nextBody = event.target.value;
@@ -57,8 +59,13 @@ export function ReplyComposer({ draft, onDraftChange, onSubmit, isSending = fals
         rows={8}
       />
       {forbiddenTerms.length > 0 && (
-        <div className="reply-warning">
-          Keep private: {forbiddenTerms.join(", ")}
+        <div className="reply-warning" role="status">
+          <span className="reply-warning__lead">这几个词在世界里说不了：</span>
+          <span className="reply-warning__chips">
+            {forbiddenTerms.map((term) => (
+              <span className="reply-warning__chip" key={term}>{term}</span>
+            ))}
+          </span>
         </div>
       )}
       <label className="boundary-check">
@@ -67,7 +74,7 @@ export function ReplyComposer({ draft, onDraftChange, onSubmit, isSending = fals
           checked={draft.boundaryAck}
           onChange={(event) => onDraftChange({ ...draft, boundaryAck: event.target.checked })}
         />
-        <span>I checked this reply against the world-safe boundary.</span>
+        <span>这条回话我看过，没混入屋外的东西。</span>
       </label>
       {isTicket && (
         <label className="ticket-close">
@@ -76,15 +83,29 @@ export function ReplyComposer({ draft, onDraftChange, onSubmit, isSending = fals
             checked={draft.closeTicket ?? false}
             onChange={(event) => onDraftChange({ ...draft, closeTicket: event.target.checked })}
           />
-          <span>Close this ticket after sending.</span>
+          <span>发出后把这条单据收掉。</span>
         </label>
       )}
       <div className="reply-composer__footer">
-        <small>Payload preview: {payloadPreview ? JSON.stringify(payloadPreview) : "—"}</small>
         <button type="button" className="primary-button" disabled={!sendable} onClick={() => onSubmit(draft)}>
           <Send size={16} />
-          Send as Chenglin
+          以程林的口吻发出
         </button>
+      </div>
+      <div className="reply-debug">
+        <button
+          type="button"
+          className="reply-debug__toggle"
+          onClick={() => setShowPayload((v) => !v)}
+          aria-expanded={showPayload}
+        >
+          <span>{showPayload ? "▾" : "▸"}</span>
+          <span>调试用：payload preview</span>
+          <span className="reply-debug__hint">给 operator 看的，不进世界</span>
+        </button>
+        {showPayload ? (
+          <pre className="reply-debug__body">{payloadPreview ? JSON.stringify(payloadPreview, null, 2) : "—"}</pre>
+        ) : null}
       </div>
     </section>
   );
