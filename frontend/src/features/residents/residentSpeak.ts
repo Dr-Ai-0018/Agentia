@@ -1,4 +1,4 @@
-import type { Pressure, ResidentRuntime, ResidentStatus } from "../../types/domain";
+import type { Pressure, QuotaLayer, ResidentRuntime, ResidentStatus } from "../../types/domain";
 
 const verbMap: Record<string, string> = {
   guest_exec: "接待来客",
@@ -7,7 +7,13 @@ const verbMap: Record<string, string> = {
   self_quota: "自查额度",
   model_stream: "在敲字",
   action_exec: "在做事",
+  resident_sleep: "睡了",
+  sleep: "睡了",
 };
+
+export function verbLabel(action: string): string {
+  return verbMap[action] ?? action;
+}
 
 export type DoingLine = { verb: string; suffix: string };
 
@@ -79,4 +85,34 @@ export function pressureToQuotaTone(pressure: Pressure): "ok" | "mid" | "warn" {
   if (pressure === "low") return "ok";
   if (pressure === "moderate") return "mid";
   return "warn";
+}
+
+export function layerWindowLabel(layer: QuotaLayer): string {
+  if (layer === "6h") return "近 6h";
+  if (layer === "day") return "今日";
+  return "本周";
+}
+
+// forecast 是"按当前速率还够多少时间"的口语估算。
+// 前端只拿百分比，乘上 layer 时长，得到剩余人时。粗略、不承诺精度。
+export function forecastFromRemainingPct(pct: number, layer: QuotaLayer): string {
+  const layerHours = layer === "6h" ? 6 : layer === "day" ? 24 : 168;
+  const remainHours = Math.max(0, (layerHours * pct) / 100);
+  return humanizeHours(remainHours);
+}
+
+function humanizeHours(hours: number): string {
+  if (hours < 1) {
+    const mins = Math.round(hours * 60);
+    return `~ ${mins} 分`;
+  }
+  if (hours < 24) {
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    if (m === 0) return `~ ${h}h`;
+    return `~ ${h}h${String(m).padStart(2, "0")}`;
+  }
+  const days = hours / 24;
+  if (days < 10) return `~ ${days.toFixed(1)}d`;
+  return `~ ${Math.round(days)}d`;
 }
