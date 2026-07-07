@@ -19,6 +19,23 @@ type DashboardSummary struct {
 	Alerts      []OperatorAlert             `json:"alerts"`
 }
 
+type PreflightResponse struct {
+	GeneratedAt string           `json:"generated_at"`
+	Overall     string           `json:"overall"`
+	Summary     string           `json:"summary"`
+	Checks      []PreflightCheck `json:"checks"`
+}
+
+type PreflightCheck struct {
+	ID       string         `json:"id"`
+	Section  string         `json:"section"`
+	Label    string         `json:"label"`
+	Status   string         `json:"status"`
+	Required bool           `json:"required"`
+	Detail   string         `json:"detail"`
+	Data     map[string]any `json:"data,omitempty"`
+}
+
 type OperatorAlert struct {
 	Severity string `json:"severity"`
 	Kind     string `json:"kind"`

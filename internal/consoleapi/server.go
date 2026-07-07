@@ -26,6 +26,8 @@ type Server struct {
 	orchestrator *orchestrator.Service
 	now          func() time.Time
 	limiter      *rateLimiter
+	startedAt    time.Time
+	access       *accessStats
 }
 
 type Options struct {
@@ -54,12 +56,15 @@ func New(options Options) *Server {
 		orchestrator: orchestrator.New(app, &http.Client{Timeout: 30 * time.Second}, "", ""),
 		now:          now,
 		limiter:      newRateLimiter(10, 20),
+		startedAt:    now(),
+		access:       &accessStats{},
 	}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/preflight", s.handlePreflight)
 	mux.HandleFunc("GET /api/summary", s.handleSummary)
 	mux.HandleFunc("GET /api/runs", s.handleRuns)
 	mux.HandleFunc("GET /api/runs/{runID}/status", s.handleRunStatus)
@@ -96,6 +101,7 @@ func (s *Server) withAccessLog(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		if strings.HasPrefix(r.URL.Path, "/api/") {
+			s.access.record(rec.status, s.now())
 			log.Printf("consoleapi method=%s path=%s status=%d latency=%s remote=%s", r.Method, r.URL.Path, rec.status, time.Since(start).Round(time.Millisecond), r.RemoteAddr)
 		}
 	})
@@ -147,6 +153,189 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"ok":           true,
 		"generated_at": s.now().Format(time.RFC3339),
 	})
+}
+
+func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
+	now := s.now()
+	checks := []PreflightCheck{
+		{
+			ID:       "service_running",
+			Section:  "service",
+			Label:    "console 服务",
+			Status:   "good",
+			Required: true,
+			Detail:   "console API 正在运行。",
+			Data: map[string]any{
+				"started_at": s.startedAt.Format(time.RFC3339),
+				"uptime_sec": int(now.Sub(s.startedAt).Seconds()),
+			},
+		},
+	}
+
+	if s.token == "" {
+		checks = append(checks, PreflightCheck{
+			ID:       "backend_token",
+			Section:  "auth",
+			Label:    "后端通行口令",
+			Status:   "watch",
+			Required: true,
+			Detail:   "ARENA_CONSOLE_TOKEN 未启用，/api 缺少后端口令保护。",
+		})
+	} else {
+		checks = append(checks, PreflightCheck{
+			ID:       "backend_token",
+			Section:  "auth",
+			Label:    "后端通行口令",
+			Status:   "good",
+			Required: true,
+			Detail:   "后端 /api 需要 nginx 注入的通行口令。",
+		})
+	}
+	checks = append(checks, PreflightCheck{
+		ID:       "public_basic_auth",
+		Section:  "auth",
+		Label:    "公网入口",
+		Status:   "unknown",
+		Required: false,
+		Detail:   "basic auth 在 nginx 层，后端只能通过外部 smoke 验证。",
+	})
+
+	checks = append(checks,
+		s.readinessCheck("runs_readable", "storage", "运行记录", func() (map[string]any, error) {
+			runs, err := s.orchestrator.ListRuns(1)
+			return map[string]any{"sample_count": len(runs)}, err
+		}),
+		s.readinessCheck("budget_readable", "storage", "额度账本", func() (map[string]any, error) {
+			_, err := s.broker.RunBudgetStatus(nil)
+			return nil, err
+		}),
+		s.readinessCheck("inbox_readable", "storage", "程林回话队列", func() (map[string]any, error) {
+			_, err := s.world.ReadHostInboxSummary(1, 1)
+			return nil, err
+		}),
+		s.readinessCheck("followups_readable", "storage", "待回应线索", func() (map[string]any, error) {
+			followups, err := s.world.ReadHostFollowups(1)
+			return map[string]any{"sample_count": len(followups)}, err
+		}),
+		s.readinessCheck("tickets_readable", "storage", "住户请求", func() (map[string]any, error) {
+			tickets, err := s.world.ReadTickets("", "", "", 1)
+			return map[string]any{"sample_count": len(tickets)}, err
+		}),
+	)
+
+	stats := s.access.snapshot()
+	if stats.total5xx == 0 {
+		checks = append(checks, PreflightCheck{
+			ID:       "recent_5xx",
+			Section:  "health",
+			Label:    "接口错误",
+			Status:   "good",
+			Required: true,
+			Detail:   "本服务进程启动后没有记录到 5xx。",
+			Data:     map[string]any{"total_5xx": 0},
+		})
+	} else {
+		checks = append(checks, PreflightCheck{
+			ID:       "recent_5xx",
+			Section:  "health",
+			Label:    "接口错误",
+			Status:   "watch",
+			Required: true,
+			Detail:   "本服务进程启动后记录到 5xx，长测前需要查看 journal。",
+			Data: map[string]any{
+				"total_5xx":   stats.total5xx,
+				"last_5xx_at": stats.last5xx.Format(time.RFC3339),
+				"total_seen":  stats.total,
+				"started_at":  s.startedAt.Format(time.RFC3339),
+			},
+		})
+	}
+	if stats.rateLimited == 0 {
+		checks = append(checks, PreflightCheck{
+			ID:       "rate_limit",
+			Section:  "health",
+			Label:    "请求节奏",
+			Status:   "good",
+			Required: false,
+			Detail:   "本服务进程启动后没有触发 rate limit。",
+			Data:     map[string]any{"rate_limited": 0},
+		})
+	} else {
+		checks = append(checks, PreflightCheck{
+			ID:       "rate_limit",
+			Section:  "health",
+			Label:    "请求节奏",
+			Status:   "watch",
+			Required: false,
+			Detail:   "本服务进程启动后触发过 rate limit，可能是轮询或外部访问太密。",
+			Data: map[string]any{
+				"rate_limited":         stats.rateLimited,
+				"last_rate_limited_at": stats.lastRateLimited.Format(time.RFC3339),
+			},
+		})
+	}
+
+	overall := preflightOverall(checks)
+	summary := "长测前核心检查通过。"
+	if overall == "watch" {
+		summary = "有必需项需要留意，先别启动长测。"
+	} else if overall == "unknown" {
+		summary = "有必需项状态不确定，需要人工确认。"
+	}
+	checks = append(checks, PreflightCheck{
+		ID:       "soak_gate",
+		Section:  "gate",
+		Label:    "长测闸门",
+		Status:   overall,
+		Required: true,
+		Detail:   summary,
+	})
+
+	writeJSON(w, http.StatusOK, PreflightResponse{
+		GeneratedAt: now.Format(time.RFC3339),
+		Overall:     overall,
+		Summary:     summary,
+		Checks:      checks,
+	})
+}
+
+func (s *Server) readinessCheck(id, section, label string, read func() (map[string]any, error)) PreflightCheck {
+	data, err := read()
+	if err != nil {
+		return PreflightCheck{
+			ID:       id,
+			Section:  section,
+			Label:    label,
+			Status:   "watch",
+			Required: true,
+			Detail:   "读取失败，查看 consoleapi 日志。",
+		}
+	}
+	return PreflightCheck{
+		ID:       id,
+		Section:  section,
+		Label:    label,
+		Status:   "good",
+		Required: true,
+		Detail:   "可读取。",
+		Data:     data,
+	}
+}
+
+func preflightOverall(checks []PreflightCheck) string {
+	overall := "good"
+	for _, check := range checks {
+		if !check.Required {
+			continue
+		}
+		switch check.Status {
+		case "watch":
+			return "watch"
+		case "unknown":
+			overall = "unknown"
+		}
+	}
+	return overall
 }
 
 func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
@@ -479,6 +668,49 @@ type rateLimiter struct {
 type rateClient struct {
 	tokens float64
 	seen   time.Time
+}
+
+type accessStats struct {
+	mu              sync.Mutex
+	total           int
+	total5xx        int
+	rateLimited     int
+	last5xx         time.Time
+	lastRateLimited time.Time
+}
+
+type accessStatsSnapshot struct {
+	total           int
+	total5xx        int
+	rateLimited     int
+	last5xx         time.Time
+	lastRateLimited time.Time
+}
+
+func (s *accessStats) record(status int, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.total++
+	if status >= http.StatusInternalServerError {
+		s.total5xx++
+		s.last5xx = now
+	}
+	if status == http.StatusTooManyRequests {
+		s.rateLimited++
+		s.lastRateLimited = now
+	}
+}
+
+func (s *accessStats) snapshot() accessStatsSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return accessStatsSnapshot{
+		total:           s.total,
+		total5xx:        s.total5xx,
+		rateLimited:     s.rateLimited,
+		last5xx:         s.last5xx,
+		lastRateLimited: s.lastRateLimited,
+	}
 }
 
 func newRateLimiter(ratePerSecond, burst int) *rateLimiter {
