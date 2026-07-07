@@ -136,19 +136,19 @@ export const telemetry: OperatorTelemetry = {
       severity: "p1",
       kind: "budget_pressure",
       resident: "onyx",
-      message: "Week quota is the tightest layer, 18% remaining. Watch for self_quota, sleep, and slower pacing behavior.",
+      message: "本周额度是最紧的一层，剩 18%。她已经在自查、放慢节奏、间断休息了。",
     },
     {
       severity: "p2",
       kind: "pending_reply",
       resident: "amber",
-      message: "Pending chat age is 47m.",
+      message: "有条话过了 47 分钟没回。",
     },
     {
       severity: "info",
       kind: "sleep",
       resident: "amber",
-      message: "Resident chose sleep for 10m; next turn resumes at 14:48Z.",
+      message: "选了睡 10 分钟，下一轮 14:48 恢复。",
     },
   ],
   followups: [

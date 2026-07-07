@@ -1,5 +1,5 @@
-import { Clock, Grid, Home, MessageSquare, RefreshCw, Server, Settings, Users } from "lucide-react";
-import type { ReactNode } from "react";
+import { Clock, Grid, Home, MessageSquare, RefreshCw, Settings, Users } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { dataMode } from "../../lib/api/client";
 
 export type ConsolePage = "overview" | "residents" | "world-chat" | "runs" | "system" | "settings";
@@ -30,7 +30,11 @@ type ConsoleShellProps = {
 
 export function ConsoleShell({ activePage, onNavigate, children }: ConsoleShellProps) {
   const crumb = crumbs[activePage];
-  const now = new Date();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
   const clock =
     `${String(now.getHours()).padStart(2, "0")}:` +
     `${String(now.getMinutes()).padStart(2, "0")}:` +
