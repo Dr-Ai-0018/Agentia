@@ -1,4 +1,4 @@
-import { Clock, Grid, Home, MessageSquare, RefreshCw, Settings, Users } from "lucide-react";
+import { AlertTriangle, Clock, Grid, Home, MessageSquare, RefreshCw, Settings, Users } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { dataMode } from "../../lib/api/client";
 
@@ -26,9 +26,11 @@ type ConsoleShellProps = {
   activePage: ConsolePage;
   onNavigate: (page: ConsolePage) => void;
   children: ReactNode;
+  lastFetchedAt?: Date | null;
+  syncError?: string;
 };
 
-export function ConsoleShell({ activePage, onNavigate, children }: ConsoleShellProps) {
+export function ConsoleShell({ activePage, onNavigate, children, lastFetchedAt, syncError }: ConsoleShellProps) {
   const crumb = crumbs[activePage];
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -39,6 +41,8 @@ export function ConsoleShell({ activePage, onNavigate, children }: ConsoleShellP
     `${String(now.getHours()).padStart(2, "0")}:` +
     `${String(now.getMinutes()).padStart(2, "0")}:` +
     `${String(now.getSeconds()).padStart(2, "0")}`;
+  const syncAge = lastFetchedAt ? ageLabel(now, lastFetchedAt) : "还没连上";
+  const syncTone = syncError ? "warn" : "ok";
 
   return (
     <div className="console-shell">
@@ -90,9 +94,12 @@ export function ConsoleShell({ activePage, onNavigate, children }: ConsoleShellP
             <span className="app-topbar__crumb-cur">{crumb.leaf}</span>
           </div>
           <div className="app-topbar__actions">
-            <div className="app-topbar__sync">
-              <RefreshCw size={12} strokeWidth={1.5} />
-              <span>数据 · 刚刚 · {dataMode}</span>
+            <div
+              className={`app-topbar__sync app-topbar__sync--${syncTone}`}
+              title={syncError || undefined}
+            >
+              {syncError ? <AlertTriangle size={12} strokeWidth={1.5} /> : <RefreshCw size={12} strokeWidth={1.5} />}
+              <span>数据 · {syncAge} · {dataMode}</span>
             </div>
             <div className="app-topbar__clock">
               <div className="app-topbar__clock-label">当前时间</div>
@@ -105,4 +112,14 @@ export function ConsoleShell({ activePage, onNavigate, children }: ConsoleShellP
       </div>
     </div>
   );
+}
+
+function ageLabel(now: Date, then: Date): string {
+  const seconds = Math.max(0, Math.round((now.getTime() - then.getTime()) / 1000));
+  if (seconds < 5) return "刚刚";
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} 分前`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} 小时前`;
 }

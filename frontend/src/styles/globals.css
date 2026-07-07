@@ -232,10 +232,21 @@ button {
   border-radius: var(--radius-control);
   font-size: 12px;
   color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .app-topbar__sync:hover {
   background: var(--bg-canvas);
+}
+
+.app-topbar__sync--warn {
+  border-color: var(--accent-warning);
+  background: var(--accent-warning-soft);
+  color: var(--accent-warning);
+}
+
+.app-topbar__sync--warn:hover {
+  background: var(--accent-warning-soft);
 }
 
 .app-topbar__clock {
