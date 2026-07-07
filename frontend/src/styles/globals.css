@@ -766,12 +766,18 @@ button {
   color: var(--text-primary);
 }
 
-.thread-list__row-head span {
+.thread-list__row-head > span {
   font-size: 11px;
   color: var(--text-muted);
   border: 1px solid var(--border-subtle);
   padding: 1px 8px;
   border-radius: var(--radius-pill);
+}
+
+.thread-list__draft-dot {
+  color: var(--accent-warning);
+  margin-left: 4px;
+  font-weight: 700;
 }
 
 .thread-list small {

@@ -131,6 +131,17 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
           </div>
         </div>
 
+        <div className="kpi-card">
+          <div className="kpi-card__label-row">
+            <span>她们攒的碎念</span>
+            <span className="kpi-card__unit">条</span>
+          </div>
+          <div className="kpi-card__number">{memoryReviewCount(telemetry.system.memory)}</div>
+          <div className="kpi-card__delta">
+            {memoryReviewHint(memoryReviewCount(telemetry.system.memory))}
+          </div>
+        </div>
+
         <div className="session-panel">
           <div className="session-panel__label">这次观察</div>
           <div className="session-panel__val">{elapsedShort}</div>
@@ -204,4 +215,25 @@ function isoTimeToHm(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function memoryReviewCount(memoryLines: readonly string[]): number {
+  // The list carries operator-facing memory metadata; the "过一眼" / "review"
+  // line is the one host asked to surface. Fall back to the first line's first
+  // number if the specific line isn't found. Zero if nothing parses.
+  const target = memoryLines.find((line) => line.includes("过一眼") || /review/i.test(line));
+  return firstIntFrom(target ?? memoryLines[0] ?? "");
+}
+
+function firstIntFrom(text: string): number {
+  const match = /(\d[\d,]*)/.exec(text);
+  if (!match) return 0;
+  return Number(match[1].replace(/,/g, "")) || 0;
+}
+
+function memoryReviewHint(count: number): string {
+  if (count === 0) return "她们最近没多想";
+  if (count < 50) return "慢慢翻，她们没催";
+  if (count < 200) return "她们攒了些想让你过一眼的";
+  return "她们最近有点话唠";
 }

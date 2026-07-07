@@ -10,6 +10,7 @@ import { buildChatReplyRequest, buildTicketReplyRequest } from "../lib/reply";
 import { ReplyComposer } from "../features/world-chat/ReplyComposer";
 import { WorldChatThread } from "../features/world-chat/WorldChatThread";
 import { draftFromThread } from "../features/world-chat/worldSafeMappers";
+import { loadPersistedDrafts, persistDrafts } from "../features/world-chat/draftPersistence";
 import type {
   AssertNoGodViewLeak,
   ReplyDraft,
@@ -30,7 +31,7 @@ type WorldChatPageProps = AssertNoGodViewLeak<{
 
 export function WorldChatPage({ threads, activeThreadId, onSelectThread }: WorldChatPageProps) {
   const activeThread = threads.find((thread) => thread.threadId === activeThreadId) ?? threads[0];
-  const [drafts, setDrafts] = useState<Record<string, ReplyDraft>>({});
+  const [drafts, setDrafts] = useState<Record<string, ReplyDraft>>(() => loadPersistedDrafts());
   const [sendState, setSendState] = useState<"idle" | "sending" | "sent">("idle");
 
   useEffect(() => {
@@ -40,6 +41,10 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
       [activeThread.threadId]: draftFromThread(activeThread),
     });
   }, [activeThread]);
+
+  useEffect(() => {
+    persistDrafts(drafts);
+  }, [drafts]);
 
   const draft = activeThread ? drafts[activeThread.threadId] : undefined;
   const selectedMessages = useMemo(() => activeThread?.messages ?? [], [activeThread]);
@@ -53,6 +58,12 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
         await arenaApi.sendWorldChatReply(buildChatReplyRequest(input));
       }
       setSendState("sent");
+      setDrafts((current) => {
+        if (!(input.threadId in current)) return current;
+        const next = { ...current };
+        delete next[input.threadId];
+        return next;
+      });
     } catch (submitError) {
       setSendState("idle");
       throw submitError;
@@ -78,6 +89,7 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
         {threads.map((thread) => {
           const last = thread.messages[thread.messages.length - 1];
           const isActive = thread.threadId === activeThread.threadId;
+          const hasDraft = Boolean(drafts[thread.threadId]?.body.trim());
           return (
             <button
               type="button"
@@ -86,7 +98,10 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
               onClick={() => onSelectThread(thread.threadId)}
             >
               <div className="thread-list__row-head">
-                <strong>{residentLabel(thread.resident)}</strong>
+                <strong>
+                  {residentLabel(thread.resident)}
+                  {hasDraft ? <span className="thread-list__draft-dot" title="有未发出的草稿">·</span> : null}
+                </strong>
                 <span>{kindLabel[thread.kind]}</span>
               </div>
               <small>{last?.body}</small>
