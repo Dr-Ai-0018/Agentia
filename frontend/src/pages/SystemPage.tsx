@@ -3,11 +3,11 @@ import type { OperatorTelemetry } from "../types/domain";
 
 export function SystemPage({ telemetry }: { telemetry: OperatorTelemetry }) {
   return (
-    <div className="page-stack">
-      <header className="page-header">
-        <p className="eyebrow">Operator-only health</p>
-        <h1>System</h1>
-        <p>Host capacity, provider health, cache/memory inspection, and economy signals. These facts never enter Chenglin replies.</p>
+    <div className="system-page">
+      <header className="system-hero">
+        <h1 className="system-hero__title">房子</h1>
+        <p className="system-hero__sub">operator 看的房子基本情况。</p>
+        <p className="system-hero__anchor">这里的数字从不进程林说的话。</p>
       </header>
       <SystemHealthGrid system={telemetry.system} />
     </div>

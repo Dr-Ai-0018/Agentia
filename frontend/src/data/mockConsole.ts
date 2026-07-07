@@ -214,11 +214,11 @@ export const telemetry: OperatorTelemetry = {
     { label: "24h duration complete", state: "pending" },
   ],
   system: {
-    capacity: ["CPU free: 1 vCPU", "Memory free: 13.4 GiB", "Disk free: 65 GiB"],
-    vms: ["jade: running", "amber: running", "onyx: running"],
-    providers: ["primary: healthy", "fallback: configured", "transient blocks: 0"],
-    memory: ["resident review: 375", "host actionable: 0", "duplicates: 0"],
-    economy: ["spark total: 1,584.10", "spent last 10m: 304.59", "cache health: good"],
+    capacity: ["CPU 空闲：1 vCPU", "内存空闲：13.4 GiB", "磁盘空闲：65 GiB"],
+    vms: ["jade：在跑", "amber：在跑", "onyx：在跑"],
+    providers: ["主线：正常", "备线：已配置", "临时挡住：0 次"],
+    memory: ["等程林过一眼：375 条", "非要 host 出手的：0 条", "重复片段：0 条"],
+    economy: ["spark 总量：1,584.10", "最近 10 分钟花掉：304.59", "缓存命中：不错"],
   },
 };
 
