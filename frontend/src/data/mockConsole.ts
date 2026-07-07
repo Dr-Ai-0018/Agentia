@@ -233,7 +233,7 @@ export const threads: Record<string, WorldVisibleThread> = {
         id: "chenglin-earlier-jade",
         from: "chenglin",
         createdAt: "earlier",
-        body: "你可以按自己的节奏继续。做你觉得有意思、有价值、也适合你自己的事情；如果额度紧张，就先看 self_quota，再决定要不要休息一会儿。",
+        body: "你可以按自己的节奏继续。做你觉得有意思、有价值、也适合你自己的事情；如果觉得精力紧了，就先看一眼自己的额度，再决定要不要休息一会儿。",
       },
       {
         id: "jade-20260630T141808.012Z",
