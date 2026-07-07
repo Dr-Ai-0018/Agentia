@@ -1,25 +1,60 @@
 :root {
-  color-scheme: dark;
-  --bg-app: #09090b;
-  --bg-app-soft: #050506;
-  --bg-panel: rgba(255, 255, 255, 0.026);
-  --bg-panel-strong: rgba(255, 255, 255, 0.055);
-  --bg-control: rgba(0, 0, 0, 0.34);
-  --border-subtle: rgba(255, 255, 255, 0.055);
-  --border-active: rgba(255, 255, 255, 0.12);
-  --text-primary: #f4f4f5;
-  --text-secondary: #a1a1aa;
-  --text-muted: #71717a;
-  --accent-good: #10b981;
-  --accent-warning: #f59e0b;
-  --accent-danger: #f43f5e;
-  --accent-info: #3b82f6;
-  --jade: #10b981;
-  --amber: #f59e0b;
-  --onyx: #f43f5e;
-  --radius-panel: 16px;
-  --radius-control: 8px;
-  --shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.48);
+  color-scheme: light;
+
+  /* Surfaces (light monochrome, GitHub-ish) */
+  --bg-app: #ffffff;
+  --bg-canvas: #f6f8fa;
+  --bg-canvas-strong: #eaeef2;
+  --bg-panel: #ffffff;
+  --bg-control: #ffffff;
+  --bg-hover: rgba(31, 35, 40, 0.05);
+
+  /* Legacy aliases so untouched pages don't crash */
+  --bg-app-soft: #f6f8fa;
+  --bg-panel-strong: #eaeef2;
+
+  /* Borders (hairline) */
+  --border-subtle: #eaeef2;
+  --border-default: #d0d7de;
+  --border-strong: #afb8c1;
+  --border-active: #afb8c1;
+
+  /* Text */
+  --text-primary: #1f2328;
+  --text-secondary: #656d76;
+  --text-muted: #8b949e;
+  --text-subtle: #afb8c1;
+
+  /* Semantic accents (used sparingly) */
+  --accent-good: #1a7f37;
+  --accent-good-soft: #dafbe1;
+  --accent-warning: #9a6700;
+  --accent-warning-soft: #fff8c5;
+  --accent-danger: #cf222e;
+  --accent-danger-soft: #ffebe9;
+  --accent-info: #0969da;
+  --accent-info-soft: #ddf4ff;
+
+  /* Resident tints (used as subtle avatar backgrounds only) */
+  --jade: #1a7f37;
+  --jade-soft: #dafbe1;
+  --amber: #9a6700;
+  --amber-soft: #fff8c5;
+  --onyx: #cf222e;
+  --onyx-soft: #ffebe9;
+
+  /* Shape */
+  --radius-panel: 8px;
+  --radius-control: 6px;
+  --radius-pill: 999px;
+
+  /* Shadow (extremely subtle) */
+  --shadow-panel: 0 1px 0 rgba(31, 35, 40, 0.04);
+
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    "Noto Sans", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
 }

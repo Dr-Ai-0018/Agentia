@@ -1,75 +1,82 @@
-import { Server } from "lucide-react";
-import type { CSSProperties } from "react";
-import { Badge } from "../../components/ui/Badge";
-import { ProgressBar } from "../../components/ui/ProgressBar";
-import { StatusDot } from "../../components/ui/StatusDot";
-import { formatCompactNumber, formatPercent, formatSpark } from "../../lib/domain/formatting";
-import { pressureTone, quotaToneClass } from "../../lib/domain/severity";
+import { Sparkline } from "../../components/charts/Sparkline";
 import type { ResidentBudget, ResidentRuntime } from "../../types/domain";
-import { residentLabel, residentTheme, statusTone } from "./residentTheme";
+import { describeDoing, pressureToQuotaTone, residentStateLabel } from "./residentSpeak";
+import { residentLabel } from "./residentTheme";
 
 type ResidentCardProps = {
   runtime: ResidentRuntime;
   budget: ResidentBudget;
+  spark?: number[];
 };
 
-export function ResidentCard({ runtime, budget }: ResidentCardProps) {
-  const theme = residentTheme(runtime.resident);
-  const tone = statusTone(runtime.status);
+const defaultSpark: Record<string, number[]> = {
+  jade: [32, 28, 30, 22, 24, 18, 20, 14, 17, 12, 15],
+  amber: [15, 18, 16, 14, 20, 25, 30, 32, 34, 34, 35],
+  onyx: [22, 20, 25, 26, 24, 28, 30, 28, 32, 30, 33],
+};
+
+export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
+  const state = residentStateLabel(runtime.status);
+  const doing = describeDoing(runtime);
+  const quotaTone = pressureToQuotaTone(budget.pressure);
+  const remaining = budget.remaining[budget.tightestLayer];
+  const layerLabel = layerToText(budget.tightestLayer);
+  const sparkValues = spark ?? defaultSpark[runtime.resident] ?? [15, 18, 22, 20, 24, 22, 26];
 
   return (
-    <article className="resident-card" style={{ "--resident": theme.color, "--resident-soft": theme.soft } as CSSProperties}>
-      <header className="resident-card__header">
-        <div className="resident-card__identity">
-          <div className="resident-card__icon">
-            <Server size={20} />
-          </div>
-          <div>
-            <h3>{residentLabel(runtime.resident)}</h3>
-            <div className="inline-status">
-              <StatusDot tone={tone} pulse={runtime.status === "running"} />
-              <span>{runtime.status}</span>
-            </div>
-          </div>
-        </div>
-        <div className="round-chip">#{runtime.round}</div>
-      </header>
+    <article className="resident-card">
+      <div className="resident-card__head">
+        <h3 className="resident-card__name">{residentLabel(runtime.resident)}</h3>
+        <span className={`resident-state resident-state--${state.variant}`}>{state.text}</span>
+      </div>
 
-      <div className="metric-grid two">
-        <div className="metric-cell">
-          <span>Spark balance</span>
-          <strong>{formatSpark(budget.sparkBalance)}</strong>
+      <p className="resident-card__doing">
+        {doing.verb ? (
+          <>
+            {runtime.status === "sleeping" ? "" : "正在"}
+            <span className="resident-card__doing-verb">{doing.verb}</span>
+            {doing.suffix ? ` ${doing.suffix}` : ""}
+          </>
+        ) : (
+          "—"
+        )}
+      </p>
+
+      <div className="resident-card__metrics">
+        <div>
+          <div className="resident-card__metric-label">精力（spark）</div>
+          <div className="resident-card__metric-val">{Math.round(budget.sparkBalance)}</div>
         </div>
-        <div className="metric-cell">
-          <span>Current action</span>
-          <strong>{runtime.lastAction}</strong>
-          <small>{runtime.phase}</small>
+        <div>
+          <div className="resident-card__metric-label">
+            {runtime.status === "sleeping" ? "最近动静" : "最近说话"}
+          </div>
+          <div className="resident-card__metric-val">{runtime.lastUpdateAge}</div>
         </div>
-        <div className="metric-cell">
-          <span>Last update</span>
-          <strong>{runtime.lastUpdateAge}</strong>
-        </div>
-        <div className="metric-cell">
-          <span>In flight</span>
-          <strong>{runtime.inFlight}</strong>
-        </div>
+      </div>
+
+      <div className="resident-card__spark">
+        <Sparkline values={sparkValues} color="#1f2328" height={36} />
       </div>
 
       <div className="resident-card__quota">
-        <div>
-          <span>Tightest quota</span>
-          <Badge tone={pressureTone(budget.pressure).replace("tone-", "") as "good" | "warning" | "danger" | "info" | "muted"}>
-            {budget.tightestLayer} / {budget.pressure}
-          </Badge>
+        <div className="resident-card__quota-labels">
+          <span>{layerLabel}额度</span>
+          <span className="resident-card__quota-num">剩 {Math.round(remaining)}%</span>
         </div>
-        <strong>{formatPercent(budget.remaining[budget.tightestLayer])} remaining</strong>
-      </div>
-      <ProgressBar value={budget.remaining[budget.tightestLayer]} toneClass={quotaToneClass(budget.remaining[budget.tightestLayer])} />
-      <div className="resident-card__tokens">
-        <span>Input {formatCompactNumber(runtime.totalInputTokens)}</span>
-        <span>Cached {formatCompactNumber(runtime.totalCachedTokens)}</span>
-        <span>Output {formatCompactNumber(runtime.totalOutputTokens)}</span>
+        <div className="progress-bar">
+          <div
+            className={`progress-bar__fill progress-bar__fill--${quotaTone}`}
+            style={{ width: `${Math.max(0, Math.min(100, remaining))}%` }}
+          />
+        </div>
       </div>
     </article>
   );
+}
+
+function layerToText(layer: "6h" | "day" | "week"): string {
+  if (layer === "6h") return "近 6h ";
+  if (layer === "day") return "今日";
+  return "本周";
 }
