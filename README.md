@@ -23,6 +23,8 @@
 - continuity notes 已收口到专用 note API，不允许直接用 shell 改写
 - prompt cache 策略采用固定 instructions 加 append-only input history replay
 - v0 当前处于 pre-release 收口状态：工程 gate 已接近完成，但正式发布前仍必须通过人工批准的超长多 resident soak
+- Web console 已上线：`arena-console-server` HTTP daemon + nginx + basic auth + upstream token 双层；前端六页（观察窗 / 住户 / 对话 / 起居 / 房子 / 房务）已按 GitHub 浅色 monochrome direction 落地
+- Preflight endpoint（`/api/preflight`）三态 `好 / 要留意 / 不确定`，用于长测前的最小 subset 检查
 
 ## Read First
 
@@ -68,7 +70,7 @@
 
 ## V0 Pre-Release Gate
 
-截至 2026-06-30，v0 还不能正式发布。
+截至 2026-07-07，v0 还不能正式发布。
 
 当前已完成：
 
@@ -77,6 +79,9 @@
 - memory duplicate blocker 清零：`duplicate_history_groups=0`
 - readiness / acceptance 自动项无 failure
 - 全量 `go test ./...` 通过
+- Console API + 前端 dashboard 全上线（长测前的观察窗口已就绪）
+- Preflight endpoint 三态检查 `overall=good`
+- v0 所有 host-拍板项已回答（2026-07-07）：resident 完全放开（VPS root + 网络完全开放 + 可对话不可传文件）；host authority v0 保守（broker 全部 draft-only，live 变更全走人）
 
 当前发布前硬门禁：
 

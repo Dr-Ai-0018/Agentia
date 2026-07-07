@@ -467,12 +467,39 @@ Validation:
 
 ## Open Design Questions
 
-- Should VMs have unrestricted outbound internet access?
-- Should residents be allowed to run Docker inside their VM?
-- Should there be a shared market, message bus, or filesystem exchange area?
-- How much resident-to-resident interaction should exist in early phases?
-- Which host responses should remain manual, and which can become automated?
-- Which memory and reflection flows are mandatory in v0, and which are enhancements?
+**2026-07-07 host 拍板**（详见 `docs/development/02_V0_DEVELOPMENT_PLAN.md §7` / `01_KEY_LOGIC_NOTES.md §4.1` / `03_PHASE_CHECKLIST.md §S2.3` / `09_24H_SOAK_DASHBOARD_BRIEF.md §14`）：
+
+- VMs unrestricted outbound internet access —— **完全开放**。resident 拿完整 VPS，无 whitelist、无出站过滤。
+- Residents running Docker / arbitrary services inside VM —— **允许**（root 权限完整，`apt install` 任意软件、长跑后台进程 / daemon / cron / systemd 用户 unit 都 OK）
+- Shared market / message bus / filesystem exchange —— **暂不做**。resident 之间只允许**对话**（复用现有 world message 系统，程林可见），传文件延后。
+- Resident-to-resident interaction —— 同上，只允许对话形式的交互。
+- Host response 手动 vs 自动 —— **v0 全部人工**。broker 只 draft/通知/记账，任何 live 状态变更（资源变配、维护标记、checkpoint、intervention 发布、memory apply）必须 host 亲手过。放宽候选一律延后到 v0 之后。
+- Memory / reflection flows in v0 —— **core**（`docs/development/02 §4/§S5`）。scheduler 不启用自动，operator 手动 dry-run/apply。
+
+## V0 Stage Conclusion (2026-07-07)
+
+到 2026-07-07 已收：
+
+- 工程侧的六页 web dashboard 全部落地（观察窗 / 住户 / 对话 / 起居 / 房子 / 房务）
+- Backend `/api/preflight` 三态检查 + `alerts_test.go` 锁住中文 message 不回流
+- Http adapter：raw `/api/summary` → `OperatorTelemetry` 规范化，认识论隔离守卫（`host_intervention` 不能伪装成 chat）在 backend / frontend / mock 三处一致
+- Polling loop `8s` + `document.hidden` 暂停 + syncError warn tone
+- Draft 持久化（per-thread localStorage，boundaryAck 不 persist）
+- codex S6 regression pass
+
+仍开的门：
+
+- `ultra_long_soak_pre_release` 硬门禁本身还没跑
+- 24h 长测 spark cap / recovery 具体数值待 codex 先跑 10min + 20min 短测收敛推荐值再 host review
+- 端到端真实回归记录待 24h 长测过程中自然产出
+
+**这次的分工**：
+
+- claude（前端 + 调度）own 六页 web console + polling + draft 持久化 + Overview memory review hint + 相关 docs 回填
+- codex（后端 + 对接）own `/api/preflight` + `/api/summary` alerts 中文化 + http adapter 认识论守卫 + S6 regression + 后续 spark cap 实测
+- host own 拍板 + 24h soak 启动决定
+
+**这次 by-design 不做（延后到 v0 之后 iteration）**：resource / environment 自动执行闭环、网络白名单 / 出站控制、放宽 memory / cache / 额度自动动作。
 
 ## Current Execution Pointer
 
