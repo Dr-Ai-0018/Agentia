@@ -180,8 +180,21 @@ export const telemetry: OperatorTelemetry = {
       createdAt: "2026-06-30T12:20:00Z",
       age: "2h22m",
       status: "open",
-      priority: "medium",
+      priority: "urgent",
       preview: "请求确认：spark 后续是否可以兑换长期存储空间或网络实验额度？",
+    },
+    // 特意留一条没有 threadId 的：它触发 codex 859b4b4 里的守卫——
+    // pending row 会 disabled，不会 fallback 到"第一条 thread"让程林回错人。
+    // http 模式下这类通常是 host_intervention followup 被 adapter 过滤前的样子；
+    // mock 侧留一条，方便看到守卫真在起作用。
+    {
+      kind: "chat",
+      resident: "jade",
+      targetId: "orphan-jade-20260630T140030.017Z",
+      createdAt: "2026-06-30T14:00:30Z",
+      age: "42m",
+      status: "pending",
+      preview: "（没有对应世界线程的孤立 followup，程林在这里回不了人。）",
     },
   ],
   runs: [
