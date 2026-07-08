@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ai-arena/internal/broker"
+	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/context"
 	"ai-arena/internal/memory"
 	"ai-arena/internal/openai"
@@ -37,6 +38,7 @@ type loopState struct {
 	LastDecision     *AgentDecision
 	LastObservation  string
 	LastReflectRound int
+	LastSleepDepth   brokerstate.SleepDepth
 	RunGroupID       string
 	RecentActions    []RecentAction
 	ParseFailures    int
@@ -339,6 +341,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			break
 		}
 		if decision.NextAction == "sleep" {
+			sleepStartedAt := time.Now().UTC()
 			sleepDuration := time.Duration(clampSleepMinutes(decision.SleepMinutes)) * time.Minute
 			remainingBeforeDeadline := time.Until(deadline) - 25*time.Second
 			if remainingBeforeDeadline <= 0 {
@@ -346,6 +349,14 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				break
 			}
 			sleepDuration = minDuration(sleepDuration, remainingBeforeDeadline)
+			if err := r.budget.SleepStart(profile, int(sleepDuration/time.Minute), sleepStartedAt, decision.Reason); err != nil {
+				r.emitProgress(ProgressEvent{
+					Phase:      "resident_sleep_record_failed",
+					Round:      round,
+					Action:     decision.NextAction,
+					ResponseID: result.ResponseID,
+				})
+			}
 			r.emitProgress(ProgressEvent{
 				Phase:             "resident_sleep",
 				Round:             round,
@@ -357,6 +368,16 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				TotalOutputTokens: totalOutputTokens,
 			})
 			time.Sleep(sleepDuration)
+			if sleep, err := r.budget.SleepEnd(profile, time.Now().UTC()); err == nil {
+				state.LastSleepDepth = sleep.Session.Depth
+			} else {
+				r.emitProgress(ProgressEvent{
+					Phase:      "resident_sleep_record_failed",
+					Round:      round,
+					Action:     decision.NextAction,
+					ResponseID: result.ResponseID,
+				})
+			}
 			continue
 		}
 		if decision.NextAction == "noop" {

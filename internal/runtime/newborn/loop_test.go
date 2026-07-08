@@ -1180,6 +1180,17 @@ func TestRunnerSleepDoesNotRequestModelDuringSleep(t *testing.T) {
 	if requests != 2 {
 		t.Fatalf("expected decision plus acceptance requests only, got %d", requests)
 	}
+	store := brokerstate.New(filepath.Join(dir, "agents", "brokerstate"))
+	sessions, _, err := store.LoadSleepSessions("jade")
+	if err != nil {
+		t.Fatalf("load sleep sessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected one recorded sleep session, got %d", len(sessions))
+	}
+	if sessions[0].ActualMinutes < 0 || sessions[0].Depth == "" {
+		t.Fatalf("unexpected sleep session: %#v", sessions[0])
+	}
 }
 
 func TestRunnerStopsWithoutGuestFallbackWhenDecisionToolCallMissing(t *testing.T) {

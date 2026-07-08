@@ -99,6 +99,42 @@ func TestBrokerServiceRecoveryTick(t *testing.T) {
 	}
 }
 
+func TestBrokerServiceSleepStartEnd(t *testing.T) {
+	store := New(t.TempDir())
+	registry := NewRegistry(DefaultResidentProfiles())
+	manager := NewSessionManager(store, registry, DefaultRuntimeConfig())
+	start := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+	manager.rootNow = func() time.Time { return start }
+	service := NewBrokerService(manager)
+
+	started, err := service.StartSleep(SleepStartRequest{
+		ResidentID:     "jade",
+		PlannedMinutes: 90,
+		StartedAt:      start,
+		Reason:         "tired",
+	})
+	if err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	if !started.State.Active || started.State.Depth != SleepDepthRest {
+		t.Fatalf("unexpected started sleep state: %#v", started.State)
+	}
+
+	ended, err := service.EndSleep(SleepEndRequest{
+		ResidentID: "jade",
+		EndedAt:    start.Add(90 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("end sleep: %v", err)
+	}
+	if ended.Session.ActualMinutes != 90 || ended.Session.Depth != SleepDepthSleep {
+		t.Fatalf("unexpected ended session: %#v", ended.Session)
+	}
+	if ended.State.Active {
+		t.Fatalf("expected inactive sleep state after end: %#v", ended.State)
+	}
+}
+
 func TestBrokerServiceResetResident(t *testing.T) {
 	store := New(t.TempDir())
 	registry := NewRegistry(DefaultResidentProfiles())

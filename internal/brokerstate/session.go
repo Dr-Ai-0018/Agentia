@@ -24,6 +24,7 @@ type ResidentStatus struct {
 	SparkBalanceUnits    int64              `json:"spark_balance_units"`
 	Fatigue              int                `json:"fatigue"`
 	SleepDebt            int                `json:"sleep_debt"`
+	Sleep                SleepStateSnapshot `json:"sleep"`
 	DebtActive           bool               `json:"debt_active"`
 	DebtAmount           float64            `json:"debt_amount"`
 	FinalNoticeUsed      bool               `json:"final_notice_used"`
@@ -103,6 +104,7 @@ func (m *SessionManager) withRollingQuotaUsage(status ResidentStatus, now time.T
 	status.RollingWindow6HUsed = usage.Window6HUsed
 	status.RollingDayUsed = usage.DayUsed
 	status.RollingWeekUsed = usage.WeekUsed
+	status.Sleep = m.store.CurrentSleepState(status.ResidentID, now)
 	return status
 }
 

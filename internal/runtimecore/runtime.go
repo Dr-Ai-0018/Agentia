@@ -23,6 +23,7 @@ type ResidentState struct {
 	Quota           tokenledger.QuotaState
 	Fatigue         int
 	SleepDebt       int
+	SleepDebtHours  float64
 	DebtActive      bool
 	DebtAmount      float64
 	FinalNoticeUsed bool
@@ -193,14 +194,15 @@ func chargeReason(kind runtimeguard.CallKind, model string) string {
 
 func (e *Engine) TickRecovery(now time.Time) recovery.TickResult {
 	tick := recovery.Apply(e.cfg.RecoveryPolicy, recovery.State{
-		SparkBalance: e.spark.Account().Balance,
-		Quota:        e.state.Quota,
-		Fatigue:      e.state.Fatigue,
-		SleepDebt:    e.state.SleepDebt,
-		DebtActive:   e.state.DebtActive,
-		DebtAmount:   e.state.DebtAmount,
-		RecoveryMode: e.state.RecoveryMode,
-		LastTickAt:   e.state.LastRecoveryAt,
+		SparkBalance:   e.spark.Account().Balance,
+		Quota:          e.state.Quota,
+		Fatigue:        e.state.Fatigue,
+		SleepDebt:      e.state.SleepDebt,
+		SleepDebtHours: e.state.SleepDebtHours,
+		DebtActive:     e.state.DebtActive,
+		DebtAmount:     e.state.DebtAmount,
+		RecoveryMode:   e.state.RecoveryMode,
+		LastTickAt:     e.state.LastRecoveryAt,
 	}, now)
 
 	e.state.Quota = tick.QuotaAfter
@@ -227,6 +229,13 @@ func (e *Engine) SetRecoveryMode(mode string) {
 	e.state.RecoveryMode = normalizeRecoveryMode(mode)
 }
 
+func (e *Engine) SetSleepDebtHours(hours float64) {
+	if hours < 0 {
+		hours = 0
+	}
+	e.state.SleepDebtHours = hours
+}
+
 func (e *Engine) AdjustQuotaCaps(window6HDelta, dayDelta, weekDelta int) {
 	e.state.Quota.Window6HCap = maxInt(0, e.state.Quota.Window6HCap+window6HDelta)
 	e.state.Quota.DayCap = maxInt(0, e.state.Quota.DayCap+dayDelta)
@@ -247,7 +256,7 @@ func (e *Engine) ResetQuotaUsage(resetWindow6H, resetDay, resetWeek bool) {
 
 func normalizeRecoveryMode(mode string) string {
 	switch mode {
-	case "rest", "idle", "normal", "deep":
+	case "rest", "sleep", "deep_sleep", "idle", "normal", "deep":
 		return mode
 	default:
 		return "idle"

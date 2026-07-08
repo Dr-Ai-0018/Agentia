@@ -147,3 +147,46 @@ func TestRecoveryModeMultiplierAffectsRecovery(t *testing.T) {
 		t.Fatalf("expected rest to recover more 6h strain")
 	}
 }
+
+func TestSleepDepthRecoveryMultipliers(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	policy := Policy{
+		FatigueRecoveryPerHour: 100,
+		ActivityMultipliers: map[string]float64{
+			"idle":       1.0,
+			"rest":       1.5,
+			"sleep":      2.5,
+			"deep_sleep": 4.0,
+		},
+	}
+	state := State{Fatigue: 1000, LastTickAt: start}
+
+	idle := Apply(policy, state, start.Add(time.Hour))
+	rest := Apply(policy, State{Fatigue: 1000, LastTickAt: start, RecoveryMode: "rest"}, start.Add(time.Hour))
+	sleep := Apply(policy, State{Fatigue: 1000, LastTickAt: start, RecoveryMode: "sleep"}, start.Add(time.Hour))
+	deep := Apply(policy, State{Fatigue: 1000, LastTickAt: start, RecoveryMode: "deep_sleep"}, start.Add(time.Hour))
+
+	if !(idle.RecoveredFatigue < rest.RecoveredFatigue && rest.RecoveredFatigue < sleep.RecoveredFatigue && sleep.RecoveredFatigue < deep.RecoveredFatigue) {
+		t.Fatalf("expected idle < rest < sleep < deep recovery, got idle=%d rest=%d sleep=%d deep=%d",
+			idle.RecoveredFatigue, rest.RecoveredFatigue, sleep.RecoveredFatigue, deep.RecoveredFatigue)
+	}
+}
+
+func TestSleepDebtReducesRecoveryMultiplier(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	policy := Policy{
+		FatigueRecoveryPerHour: 100,
+		ActivityMultipliers: map[string]float64{
+			"sleep": 2.5,
+		},
+	}
+	rested := Apply(policy, State{Fatigue: 1000, LastTickAt: start, RecoveryMode: "sleep"}, start.Add(time.Hour))
+	debt := Apply(policy, State{Fatigue: 1000, LastTickAt: start, RecoveryMode: "sleep", SleepDebtHours: 8}, start.Add(time.Hour))
+
+	if debt.RecoveryMultiplier >= rested.RecoveryMultiplier {
+		t.Fatalf("expected sleep debt to reduce multiplier: rested=%.2f debt=%.2f", rested.RecoveryMultiplier, debt.RecoveryMultiplier)
+	}
+	if debt.RecoveredFatigue >= rested.RecoveredFatigue {
+		t.Fatalf("expected sleep debt to reduce fatigue recovery: rested=%d debt=%d", rested.RecoveredFatigue, debt.RecoveredFatigue)
+	}
+}

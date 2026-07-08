@@ -18,14 +18,15 @@ type Policy struct {
 }
 
 type State struct {
-	SparkBalance float64
-	Quota        tokenledger.QuotaState
-	Fatigue      int
-	SleepDebt    int
-	DebtActive   bool
-	DebtAmount   float64
-	RecoveryMode string
-	LastTickAt   time.Time
+	SparkBalance   float64
+	Quota          tokenledger.QuotaState
+	Fatigue        int
+	SleepDebt      int
+	SleepDebtHours float64
+	DebtActive     bool
+	DebtAmount     float64
+	RecoveryMode   string
+	LastTickAt     time.Time
 }
 
 type TickResult struct {
@@ -61,7 +62,7 @@ func Apply(policy Policy, state State, now time.Time) TickResult {
 	}
 
 	mode := normalizeRecoveryMode(state.RecoveryMode)
-	multiplier := recoveryMultiplier(policy, mode)
+	multiplier := recoveryMultiplier(policy, mode) * SleepDebtRecoveryMultiplier(state.SleepDebtHours)
 	sparkRecovered := roundToPrecision(hours*policy.SparkRecoveryPerHour*multiplier, 4)
 	recoveredStrain := int(math.Floor(hours * float64(policy.StrainRecoveryPerHour) * multiplier))
 	recoveredFatigue := int(math.Floor(hours * float64(policy.FatigueRecoveryPerHour) * multiplier))
@@ -122,7 +123,7 @@ func Apply(policy Policy, state State, now time.Time) TickResult {
 
 func normalizeRecoveryMode(mode string) string {
 	switch mode {
-	case "rest", "idle", "normal", "deep":
+	case "rest", "sleep", "deep_sleep", "idle", "normal", "deep":
 		return mode
 	default:
 		return "idle"
@@ -136,6 +137,19 @@ func recoveryMultiplier(policy Policy, mode string) float64 {
 		}
 	}
 	return 1.0
+}
+
+func SleepDebtRecoveryMultiplier(debtHours float64) float64 {
+	switch {
+	case debtHours >= 12:
+		return 0.55
+	case debtHours >= 6:
+		return 0.70
+	case debtHours >= 2:
+		return 0.85
+	default:
+		return 1.0
+	}
 }
 
 func NextRecoveryAt(now time.Time) time.Time {

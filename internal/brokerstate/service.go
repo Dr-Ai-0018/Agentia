@@ -117,6 +117,25 @@ type TestAllowanceCardResponse struct {
 	SnapshotRevision  uint64             `json:"snapshot_revision"`
 }
 
+type SleepStartRequest struct {
+	ResidentID     string    `json:"resident_id"`
+	PlannedMinutes int       `json:"planned_minutes,omitempty"`
+	StartedAt      time.Time `json:"started_at"`
+	Reason         string    `json:"reason,omitempty"`
+}
+
+type SleepEndRequest struct {
+	ResidentID string    `json:"resident_id"`
+	EndedAt    time.Time `json:"ended_at"`
+}
+
+type SleepRecordResponse struct {
+	ResidentID string             `json:"resident_id"`
+	Session    SleepSession       `json:"session"`
+	State      SleepStateSnapshot `json:"state"`
+	Path       string             `json:"path,omitempty"`
+}
+
 func NewBrokerService(sessions *SessionManager) *BrokerService {
 	return &BrokerService{sessions: sessions}
 }
@@ -148,6 +167,11 @@ func (s *BrokerService) RecoveryTickWithMode(residentID string, now time.Time, m
 	if err != nil {
 		return ResidentStatus{}, recovery.TickResult{}, "", err
 	}
+	debt, err := s.sessions.store.SleepDebt(residentID, now)
+	if err != nil {
+		return ResidentStatus{}, recovery.TickResult{}, "", err
+	}
+	engine.SetSleepDebtHours(debt.DebtHours)
 	engine.SetRecoveryMode(mode)
 	tick := engine.TickRecovery(now)
 	path, err := s.sessions.SaveResident(engine)
@@ -156,6 +180,30 @@ func (s *BrokerService) RecoveryTickWithMode(residentID string, now time.Time, m
 	}
 	status := s.sessions.BuildResidentStatus(engine, true, path)
 	return status, tick, path, nil
+}
+
+func (s *BrokerService) StartSleep(req SleepStartRequest) (SleepRecordResponse, error) {
+	if req.ResidentID == "" {
+		return SleepRecordResponse{}, fmt.Errorf("resident id is required")
+	}
+	session, path, err := s.sessions.store.RecordSleepStart(req.ResidentID, req.PlannedMinutes, req.StartedAt, req.Reason)
+	if err != nil {
+		return SleepRecordResponse{}, err
+	}
+	state := s.sessions.store.CurrentSleepState(req.ResidentID, session.StartedAt)
+	return SleepRecordResponse{ResidentID: req.ResidentID, Session: session, State: state, Path: path}, nil
+}
+
+func (s *BrokerService) EndSleep(req SleepEndRequest) (SleepRecordResponse, error) {
+	if req.ResidentID == "" {
+		return SleepRecordResponse{}, fmt.Errorf("resident id is required")
+	}
+	session, path, err := s.sessions.store.RecordSleepEnd(req.ResidentID, req.EndedAt)
+	if err != nil {
+		return SleepRecordResponse{}, err
+	}
+	state := s.sessions.store.CurrentSleepState(req.ResidentID, session.EndedAt)
+	return SleepRecordResponse{ResidentID: req.ResidentID, Session: session, State: state, Path: path}, nil
 }
 
 func (s *BrokerService) ResetResident(residentID string, now time.Time) (ResidentStatus, string, error) {

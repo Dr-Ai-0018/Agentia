@@ -825,6 +825,22 @@ func (a *App) RunRecoverToNowWithMode(residentID string, now time.Time, mode str
 	}, nil
 }
 
+func (a *App) RunSleepStart(residentID string, plannedMinutes int, startedAt time.Time, reason string) (brokerstate.SleepRecordResponse, error) {
+	return a.service(false).StartSleep(brokerstate.SleepStartRequest{
+		ResidentID:     residentID,
+		PlannedMinutes: plannedMinutes,
+		StartedAt:      startedAt,
+		Reason:         reason,
+	})
+}
+
+func (a *App) RunSleepEnd(residentID string, endedAt time.Time) (brokerstate.SleepRecordResponse, error) {
+	return a.service(false).EndSleep(brokerstate.SleepEndRequest{
+		ResidentID: residentID,
+		EndedAt:    endedAt,
+	})
+}
+
 func (a *App) RunRecoverAllToNow(now time.Time, mode string) (RecoverAllOutput, error) {
 	if mode == "" {
 		mode = "idle"
