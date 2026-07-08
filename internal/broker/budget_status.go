@@ -18,30 +18,42 @@ type BudgetStatusOutput struct {
 }
 
 type ResidentBudgetStatus struct {
-	ResidentID                  string  `json:"resident_id"`
-	SparkBalance                float64 `json:"spark_balance"`
-	WorkAllowedNow              bool    `json:"work_allowed_now"`
-	BlockingReason              string  `json:"blocking_reason,omitempty"`
-	Window6HUsed                int     `json:"window_6h_used"`
-	RollingWindow6HUsed         int     `json:"rolling_6h_used,omitempty"`
-	EffectiveWindow6HCap        int     `json:"effective_window_6h_cap"`
-	EffectiveWindow6HRemaining  int     `json:"effective_window_6h_remaining"`
-	DayUsed                     int     `json:"day_used"`
-	RollingDayUsed              int     `json:"rolling_day_used,omitempty"`
-	RollingDayRemaining         int     `json:"rolling_day_remaining,omitempty"`
-	EffectiveDayCap             int     `json:"effective_day_cap"`
-	EffectiveDayRemaining       int     `json:"effective_day_remaining"`
-	WeekUsed                    int     `json:"week_used"`
-	RollingWeekUsed             int     `json:"rolling_week_used,omitempty"`
-	RollingWeekRemaining        int     `json:"rolling_week_remaining,omitempty"`
-	EffectiveWeekCap            int     `json:"effective_week_cap"`
-	EffectiveWeekRemaining      int     `json:"effective_week_remaining"`
-	QuotaTightestLayer          string  `json:"quota_tightest_layer,omitempty"`
-	QuotaTightestRemainingRatio float64 `json:"quota_tightest_remaining_ratio,omitempty"`
-	Pressure                    string  `json:"pressure,omitempty"`
-	RecoverySuggested           bool    `json:"recovery_suggested,omitempty"`
-	RecoveryUrgency             string  `json:"recovery_urgency,omitempty"`
-	NextRecoveryAt              string  `json:"next_recovery_at,omitempty"`
+	ResidentID                  string        `json:"resident_id"`
+	SparkBalance                float64       `json:"spark_balance"`
+	WorkAllowedNow              bool          `json:"work_allowed_now"`
+	BlockingReason              string        `json:"blocking_reason,omitempty"`
+	Window6HUsed                int           `json:"window_6h_used"`
+	RollingWindow6HUsed         int           `json:"rolling_6h_used,omitempty"`
+	EffectiveWindow6HCap        int           `json:"effective_window_6h_cap"`
+	EffectiveWindow6HRemaining  int           `json:"effective_window_6h_remaining"`
+	DayUsed                     int           `json:"day_used"`
+	RollingDayUsed              int           `json:"rolling_day_used,omitempty"`
+	RollingDayRemaining         int           `json:"rolling_day_remaining,omitempty"`
+	EffectiveDayCap             int           `json:"effective_day_cap"`
+	EffectiveDayRemaining       int           `json:"effective_day_remaining"`
+	WeekUsed                    int           `json:"week_used"`
+	RollingWeekUsed             int           `json:"rolling_week_used,omitempty"`
+	RollingWeekRemaining        int           `json:"rolling_week_remaining,omitempty"`
+	EffectiveWeekCap            int           `json:"effective_week_cap"`
+	EffectiveWeekRemaining      int           `json:"effective_week_remaining"`
+	QuotaTightestLayer          string        `json:"quota_tightest_layer,omitempty"`
+	QuotaTightestRemainingRatio float64       `json:"quota_tightest_remaining_ratio,omitempty"`
+	Pressure                    string        `json:"pressure,omitempty"`
+	RecoverySuggested           bool          `json:"recovery_suggested,omitempty"`
+	RecoveryUrgency             string        `json:"recovery_urgency,omitempty"`
+	NextRecoveryAt              string        `json:"next_recovery_at,omitempty"`
+	Fatigue                     FatigueStatus `json:"fatigue"`
+	Sleep                       SleepStatus   `json:"sleep"`
+}
+
+type FatigueStatus struct {
+	Level int    `json:"level"`
+	Mood  string `json:"mood"`
+}
+
+type SleepStatus struct {
+	Depth     string  `json:"depth"`
+	DebtHours float64 `json:"debt_hours"`
 }
 
 type BudgetStatusTotals struct {
@@ -155,6 +167,8 @@ func (a *App) RunBudgetStatus(residentIDs []string) (BudgetStatusOutput, error) 
 			RecoverySuggested:           status.Physiology.RecoverySuggested,
 			RecoveryUrgency:             status.Physiology.RecoveryUrgency,
 			NextRecoveryAt:              status.NextRecoveryAt,
+			Fatigue:                     buildFatigueStatus(status),
+			Sleep:                       buildSleepStatus(status),
 		}
 		out.Residents = append(out.Residents, row)
 		out.Totals.SparkBalance += row.SparkBalance
@@ -171,6 +185,47 @@ func (a *App) RunBudgetStatus(residentIDs []string) (BudgetStatusOutput, error) 
 	}
 	out.Totals.SparkBalance = roundFloat(out.Totals.SparkBalance)
 	return out, nil
+}
+
+func buildFatigueStatus(status brokerstate.ResidentStatus) FatigueStatus {
+	level := 0
+	cap := brokerstate.DefaultRuntimeConfig().FatigueCap
+	if cap > 0 && status.Fatigue > 0 {
+		level = int(float64(status.Fatigue) / float64(cap) * 100)
+		if level > 100 {
+			level = 100
+		}
+	}
+	return FatigueStatus{
+		Level: level,
+		Mood:  fatigueMood(level),
+	}
+}
+
+func fatigueMood(level int) string {
+	switch {
+	case level >= 80:
+		return "exhausted"
+	case level >= 60:
+		return "quite_tired"
+	case level >= 40:
+		return "some_tiredness"
+	case level >= 20:
+		return "warming_up"
+	default:
+		return "fresh"
+	}
+}
+
+func buildSleepStatus(status brokerstate.ResidentStatus) SleepStatus {
+	depth := string(status.Sleep.Depth)
+	if depth == "" {
+		depth = "awake"
+	}
+	return SleepStatus{
+		Depth:     depth,
+		DebtHours: status.Sleep.DebtHours,
+	}
 }
 
 func (a *App) RunOrchestratorBudgetReport(runID string, allowances map[string]float64) (OrchestratorBudgetReportOutput, error) {

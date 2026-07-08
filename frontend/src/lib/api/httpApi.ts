@@ -2,6 +2,7 @@ import type {
   ActiveRun,
   AlertItem,
   EvidenceItem,
+  FatigueMood,
   FollowupItem,
   OperatorTelemetry,
   Pressure,
@@ -94,11 +95,21 @@ type ApiResidentBudget = {
   effective_window_6h_remaining?: number;
   effective_day_cap?: number;
   effective_day_remaining?: number;
+  rolling_day_remaining?: number;
   effective_week_cap?: number;
   effective_week_remaining?: number;
+  rolling_week_remaining?: number;
   quota_tightest_layer?: string;
   pressure?: string;
   next_recovery_at?: string;
+  fatigue?: {
+    level?: number;
+    mood?: string;
+  };
+  sleep?: {
+    depth?: string;
+    debt_hours?: number;
+  };
 };
 
 type ApiInbox = {
@@ -348,15 +359,66 @@ function normalizeBudget(input: ApiResidentBudget): ResidentBudget | null {
     nextRecoveryAt: input.next_recovery_at ?? "",
     remaining: {
       "6h": percentRemaining(input.effective_window_6h_remaining, input.effective_window_6h_cap),
-      day: percentRemaining(input.effective_day_remaining, input.effective_day_cap),
-      week: percentRemaining(input.effective_week_remaining, input.effective_week_cap),
+      day: percentRemaining(input.rolling_day_remaining ?? input.effective_day_remaining, input.effective_day_cap),
+      week: percentRemaining(input.rolling_week_remaining ?? input.effective_week_remaining, input.effective_week_cap),
     },
     rawRemaining: {
       "6h": input.effective_window_6h_remaining ?? 0,
-      day: input.effective_day_remaining ?? 0,
-      week: input.effective_week_remaining ?? 0,
+      day: input.rolling_day_remaining ?? input.effective_day_remaining ?? 0,
+      week: input.rolling_week_remaining ?? input.effective_week_remaining ?? 0,
     },
+    fatigue: normalizeFatigue(input.fatigue),
+    sleep: normalizeSleep(input.sleep),
   };
+}
+
+function normalizeFatigue(input: ApiResidentBudget["fatigue"]): ResidentBudget["fatigue"] {
+  if (!input) return undefined;
+  const level = Math.max(0, Math.min(100, input.level ?? 0));
+  return {
+    level,
+    mood: normalizeFatigueMood(input.mood) ?? fatigueMoodFromLevel(level),
+  };
+}
+
+function normalizeFatigueMood(input: string | undefined): FatigueMood | null {
+  switch (input) {
+    case "fresh":
+    case "warming_up":
+    case "some_tiredness":
+    case "quite_tired":
+    case "exhausted":
+      return input;
+    default:
+      return null;
+  }
+}
+
+function fatigueMoodFromLevel(level: number): FatigueMood {
+  if (level >= 80) return "exhausted";
+  if (level >= 60) return "quite_tired";
+  if (level >= 40) return "some_tiredness";
+  if (level >= 20) return "warming_up";
+  return "fresh";
+}
+
+function normalizeSleep(input: ApiResidentBudget["sleep"]): ResidentBudget["sleep"] {
+  if (!input) return undefined;
+  return {
+    depth: normalizeSleepDepth(input.depth),
+    debtHours: Math.max(0, input.debt_hours ?? 0),
+  };
+}
+
+function normalizeSleepDepth(input: string | undefined): NonNullable<ResidentBudget["sleep"]>["depth"] {
+  switch (input) {
+    case "rest":
+    case "sleep":
+    case "deep_sleep":
+      return input;
+    default:
+      return "awake";
+  }
 }
 
 function normalizeFollowups(input: ApiFollowup[] | undefined, inbox: ApiInbox | undefined): FollowupItem[] {

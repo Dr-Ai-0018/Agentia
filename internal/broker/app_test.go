@@ -158,6 +158,14 @@ func TestRunBudgetStatusSummarizesResidents(t *testing.T) {
 	if out.Totals.WorkAllowedCount != 2 || out.Totals.BlockedCount != 0 {
 		t.Fatalf("unexpected allowed/blocked counts: %#v", out.Totals)
 	}
+	for _, resident := range out.Residents {
+		if resident.Fatigue.Mood == "" {
+			t.Fatalf("expected fatigue status for %s: %#v", resident.ResidentID, resident)
+		}
+		if resident.Sleep.Depth == "" {
+			t.Fatalf("expected sleep status for %s: %#v", resident.ResidentID, resident)
+		}
+	}
 }
 
 func TestRunOrchestratorBudgetReportSummarizesRunSpend(t *testing.T) {
