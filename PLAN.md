@@ -476,6 +476,27 @@ Validation:
 - Host response 手动 vs 自动 —— **v0 全部人工**。broker 只 draft/通知/记账，任何 live 状态变更（资源变配、维护标记、checkpoint、intervention 发布、memory apply）必须 host 亲手过。放宽候选一律延后到 v0 之后。
 - Memory / reflection flows in v0 —— **core**（`docs/development/02 §4/§S5`）。scheduler 不启用自动，operator 手动 dry-run/apply。
 
+## Quota Model Decision (2026-07-07 pm)
+
+Discovered during codex S3 calibration (10min + 20min short soaks, report at `docs/development/12_QUOTA_CALIBRATION_REPORT.md`): current `StrainRecoveryPerHour=100` cannot behave like the "6h quota" host intuition, and day/week caps are only observation, not real gates. Host chose neither of codex's two mechanical fixes (linear rate bump, or rolling/discrete window). Host wants a **real-person continuous fatigue model** instead of "midnight reset" semantics.
+
+Decisions:
+
+- **day / week hard gate** —— on. Rolling-24h and rolling-7d windows are the real ceilings; usage older than the window naturally expires.
+- **6h retreats from gate to observation** —— stays as a "last-6h burn sparkline" UI signal, not a broker refusal reason.
+- **Fatigue as continuous accumulator** —— climbs with work, drains with rest/sleep; hard cap forces sleep; soft band reduces effective rate (models a tired person working slower).
+- **Sleep in three depths**:
+  - `rest` (5-30 min nap): recovery × 1.5
+  - `sleep` (30 min - 4h): recovery × 2.5
+  - `deep_sleep` (continuous 4h+, gated by 24h cumulative sleep ≥ 6-8h): recovery × 4
+- **Sleep debt** —— a third ledger. Under-slept in last 24h → sleep debt accumulates → all recovery rates discounted. Cannot be paid off in one session; needs consecutive nights of proper sleep. This is what gives the model its real-person trailing behavior — impossible with reset semantics.
+
+Owners:
+
+- Broker changes (retire 6h gate, add rolling day/week, fatigue accumulator, sleep depth tiers, sleep debt ledger, retune calibration): codex.
+- UI changes (Residents quota row split into day-gate + week-gate + 6h observation sparkline; fatigue rendered as feel-words rather than numbers; sleep debt surfaces on Overview when high; sleep depth tiers on Residents page): claude.
+- Post-model recalibration 20min short soak → 建议值 to host for review: codex, then host.
+
 ## V0 Stage Conclusion (2026-07-07)
 
 到 2026-07-07 已收：
