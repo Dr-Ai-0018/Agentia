@@ -88,6 +88,26 @@ func TestPhysiologyTightestQuotaIgnoresSixHourObservation(t *testing.T) {
 	}
 }
 
+func TestPhysiologyUsesNormalizedFatigueForPressure(t *testing.T) {
+	status := ResidentStatus{
+		SparkBalance:         20,
+		Fatigue:              139441,
+		SleepDebt:            0,
+		DayCap:               1400000,
+		WeekCap:              5005000,
+		EffectiveDayCap:      1400000,
+		EffectiveWeekCap:     5005000,
+		RecoveryMode:         "idle",
+		RecoveryTickMinutes:  15,
+		EffectiveWindow6HCap: 240000,
+	}
+
+	physiology := DerivePhysiology(status, testNow())
+	if physiology.Pressure == "critical" {
+		t.Fatalf("low normalized fatigue should not read as critical: %#v", physiology)
+	}
+}
+
 func testNow() time.Time {
 	return time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
 }

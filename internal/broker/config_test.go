@@ -15,8 +15,14 @@ func TestDefaultConfigResidentProfiles(t *testing.T) {
 	if profiles[0].ResidentID != "jade" {
 		t.Fatalf("expected jade first, got %s", profiles[0].ResidentID)
 	}
-	if profiles[1].InitialQuota.Window6HCap != 15000 {
+	if profiles[1].InitialQuota.Window6HCap != 3800000 {
 		t.Fatalf("unexpected amber 6h cap: %d", profiles[1].InitialQuota.Window6HCap)
+	}
+	if profiles[1].InitialGrant != 160 {
+		t.Fatalf("unexpected amber initial grant: %.4f", profiles[1].InitialGrant)
+	}
+	if profiles[1].InitialQuota.DayCap != 5500000 || profiles[1].InitialQuota.WeekCap != 38500000 {
+		t.Fatalf("unexpected amber day/week caps: %#v", profiles[1].InitialQuota)
 	}
 }
 

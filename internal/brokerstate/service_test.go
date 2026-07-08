@@ -150,8 +150,8 @@ func TestBrokerServiceResetResident(t *testing.T) {
 	if status.ResidentID != "jade" {
 		t.Fatalf("unexpected resident id")
 	}
-	if status.SparkBalance != 4.5 {
-		t.Fatalf("unexpected reset balance")
+	if status.SparkBalance != DefaultResidentProfiles()[0].InitialGrant {
+		t.Fatalf("unexpected reset balance: %.4f", status.SparkBalance)
 	}
 }
 
@@ -167,7 +167,7 @@ func TestBrokerServiceSparkGrantClearsDebtWhenBalancePositive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load resident: %v", err)
 	}
-	if _, err := engine.SparkLedger().DebitAllowDebt("charge", 5.0, "test debt", now); err != nil {
+	if _, err := engine.SparkLedger().DebitAllowDebt("charge", engine.SparkLedger().Account().Balance+5.0, "test debt", now); err != nil {
 		t.Fatalf("seed debt: %v", err)
 	}
 	engine.ReconcileSparkDebt()
@@ -177,7 +177,7 @@ func TestBrokerServiceSparkGrantClearsDebtWhenBalancePositive(t *testing.T) {
 
 	resp, err := service.GrantSpark(SparkGrantRequest{
 		ResidentID: "jade",
-		Amount:     1.0,
+		Amount:     6.0,
 		Reason:     "test allowance",
 	})
 	if err != nil {
@@ -206,7 +206,7 @@ func TestBrokerServiceTestAllowanceCardClearsDebtAndBoostsQuota(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load resident: %v", err)
 	}
-	if _, err := engine.SparkLedger().DebitAllowDebt("charge", 3.5, "test debt", now); err != nil {
+	if _, err := engine.SparkLedger().DebitAllowDebt("charge", engine.SparkLedger().Account().Balance+3.5, "test debt", now); err != nil {
 		t.Fatalf("seed debt: %v", err)
 	}
 	engine.ReconcileSparkDebt()
@@ -295,7 +295,7 @@ func TestBrokerServiceAdmitCall(t *testing.T) {
 	if resp.AfterStatus == nil {
 		t.Fatalf("expected after status")
 	}
-	if resp.AfterStatus.SparkBalance >= 8.0 {
+	if resp.AfterStatus.SparkBalance >= resp.BeforeStatus.SparkBalance {
 		t.Fatalf("expected spark balance to decrease after applied work")
 	}
 	events, _, err := store.LoadQuotaEvents("amber")

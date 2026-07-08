@@ -41,6 +41,8 @@ type ResidentPhysiology struct {
 	SummaryLines         []string     `json:"summary_lines"`
 }
 
+const defaultFatigueCapForPhysiology = 2_500_000
+
 func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 	windowCap := status.EffectiveWindow6HCap
 	if windowCap <= 0 {
@@ -72,6 +74,7 @@ func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 	pressure := "comfortable"
 	recoverySuggested := false
 	recoveryUrgency := "none"
+	fatigueRatio := physiologyFatigueRatio(status.Fatigue)
 
 	switch {
 	case status.DebtActive || tightestRatio <= 0.0:
@@ -79,20 +82,20 @@ func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 		pressure = "critical"
 		recoverySuggested = true
 		recoveryUrgency = "immediate"
-	case tightestRatio <= 0.08 || status.SparkBalance < 0.5 || status.Fatigue >= 2200 || status.SleepDebt >= 18:
+	case tightestRatio <= 0.08 || status.SparkBalance < 0.5 || fatigueRatio >= 0.80 || status.SleepDebt >= 18:
 		mode = ModeTired
 		pressure = "critical"
 		recoverySuggested = true
 		recoveryUrgency = "high"
-	case tightestRatio <= 0.20 || status.SparkBalance < 1.5 || status.Fatigue >= 1200 || status.SleepDebt >= 10:
+	case tightestRatio <= 0.20 || status.SparkBalance < 1.5 || fatigueRatio >= 0.60 || status.SleepDebt >= 10:
 		mode = ModeTired
 		pressure = "tight"
 		recoverySuggested = true
 		recoveryUrgency = "medium"
-	case tightestRatio <= 0.45 || status.SparkBalance < 4.0 || status.Fatigue >= 600 || status.SleepDebt >= 4:
+	case tightestRatio <= 0.45 || status.SparkBalance < 4.0 || fatigueRatio >= 0.35 || status.SleepDebt >= 4:
 		mode = ModeFocused
 		pressure = "watchful"
-		recoverySuggested = status.Fatigue >= 900 || status.SleepDebt >= 6
+		recoverySuggested = fatigueRatio >= 0.45 || status.SleepDebt >= 6
 		recoveryUrgency = "low"
 	default:
 		mode = ModeAwake
@@ -208,6 +211,13 @@ func remainRatio(remaining, cap int) float64 {
 		return 0
 	}
 	return float64(remaining) / float64(cap)
+}
+
+func physiologyFatigueRatio(fatigue int) float64 {
+	if fatigue <= 0 {
+		return 0
+	}
+	return float64(fatigue) / float64(defaultFatigueCapForPhysiology)
 }
 
 func maxInt(a, b int) int {

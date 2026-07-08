@@ -61,8 +61,8 @@ func TestFinalNoticeCreatesDebtAndRecoveryUnlocksLater(t *testing.T) {
 	if applied.State.Fatigue <= 0 {
 		t.Fatalf("expected fatigue to increase after work")
 	}
-	if applied.State.SleepDebt <= 0 {
-		t.Fatalf("expected sleep debt to increase after work")
+	if applied.State.SleepDebt != 0 {
+		t.Fatalf("work should not mutate derived sleep debt, got %#v", applied.State)
 	}
 
 	engine.TickRecovery(start.Add(2 * time.Hour))

@@ -58,13 +58,16 @@ func TestRunAdmitStopsWorkBeforeOverrun(t *testing.T) {
 	if _, err := app.RunReset("onyx", now); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
+	if _, err := app.RunSparkGrant("onyx", 10_000, "test overrun setup"); err != nil {
+		t.Fatalf("spark grant: %v", err)
+	}
 
 	args := defaultAdmitArgs()
 	args.model = "gpt-5.4"
 	args.inputTokens = 100
 	args.cachedTokens = 0
-	args.outputTokens = 3_000_000
-	args.totalTokens = 3_000_100
+	args.outputTokens = 20_000_000
+	args.totalTokens = 20_000_100
 	args.toolCalls = 0
 	args.responseID = "resp_work_overrun"
 

@@ -170,7 +170,6 @@ func (e *Engine) ApplyCall(prepared PreparedCall, activity tokenledger.ActivityT
 
 	e.state.Quota = quotaUpdate.After
 	e.state.Fatigue += fatigue.FatigueGain
-	e.state.SleepDebt += sleepDebtGain(activity, fatigue.FatigueGain)
 	e.ReconcileSparkDebt()
 
 	return AppliedCall{
@@ -234,6 +233,7 @@ func (e *Engine) SetSleepDebtHours(hours float64) {
 		hours = 0
 	}
 	e.state.SleepDebtHours = hours
+	e.state.SleepDebt = int(hours)
 }
 
 func (e *Engine) AdjustQuotaCaps(window6HDelta, dayDelta, weekDelta int) {
@@ -260,22 +260,6 @@ func normalizeRecoveryMode(mode string) string {
 		return mode
 	default:
 		return "idle"
-	}
-}
-
-func sleepDebtGain(activity tokenledger.ActivityType, fatigueGain int) int {
-	if fatigueGain <= 0 {
-		return 0
-	}
-	switch activity {
-	case tokenledger.ActivityStatusCheck:
-		return 0
-	case tokenledger.ActivityLightWork:
-		return maxInt(1, fatigueGain/600)
-	case tokenledger.ActivityDeepWork:
-		return maxInt(1, fatigueGain/300)
-	default:
-		return maxInt(1, fatigueGain/400)
 	}
 }
 

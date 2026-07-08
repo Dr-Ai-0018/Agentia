@@ -332,7 +332,8 @@ func TestFatigueZoneAndMultiplier(t *testing.T) {
 func TestFatigueAndSleepDebtShrinkEffectiveQuota(t *testing.T) {
 	state := State{
 		SparkBalance: 5.0,
-		Fatigue:      2200,
+		Fatigue:      800,
+		FatigueCap:   1000,
 		SleepDebt:    12,
 		Quota: tokenledger.QuotaState{
 			Window6HCap:  10000,
@@ -357,5 +358,25 @@ func TestFatigueAndSleepDebtShrinkEffectiveQuota(t *testing.T) {
 	}
 	if got.WouldExceedQuota || got.LockAfterThisCall {
 		t.Fatalf("6h projection must not be treated as hard quota risk: %#v", got)
+	}
+}
+
+func TestEffectiveQuotaUsesNormalizedFatigue(t *testing.T) {
+	state := State{
+		Fatigue:    139441,
+		FatigueCap: 2500000,
+		Quota: tokenledger.QuotaState{
+			Window6HCap: 240000,
+			DayCap:      1400000,
+			WeekCap:     5005000,
+		},
+	}
+
+	effective := DeriveEffectiveQuota(state)
+	if effective.Window6HCap != state.Quota.Window6HCap {
+		t.Fatalf("low normalized fatigue should not shrink 6h cap: %#v", effective)
+	}
+	if effective.DayCap != state.Quota.DayCap || effective.WeekCap != state.Quota.WeekCap {
+		t.Fatalf("low normalized fatigue should not shrink day/week caps: %#v", effective)
 	}
 }

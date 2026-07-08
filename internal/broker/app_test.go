@@ -23,7 +23,7 @@ func TestAppResetStatusAndAdmitFlow(t *testing.T) {
 	if reset.Status.ResidentID != "amber" {
 		t.Fatalf("unexpected resident id after reset")
 	}
-	if reset.Status.SparkBalance != 8.0 {
+	if reset.Status.SparkBalance != DefaultConfig("").Residents[1].InitialGrant {
 		t.Fatalf("unexpected reset spark balance: %v", reset.Status.SparkBalance)
 	}
 
@@ -31,7 +31,7 @@ func TestAppResetStatusAndAdmitFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if status.SparkBalance != 8.0 {
+	if status.SparkBalance != reset.Status.SparkBalance {
 		t.Fatalf("unexpected persisted spark balance: %v", status.SparkBalance)
 	}
 
@@ -153,7 +153,8 @@ func TestRunBudgetStatusSummarizesResidents(t *testing.T) {
 	if out.ResidentCount != 2 || len(out.Residents) != 2 {
 		t.Fatalf("expected two residents: %#v", out)
 	}
-	if out.Totals.SparkBalance != 12.5 {
+	expectedSpark := DefaultConfig("").Residents[1].InitialGrant + DefaultConfig("").Residents[0].InitialGrant
+	if out.Totals.SparkBalance != expectedSpark {
 		t.Fatalf("unexpected total spark: %#v", out.Totals)
 	}
 	if out.Totals.WorkAllowedCount != 2 || out.Totals.BlockedCount != 0 {
@@ -290,7 +291,7 @@ func TestAppFinalNoticeDebtAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	if reset.Status.SparkBalance != 3.0 {
+	if reset.Status.SparkBalance != DefaultConfig("").Residents[2].InitialGrant {
 		t.Fatalf("unexpected reset spark balance")
 	}
 
@@ -454,10 +455,10 @@ func TestAppRunQuotaGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("quota grant: %v", err)
 	}
-	if out.BeforeStatus.Window6HCap != 12000 {
+	if out.BeforeStatus.Window6HCap != DefaultConfig("").Residents[0].Window6HCap {
 		t.Fatalf("unexpected before quota: %#v", out.BeforeStatus)
 	}
-	if out.AfterStatus.Window6HCap != 17000 {
+	if out.AfterStatus.Window6HCap != out.BeforeStatus.Window6HCap+5000 {
 		t.Fatalf("unexpected after 6h cap: %#v", out.AfterStatus)
 	}
 	if out.AfterStatus.DayCap != out.BeforeStatus.DayCap+10000 {
@@ -490,10 +491,10 @@ func TestAppRunSparkGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spark grant: %v", err)
 	}
-	if out.BeforeStatus.SparkBalance != 4.5 {
+	if out.BeforeStatus.SparkBalance != DefaultConfig("").Residents[0].InitialGrant {
 		t.Fatalf("unexpected before spark: %#v", out.BeforeStatus)
 	}
-	if out.AfterStatus.SparkBalance != 17 {
+	if out.AfterStatus.SparkBalance != out.BeforeStatus.SparkBalance+12.5 {
 		t.Fatalf("unexpected after spark: %#v", out.AfterStatus)
 	}
 	if out.Entry.Kind != "grant" {

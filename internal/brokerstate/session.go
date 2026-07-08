@@ -67,6 +67,7 @@ func (m *SessionManager) LoadResidentWithRevision(residentID string) (*runtimeco
 	if err != nil {
 		return nil, ResidentStatus{}, 0, err
 	}
+	m.syncDerivedSleepDebt(engine, now)
 	status := BuildResidentStatusAt(engine, loaded, path, now)
 	status = m.withRollingQuotaUsage(status, now)
 	return engine, status, revision, nil
@@ -93,6 +94,7 @@ func (m *SessionManager) BuildResidentStatus(engine *runtimecore.Engine, loaded 
 }
 
 func (m *SessionManager) BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath string, now time.Time) ResidentStatus {
+	m.syncDerivedSleepDebt(engine, now)
 	return m.withRollingQuotaUsage(BuildResidentStatusAt(engine, loaded, snapshotPath, now), now)
 }
 
@@ -105,7 +107,21 @@ func (m *SessionManager) withRollingQuotaUsage(status ResidentStatus, now time.T
 	status.RollingDayUsed = usage.DayUsed
 	status.RollingWeekUsed = usage.WeekUsed
 	status.Sleep = m.store.CurrentSleepState(status.ResidentID, now)
+	status.SleepDebt = int(status.Sleep.DebtHours)
+	status.Physiology = DerivePhysiology(status, now)
 	return status
+}
+
+func (m *SessionManager) syncDerivedSleepDebt(engine *runtimecore.Engine, now time.Time) {
+	state := engine.State()
+	if state.ResidentID == "" {
+		return
+	}
+	debt, err := m.store.SleepDebt(state.ResidentID, now)
+	if err != nil {
+		return
+	}
+	engine.SetSleepDebtHours(debt.DebtHours)
 }
 
 func BuildResidentStatus(engine *runtimecore.Engine, loaded bool, snapshotPath string) ResidentStatus {

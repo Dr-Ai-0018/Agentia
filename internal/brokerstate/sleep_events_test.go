@@ -73,6 +73,9 @@ func TestSleepDebtFromRollingWeightedSleep(t *testing.T) {
 	if weighted.WeightedHours != 21 {
 		t.Fatalf("weighted hours = %.2f, want 21", weighted.WeightedHours)
 	}
+	if weighted.ObservedSince.IsZero() {
+		t.Fatalf("expected observed sleep window start")
+	}
 
 	store := New(t.TempDir())
 	for _, session := range sessions[:2] {
@@ -84,7 +87,42 @@ func TestSleepDebtFromRollingWeightedSleep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sleep debt: %v", err)
 	}
-	if debt.DebtHours != 7 {
-		t.Fatalf("debt hours = %.2f, want 7", debt.DebtHours)
+	if debt.DebtHours != 0 {
+		t.Fatalf("debt hours = %.2f, want 0 because observed history is fully covered", debt.DebtHours)
+	}
+}
+
+func TestSleepDebtStartsNeutralWithoutSleepHistory(t *testing.T) {
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	store := New(t.TempDir())
+
+	debt, err := store.SleepDebt("jade", now)
+	if err != nil {
+		t.Fatalf("sleep debt: %v", err)
+	}
+	if debt.DebtHours != 0 {
+		t.Fatalf("debt hours = %.2f, want neutral 0 without sleep history", debt.DebtHours)
+	}
+}
+
+func TestSleepDebtTargetScalesWithObservedHistory(t *testing.T) {
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	store := New(t.TempDir())
+	if _, err := store.AppendSleepSession(SleepSession{
+		ResidentID:    "jade",
+		StartedAt:     now.Add(-10 * time.Hour),
+		EndedAt:       now.Add(-9 * time.Hour),
+		ActualMinutes: 60,
+		Depth:         SleepDepthSleep,
+	}); err != nil {
+		t.Fatalf("append sleep session: %v", err)
+	}
+
+	debt, err := store.SleepDebt("jade", now)
+	if err != nil {
+		t.Fatalf("sleep debt: %v", err)
+	}
+	if debt.DebtHours != 1.92 {
+		t.Fatalf("debt hours = %.2f, want 1.92", debt.DebtHours)
 	}
 }

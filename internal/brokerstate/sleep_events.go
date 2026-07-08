@@ -47,6 +47,8 @@ type SleepDebtComputation struct {
 	DebtHours        float64 `json:"debt_hours"`
 }
 
+const sleepDebtTargetHoursPerDay = 7.0
+
 func (s *Store) RecordSleepStart(residentID string, plannedMinutes int, startedAt time.Time, reason string) (SleepSession, string, error) {
 	residentID = strings.TrimSpace(residentID)
 	if residentID == "" {
@@ -223,6 +225,7 @@ func (s *Store) LoadActiveSleep(residentID string) (SleepSession, string, error)
 type RollingWeightedSleepResult struct {
 	WeightedHours float64
 	ActualMinutes int
+	ObservedSince time.Time
 }
 
 func (s *Store) RollingWeightedSleep(residentID string, now time.Time, window time.Duration) (RollingWeightedSleepResult, error) {
@@ -251,6 +254,13 @@ func RollingWeightedSleepFromSessions(sessions []SleepSession, now time.Time, wi
 		if actualMinutes <= 0 {
 			continue
 		}
+		observedSince := session.StartedAt.UTC()
+		if observedSince.Before(since) {
+			observedSince = since
+		}
+		if out.ObservedSince.IsZero() || observedSince.Before(out.ObservedSince) {
+			out.ObservedSince = observedSince
+		}
 		out.ActualMinutes += actualMinutes
 		out.WeightedHours += (float64(actualMinutes) / 60.0) * sleepDepthWeight(session.Depth)
 	}
@@ -262,7 +272,12 @@ func (s *Store) SleepDebt(residentID string, now time.Time) (SleepDebtComputatio
 	if err != nil {
 		return SleepDebtComputation{}, err
 	}
-	debt := 21.0 - weighted.WeightedHours
+	observedHours := 0.0
+	if !weighted.ObservedSince.IsZero() && weighted.ObservedSince.Before(now) {
+		observedHours = now.Sub(weighted.ObservedSince).Hours()
+	}
+	target := sleepDebtTargetHours(observedHours)
+	debt := target - weighted.WeightedHours
 	if debt < 0 {
 		debt = 0
 	}
@@ -270,6 +285,17 @@ func (s *Store) SleepDebt(residentID string, now time.Time) (SleepDebtComputatio
 		WeightedHours72H: roundFloat2(weighted.WeightedHours),
 		DebtHours:        roundFloat2(debt),
 	}, nil
+}
+
+func sleepDebtTargetHours(observedHours float64) float64 {
+	if observedHours <= 0 {
+		return 0
+	}
+	target := (observedHours / 24.0) * sleepDebtTargetHoursPerDay
+	if target > sleepDebtTargetHoursPerDay*3 {
+		return sleepDebtTargetHoursPerDay * 3
+	}
+	return target
 }
 
 func (s *Store) CurrentSleepState(residentID string, now time.Time) SleepStateSnapshot {

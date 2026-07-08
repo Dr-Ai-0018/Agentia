@@ -2,6 +2,8 @@ package runtimeguard
 
 import "ai-arena/internal/tokenledger"
 
+const defaultFatigueCap = 2_500_000
+
 type EffectiveQuota struct {
 	Window6HCap  int `json:"window_6h_cap"`
 	DayCap       int `json:"day_cap"`
@@ -12,9 +14,9 @@ type EffectiveQuota struct {
 }
 
 func DeriveEffectiveQuota(state State) EffectiveQuota {
-	windowPenalty := fatiguePenaltyRatio(state.Fatigue, state.SleepDebt, 0.60)
-	dayPenalty := fatiguePenaltyRatio(state.Fatigue, state.SleepDebt, 0.45)
-	weekPenalty := fatiguePenaltyRatio(state.Fatigue, state.SleepDebt, 0.30)
+	windowPenalty := fatiguePenaltyRatio(state.Fatigue, state.FatigueCap, state.SleepDebt, 0.60)
+	dayPenalty := fatiguePenaltyRatio(state.Fatigue, state.FatigueCap, state.SleepDebt, 0.45)
+	weekPenalty := fatiguePenaltyRatio(state.Fatigue, state.FatigueCap, state.SleepDebt, 0.30)
 
 	return EffectiveQuota{
 		Window6HCap:  applyPenaltyCap(state.Quota.Window6HCap, windowPenalty),
@@ -26,18 +28,19 @@ func DeriveEffectiveQuota(state State) EffectiveQuota {
 	}
 }
 
-func fatiguePenaltyRatio(fatigue, sleepDebt int, maxPenalty float64) float64 {
+func fatiguePenaltyRatio(fatigue, fatigueCap, sleepDebt int, maxPenalty float64) float64 {
 	fatiguePenalty := 0.0
 	sleepPenalty := 0.0
+	fatigueRatio := normalizedFatigueRatio(fatigue, fatigueCap)
 
 	switch {
-	case fatigue >= 3000:
+	case fatigueRatio >= 0.90:
 		fatiguePenalty = 0.45
-	case fatigue >= 2000:
+	case fatigueRatio >= 0.75:
 		fatiguePenalty = 0.30
-	case fatigue >= 1200:
+	case fatigueRatio >= 0.55:
 		fatiguePenalty = 0.18
-	case fatigue >= 600:
+	case fatigueRatio >= 0.30:
 		fatiguePenalty = 0.08
 	}
 
@@ -57,6 +60,16 @@ func fatiguePenaltyRatio(fatigue, sleepDebt int, maxPenalty float64) float64 {
 		return maxPenalty
 	}
 	return total
+}
+
+func normalizedFatigueRatio(fatigue, fatigueCap int) float64 {
+	if fatigue <= 0 {
+		return 0
+	}
+	if fatigueCap <= 0 {
+		fatigueCap = defaultFatigueCap
+	}
+	return float64(fatigue) / float64(fatigueCap)
 }
 
 func applyPenaltyCap(cap int, penalty float64) int {
