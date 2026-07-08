@@ -139,6 +139,12 @@ function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget:
           <h3>额度</h3>
           <span className="section-title__hint">今日 · 本周 = 真挡</span>
         </div>
+        {budget.workAllowedNow === false ? (
+          <div className="quota-gate">
+            <strong>她现在被挡住了。</strong>
+            <span>额度用完了，等旧记账过期腾出空间才能继续。</span>
+          </div>
+        ) : null}
         <div className="quota-layers">
           {GATE_LAYERS.map((layer) => {
             const pct = budget.remaining[layer];

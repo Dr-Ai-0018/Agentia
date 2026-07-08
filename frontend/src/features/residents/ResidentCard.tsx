@@ -88,6 +88,9 @@ export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
             style={{ width: `${Math.max(0, Math.min(100, remaining))}%` }}
           />
         </div>
+        {budget.workAllowedNow === false ? (
+          <div className="resident-card__gate">{layerLabel}额度用完了，她现在得等等</div>
+        ) : null}
       </div>
     </article>
   );

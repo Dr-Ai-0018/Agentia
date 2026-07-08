@@ -1954,6 +1954,32 @@ button {
   background: var(--accent-danger);
 }
 
+.resident-card__gate {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: var(--accent-danger-soft);
+  border: 1px solid var(--accent-danger);
+  border-radius: var(--radius-control);
+  color: var(--accent-danger);
+  font-size: 12px;
+}
+
+.quota-gate {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--accent-danger-soft);
+  border: 1px solid var(--accent-danger);
+  border-radius: var(--radius-panel);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.quota-gate strong {
+  color: var(--accent-danger);
+}
+
 .resident-card__mood {
   display: inline-flex;
   align-items: center;
