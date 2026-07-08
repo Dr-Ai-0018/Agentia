@@ -23,12 +23,17 @@ type ResidentBudgetStatus struct {
 	WorkAllowedNow              bool    `json:"work_allowed_now"`
 	BlockingReason              string  `json:"blocking_reason,omitempty"`
 	Window6HUsed                int     `json:"window_6h_used"`
+	RollingWindow6HUsed         int     `json:"rolling_6h_used,omitempty"`
 	EffectiveWindow6HCap        int     `json:"effective_window_6h_cap"`
 	EffectiveWindow6HRemaining  int     `json:"effective_window_6h_remaining"`
 	DayUsed                     int     `json:"day_used"`
+	RollingDayUsed              int     `json:"rolling_day_used,omitempty"`
+	RollingDayRemaining         int     `json:"rolling_day_remaining,omitempty"`
 	EffectiveDayCap             int     `json:"effective_day_cap"`
 	EffectiveDayRemaining       int     `json:"effective_day_remaining"`
 	WeekUsed                    int     `json:"week_used"`
+	RollingWeekUsed             int     `json:"rolling_week_used,omitempty"`
+	RollingWeekRemaining        int     `json:"rolling_week_remaining,omitempty"`
 	EffectiveWeekCap            int     `json:"effective_week_cap"`
 	EffectiveWeekRemaining      int     `json:"effective_week_remaining"`
 	QuotaTightestLayer          string  `json:"quota_tightest_layer,omitempty"`
@@ -44,7 +49,9 @@ type BudgetStatusTotals struct {
 	WorkAllowedCount           int     `json:"work_allowed_count"`
 	BlockedCount               int     `json:"blocked_count"`
 	EffectiveWindow6HRemaining int     `json:"effective_window_6h_remaining"`
+	RollingDayRemaining        int     `json:"rolling_day_remaining,omitempty"`
 	EffectiveDayRemaining      int     `json:"effective_day_remaining"`
+	RollingWeekRemaining       int     `json:"rolling_week_remaining,omitempty"`
 	EffectiveWeekRemaining     int     `json:"effective_week_remaining"`
 }
 
@@ -129,12 +136,17 @@ func (a *App) RunBudgetStatus(residentIDs []string) (BudgetStatusOutput, error) 
 			WorkAllowedNow:              quota.WorkAllowedNow,
 			BlockingReason:              quota.BlockingReason,
 			Window6HUsed:                quota.Window6HUsed,
+			RollingWindow6HUsed:         quota.RollingWindow6HUsed,
 			EffectiveWindow6HCap:        quota.EffectiveWindow6HCap,
 			EffectiveWindow6HRemaining:  quota.EffectiveWindow6HRemaining,
 			DayUsed:                     quota.DayUsed,
+			RollingDayUsed:              quota.RollingDayUsed,
+			RollingDayRemaining:         quota.RollingDayRemaining,
 			EffectiveDayCap:             quota.EffectiveDayCap,
 			EffectiveDayRemaining:       quota.EffectiveDayRemaining,
 			WeekUsed:                    quota.WeekUsed,
+			RollingWeekUsed:             quota.RollingWeekUsed,
+			RollingWeekRemaining:        quota.RollingWeekRemaining,
 			EffectiveWeekCap:            quota.EffectiveWeekCap,
 			EffectiveWeekRemaining:      quota.EffectiveWeekRemaining,
 			QuotaTightestLayer:          status.Physiology.QuotaTightestLayer,
@@ -147,7 +159,9 @@ func (a *App) RunBudgetStatus(residentIDs []string) (BudgetStatusOutput, error) 
 		out.Residents = append(out.Residents, row)
 		out.Totals.SparkBalance += row.SparkBalance
 		out.Totals.EffectiveWindow6HRemaining += row.EffectiveWindow6HRemaining
+		out.Totals.RollingDayRemaining += row.RollingDayRemaining
 		out.Totals.EffectiveDayRemaining += row.EffectiveDayRemaining
+		out.Totals.RollingWeekRemaining += row.RollingWeekRemaining
 		out.Totals.EffectiveWeekRemaining += row.EffectiveWeekRemaining
 		if row.WorkAllowedNow {
 			out.Totals.WorkAllowedCount++

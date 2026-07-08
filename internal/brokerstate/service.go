@@ -2,6 +2,7 @@ package brokerstate
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"ai-arena/internal/recovery"
@@ -153,7 +154,7 @@ func (s *BrokerService) RecoveryTickWithMode(residentID string, now time.Time, m
 	if err != nil {
 		return ResidentStatus{}, recovery.TickResult{}, "", err
 	}
-	status := BuildResidentStatus(engine, true, path)
+	status := s.sessions.BuildResidentStatus(engine, true, path)
 	return status, tick, path, nil
 }
 
@@ -172,7 +173,7 @@ func (s *BrokerService) ResetResident(residentID string, now time.Time) (Residen
 	if err != nil {
 		return ResidentStatus{}, "", err
 	}
-	status := BuildResidentStatus(engine, false, path)
+	status := s.sessions.BuildResidentStatus(engine, false, path)
 	return status, path, nil
 }
 
@@ -192,7 +193,7 @@ func (s *BrokerService) GrantQuota(req QuotaGrantRequest) (QuotaGrantResponse, e
 	if err != nil {
 		return QuotaGrantResponse{}, err
 	}
-	after := BuildResidentStatus(engine, true, path)
+	after := s.sessions.BuildResidentStatus(engine, true, path)
 	return QuotaGrantResponse{
 		ResidentID:       req.ResidentID,
 		Reason:           req.Reason,
@@ -226,7 +227,7 @@ func (s *BrokerService) GrantSpark(req SparkGrantRequest) (SparkGrantResponse, e
 	if err != nil {
 		return SparkGrantResponse{}, err
 	}
-	after := BuildResidentStatus(engine, true, path)
+	after := s.sessions.BuildResidentStatus(engine, true, path)
 	return SparkGrantResponse{
 		ResidentID:       req.ResidentID,
 		Amount:           req.Amount,
@@ -275,7 +276,25 @@ func (s *BrokerService) GrantTestAllowanceCard(req TestAllowanceCardRequest) (Te
 	if err != nil {
 		return TestAllowanceCardResponse{}, err
 	}
-	after := BuildResidentStatus(engine, true, path)
+	if _, err := s.sessions.store.AppendQuotaEvent(QuotaEvent{
+		ResidentID: req.ResidentID,
+		Kind:       QuotaEventTestAllowance,
+		SparkCost:  -req.SparkAmount,
+		CreatedAt:  time.Now().UTC(),
+		Metadata: map[string]interface{}{
+			"reason":               req.Reason,
+			"operator":             req.Operator,
+			"window_6h_delta":      req.Window6HDelta,
+			"day_delta":            req.DayDelta,
+			"week_delta":           req.WeekDelta,
+			"reset_window_6h_used": req.ResetWindow6HUsed,
+			"reset_day_used":       req.ResetDayUsed,
+			"reset_week_used":      req.ResetWeekUsed,
+		},
+	}); err != nil {
+		return TestAllowanceCardResponse{}, err
+	}
+	after := s.sessions.BuildResidentStatus(engine, true, path)
 	quota := BuildQuotaSnapshot(after)
 	revert := QuotaGrantRequest{
 		ResidentID:    req.ResidentID,
@@ -347,7 +366,12 @@ func (s *BrokerService) PrepareAdmission(residentID string, kind runtimeguard.Ca
 	if err != nil {
 		return PreparedAdmission{}, nil, err
 	}
-	prepared, err := engine.PrepareCall(kind, usage, penalties)
+	prepared, err := engine.PrepareCallWithQuotaContext(kind, usage, penalties, runtimecore.QuotaContext{
+		RollingUsageValid:   true,
+		RollingWindow6HUsed: status.RollingWindow6HUsed,
+		RollingDayUsed:      status.RollingDayUsed,
+		RollingWeekUsed:     status.RollingWeekUsed,
+	})
 	if err != nil {
 		return PreparedAdmission{}, nil, err
 	}
@@ -380,6 +404,39 @@ func (s *BrokerService) ApplyPreparedCall(engine *runtimecore.Engine, prepared P
 	if err != nil {
 		return runtimecore.AppliedCall{}, ResidentStatus{}, "", err
 	}
-	after := BuildResidentStatus(engine, true, path)
+	if _, err := s.sessions.store.AppendQuotaEvent(quotaEventFromApplied(prepared, applied, activity)); err != nil {
+		return runtimecore.AppliedCall{}, ResidentStatus{}, "", err
+	}
+	after := s.sessions.BuildResidentStatus(engine, true, path)
 	return applied, after, path, nil
+}
+
+func quotaEventFromApplied(prepared PreparedAdmission, applied runtimecore.AppliedCall, activity tokenledger.ActivityType) QuotaEvent {
+	kind := QuotaEventWorkCall
+	switch prepared.Prepared.Kind {
+	case runtimeguard.CallKindAcceptance:
+		kind = QuotaEventAcceptanceCall
+	case runtimeguard.CallKindFinalNotice:
+		kind = QuotaEventFinalNotice
+	}
+	finishedAt := prepared.Prepared.Usage.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	return QuotaEvent{
+		ResidentID: prepared.ResidentID,
+		Kind:       kind,
+		ResponseID: prepared.Prepared.Usage.ResponseID,
+		Action:     string(activity),
+		StrainCost: prepared.Prepared.Strain.Rounded,
+		SparkCost:  prepared.Prepared.Cost.SparkCost,
+		CreatedAt:  finishedAt,
+		Metadata: map[string]interface{}{
+			"model":             prepared.Prepared.Usage.Model,
+			"call_kind":         string(prepared.Prepared.Kind),
+			"activity":          string(activity),
+			"snapshot_revision": strconv.FormatUint(prepared.SnapshotRevision, 10),
+			"fatigue_gain":      applied.Fatigue.FatigueGain,
+		},
+	}
 }

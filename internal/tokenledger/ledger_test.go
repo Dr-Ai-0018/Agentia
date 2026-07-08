@@ -1,6 +1,9 @@
 package tokenledger
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestComputeStrain(t *testing.T) {
 	cfg := DefaultConfig()
@@ -19,6 +22,25 @@ func TestComputeStrain(t *testing.T) {
 	}
 	if got.Rounded != 935 {
 		t.Fatalf("rounded strain = %d, want 935", got.Rounded)
+	}
+}
+
+func TestApplyStrainMultiplier(t *testing.T) {
+	strain := Strain{
+		WeightedUncached: 100,
+		WeightedCached:   10,
+		WeightedOutput:   25,
+		ToolPenalty:      40,
+		Raw:              175,
+		Rounded:          175,
+	}
+
+	got := ApplyStrainMultiplier(strain, 1.15)
+	if got.Rounded != 202 {
+		t.Fatalf("rounded multiplied strain = %d, want 202", got.Rounded)
+	}
+	if math.Abs(got.Raw-201.25) > 0.0001 {
+		t.Fatalf("raw multiplied strain = %.2f, want 201.25", got.Raw)
 	}
 }
 

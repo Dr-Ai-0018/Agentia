@@ -161,6 +161,20 @@ func ComputeStrain(cfg Config, usage Usage, penalties Penalties) Strain {
 	}
 }
 
+func ApplyStrainMultiplier(strain Strain, multiplier float64) Strain {
+	if multiplier <= 1 {
+		return strain
+	}
+	strain.WeightedUncached *= multiplier
+	strain.WeightedCached *= multiplier
+	strain.WeightedOutput *= multiplier
+	strain.ToolPenalty *= multiplier
+	strain.RetryPenalty *= multiplier
+	strain.Raw *= multiplier
+	strain.Rounded = int(math.Ceil(strain.Raw))
+	return strain
+}
+
 func ComputeCost(cfg Config, usage Usage) (CostBreakdown, error) {
 	price, ok := cfg.ModelPrices[usage.Model]
 	if !ok {

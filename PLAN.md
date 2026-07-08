@@ -480,6 +480,8 @@ Validation:
 
 Discovered during codex S3 calibration (10min + 20min short soaks, report at `docs/development/12_QUOTA_CALIBRATION_REPORT.md`): current `StrainRecoveryPerHour=100` cannot behave like the "6h quota" host intuition, and day/week caps are only observation, not real gates. Host chose neither of codex's two mechanical fixes (linear rate bump, or rolling/discrete window). Host wants a **real-person continuous fatigue model** instead of "midnight reset" semantics.
 
+Implementation design is now tracked in `docs/development/13_QUOTA_MODEL_V0_DESIGN.md`. That file is the current backend design authority for the S3 quota-model rewrite.
+
 Decisions:
 
 - **day / week hard gate** —— on. Rolling-24h and rolling-7d windows are the real ceilings; usage older than the window naturally expires.
@@ -511,7 +513,8 @@ Owners:
 仍开的门：
 
 - `ultra_long_soak_pre_release` 硬门禁本身还没跑
-- 24h 长测 spark cap / recovery 具体数值待 codex 先跑 10min + 20min 短测收敛推荐值再 host review
+- S3 quota model 换代待实现：day/week rolling hard gate、6h observation window、fatigue accumulator、sleep depth tiers、sleep debt
+- post-model 20min 短测还没跑；新模型的 fatigue / recovery / rolling cap 数值要等实现后重新校准
 - 端到端真实回归记录待 24h 长测过程中自然产出
 
 **这次的分工**：

@@ -15,6 +15,7 @@ type Config struct {
 	RecoveryPolicy recovery.Policy
 	ReserveSpark   float64
 	ReserveStrain  int
+	FatigueCap     int
 }
 
 type ResidentState struct {
@@ -41,6 +42,13 @@ type PreparedCall struct {
 	Cost     tokenledger.CostBreakdown
 	Strain   tokenledger.Strain
 	Decision runtimeguard.Decision
+}
+
+type QuotaContext struct {
+	RollingUsageValid   bool
+	RollingWindow6HUsed int
+	RollingDayUsed      int
+	RollingWeekUsed     int
 }
 
 type AppliedCall struct {
@@ -84,21 +92,31 @@ func (e *Engine) State() ResidentState {
 }
 
 func (e *Engine) PrepareCall(kind runtimeguard.CallKind, usage tokenledger.Usage, penalties tokenledger.Penalties) (PreparedCall, error) {
+	return e.PrepareCallWithQuotaContext(kind, usage, penalties, QuotaContext{})
+}
+
+func (e *Engine) PrepareCallWithQuotaContext(kind runtimeguard.CallKind, usage tokenledger.Usage, penalties tokenledger.Penalties, quota QuotaContext) (PreparedCall, error) {
 	cost, err := tokenledger.ComputeCost(e.cfg.TokenPolicy, usage)
 	if err != nil {
 		return PreparedCall{}, err
 	}
 	strain := tokenledger.ComputeStrain(e.cfg.TokenPolicy, usage, penalties)
+	strain = tokenledger.ApplyStrainMultiplier(strain, runtimeguard.FatigueStrainMultiplier(e.state.Fatigue, e.cfg.FatigueCap))
 	decision := runtimeguard.Evaluate(runtimeguard.State{
-		SparkBalance:    e.spark.Account().Balance,
-		Quota:           e.state.Quota,
-		Fatigue:         e.state.Fatigue,
-		SleepDebt:       e.state.SleepDebt,
-		ReserveSpark:    e.cfg.ReserveSpark,
-		ReserveStrain:   e.cfg.ReserveStrain,
-		DebtActive:      e.state.DebtActive,
-		DebtAmount:      e.state.DebtAmount,
-		FinalNoticeUsed: e.state.FinalNoticeUsed,
+		SparkBalance:        e.spark.Account().Balance,
+		Quota:               e.state.Quota,
+		RollingUsageValid:   quota.RollingUsageValid,
+		RollingWindow6HUsed: quota.RollingWindow6HUsed,
+		RollingDayUsed:      quota.RollingDayUsed,
+		RollingWeekUsed:     quota.RollingWeekUsed,
+		Fatigue:             e.state.Fatigue,
+		FatigueCap:          e.cfg.FatigueCap,
+		SleepDebt:           e.state.SleepDebt,
+		ReserveSpark:        e.cfg.ReserveSpark,
+		ReserveStrain:       e.cfg.ReserveStrain,
+		DebtActive:          e.state.DebtActive,
+		DebtAmount:          e.state.DebtAmount,
+		FinalNoticeUsed:     e.state.FinalNoticeUsed,
 	}, runtimeguard.Request{
 		Kind:       kind,
 		SparkCost:  cost.SparkCost,

@@ -155,6 +155,78 @@ func TestWorkCallStopsBeforeDebt(t *testing.T) {
 	}
 }
 
+func TestPrepareCallAppliesFatigueStrainMultiplier(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{
+		TokenPolicy: tokenledger.DefaultConfig(),
+		FatigueCap:  1000,
+	}, "amber", tokenledger.QuotaState{
+		DayCap:  5000,
+		WeekCap: 20000,
+	}, start)
+	engine.state.Fatigue = 800
+
+	_, err := engine.SparkLedger().Credit("grant", 5, "allowance", start)
+	if err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+
+	prepared, err := engine.PrepareCall(runtimeguard.CallKindWork, tokenledger.Usage{
+		InputTokens:  100,
+		OutputTokens: 100,
+		Model:        "gpt-5.4",
+		FinishedAt:   start.Add(time.Minute),
+	}, tokenledger.Penalties{})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	base := tokenledger.ComputeStrain(tokenledger.DefaultConfig(), tokenledger.Usage{
+		InputTokens:  100,
+		OutputTokens: 100,
+	}, tokenledger.Penalties{})
+	if prepared.Strain.Rounded <= base.Rounded {
+		t.Fatalf("expected fatigue to increase projected strain, got %d <= %d", prepared.Strain.Rounded, base.Rounded)
+	}
+}
+
+func TestPrepareCallFatigueMultiplierCanTripRollingDayGate(t *testing.T) {
+	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
+	engine := New(Config{
+		TokenPolicy: tokenledger.DefaultConfig(),
+		FatigueCap:  1000,
+	}, "amber", tokenledger.QuotaState{
+		DayCap:  1000,
+		WeekCap: 10000,
+	}, start)
+	engine.state.Fatigue = 800
+
+	_, err := engine.SparkLedger().Credit("grant", 5, "allowance", start)
+	if err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+
+	prepared, err := engine.PrepareCallWithQuotaContext(runtimeguard.CallKindWork, tokenledger.Usage{
+		InputTokens:  100,
+		OutputTokens: 100,
+		Model:        "gpt-5.4",
+		FinishedAt:   start.Add(time.Minute),
+	}, tokenledger.Penalties{}, QuotaContext{
+		RollingUsageValid: true,
+		RollingDayUsed:    800,
+		RollingWeekUsed:   800,
+	})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if prepared.Decision.Allowed {
+		t.Fatalf("expected fatigue-inflated strain to trip rolling day gate: %#v", prepared.Decision)
+	}
+	if len(prepared.Decision.Reasons) != 1 || prepared.Decision.Reasons[0] != "work_would_exceed_day_quota" {
+		t.Fatalf("unexpected reasons: %#v", prepared.Decision.Reasons)
+	}
+}
+
 func TestAcceptanceDoesNotConsumeFinalNotice(t *testing.T) {
 	start := time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC)
 	engine := New(Config{

@@ -211,6 +211,17 @@ func TestBrokerServiceTestAllowanceCardClearsDebtAndBoostsQuota(t *testing.T) {
 	if resp.RevertQuotaGrant.Window6HDelta != -1000 || resp.RevertQuotaGrant.DayDelta != -2000 || resp.RevertQuotaGrant.WeekDelta != -3000 {
 		t.Fatalf("unexpected revert grant: %#v", resp.RevertQuotaGrant)
 	}
+	events, _, err := store.LoadQuotaEvents("onyx")
+	if err != nil {
+		t.Fatalf("load quota events: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != QuotaEventTestAllowance {
+		t.Fatalf("expected one allowance quota event, got %#v", events)
+	}
+	rolling := RollingQuotaUsageFromEvents(events, now)
+	if rolling.DayUsed != 0 || rolling.WeekUsed != 0 || rolling.Window6HUsed != 0 {
+		t.Fatalf("allowance event must not count toward rolling usage: %#v", rolling)
+	}
 }
 
 func TestBrokerServiceAdmitCall(t *testing.T) {
@@ -250,6 +261,19 @@ func TestBrokerServiceAdmitCall(t *testing.T) {
 	}
 	if resp.AfterStatus.SparkBalance >= 8.0 {
 		t.Fatalf("expected spark balance to decrease after applied work")
+	}
+	events, _, err := store.LoadQuotaEvents("amber")
+	if err != nil {
+		t.Fatalf("load quota events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected one quota event, got %d", len(events))
+	}
+	if events[0].Kind != QuotaEventWorkCall {
+		t.Fatalf("expected work quota event, got %#v", events[0])
+	}
+	if events[0].StrainCost != resp.Prepared.Strain.Rounded {
+		t.Fatalf("quota event strain = %d, want %d", events[0].StrainCost, resp.Prepared.Strain.Rounded)
 	}
 }
 
@@ -355,5 +379,95 @@ func TestBrokerServicePrepareDeniedCall(t *testing.T) {
 	}
 	if !prepared.Prepared.Decision.Allowed {
 		t.Fatalf("expected allow decision")
+	}
+}
+
+func TestBrokerServiceRollingDayQuotaDeniesAdmission(t *testing.T) {
+	store := New(t.TempDir())
+	registry := NewRegistry([]ResidentProfile{{
+		ResidentID:   "jade",
+		InitialGrant: 5,
+		InitialQuota: tokenledger.QuotaState{
+			Window6HCap: 100,
+			DayCap:      1000,
+			WeekCap:     10000,
+		},
+	}})
+	manager := NewSessionManager(store, registry, DefaultRuntimeConfig())
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	manager.rootNow = func() time.Time { return now }
+	service := NewBrokerService(manager)
+
+	if _, err := store.AppendQuotaEvent(QuotaEvent{
+		ResidentID: "jade",
+		Kind:       QuotaEventWorkCall,
+		StrainCost: 980,
+		CreatedAt:  now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("append rolling usage: %v", err)
+	}
+
+	prepared, _, err := service.PrepareAdmission("jade", "work", tokenledger.Usage{
+		InputTokens:  40,
+		OutputTokens: 20,
+		Model:        "gpt-5.4",
+		FinishedAt:   now.Add(time.Minute),
+	}, tokenledger.Penalties{})
+	if err != nil {
+		t.Fatalf("prepare admission: %v", err)
+	}
+	if !prepared.Denied {
+		t.Fatalf("expected rolling day quota to deny admission")
+	}
+	if len(prepared.DeniedReason) != 1 || prepared.DeniedReason[0] != "work_would_exceed_day_quota" {
+		t.Fatalf("unexpected denied reason: %#v", prepared.DeniedReason)
+	}
+	if prepared.Prepared.Decision.WouldExceedQuota != true || !prepared.Prepared.Decision.WouldExceedDay {
+		t.Fatalf("expected day quota projection: %#v", prepared.Prepared.Decision)
+	}
+}
+
+func TestBrokerServiceExhaustedSixHourObservationDoesNotDenyAdmission(t *testing.T) {
+	store := New(t.TempDir())
+	registry := NewRegistry([]ResidentProfile{{
+		ResidentID:   "jade",
+		InitialGrant: 5,
+		InitialQuota: tokenledger.QuotaState{
+			Window6HCap: 100,
+			DayCap:      10000,
+			WeekCap:     50000,
+		},
+	}})
+	manager := NewSessionManager(store, registry, DefaultRuntimeConfig())
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	manager.rootNow = func() time.Time { return now }
+	service := NewBrokerService(manager)
+
+	if _, err := store.AppendQuotaEvent(QuotaEvent{
+		ResidentID: "jade",
+		Kind:       QuotaEventWorkCall,
+		StrainCost: 500,
+		CreatedAt:  now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("append rolling usage: %v", err)
+	}
+
+	prepared, _, err := service.PrepareAdmission("jade", "work", tokenledger.Usage{
+		InputTokens:  40,
+		OutputTokens: 20,
+		Model:        "gpt-5.4",
+		FinishedAt:   now.Add(time.Minute),
+	}, tokenledger.Penalties{})
+	if err != nil {
+		t.Fatalf("prepare admission: %v", err)
+	}
+	if prepared.Denied {
+		t.Fatalf("expected 6h observation exhaustion not to deny admission: %#v", prepared.DeniedReason)
+	}
+	if prepared.BeforeStatus.RollingWindow6HUsed != 500 {
+		t.Fatalf("expected rolling 6h usage on status, got %d", prepared.BeforeStatus.RollingWindow6HUsed)
+	}
+	if prepared.Prepared.Decision.WouldExceedQuota {
+		t.Fatalf("6h observation should not count as hard quota projection: %#v", prepared.Prepared.Decision)
 	}
 }

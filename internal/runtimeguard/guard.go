@@ -11,15 +11,20 @@ const (
 )
 
 type State struct {
-	SparkBalance    float64
-	Quota           tokenledger.QuotaState
-	Fatigue         int
-	SleepDebt       int
-	ReserveSpark    float64
-	ReserveStrain   int
-	DebtActive      bool
-	DebtAmount      float64
-	FinalNoticeUsed bool
+	SparkBalance        float64
+	Quota               tokenledger.QuotaState
+	RollingUsageValid   bool
+	RollingWindow6HUsed int
+	RollingDayUsed      int
+	RollingWeekUsed     int
+	Fatigue             int
+	FatigueCap          int
+	SleepDebt           int
+	ReserveSpark        float64
+	ReserveStrain       int
+	DebtActive          bool
+	DebtAmount          float64
+	FinalNoticeUsed     bool
 }
 
 type Request struct {
@@ -35,7 +40,11 @@ type Decision struct {
 	Reasons           []string `json:"reasons,omitempty"`
 	RemainingSpark    float64  `json:"remaining_spark"`
 	Remaining6H       int      `json:"remaining_6h"`
+	RemainingDay      int      `json:"remaining_day"`
+	RemainingWeek     int      `json:"remaining_week"`
 	WouldExceedQuota  bool     `json:"would_exceed_quota"`
+	WouldExceedDay    bool     `json:"would_exceed_day"`
+	WouldExceedWeek   bool     `json:"would_exceed_week"`
 	WouldEnterDebt    bool     `json:"would_enter_debt"`
 	LockAfterThisCall bool     `json:"lock_after_this_call"`
 }
@@ -50,6 +59,8 @@ func Evaluate(state State, req Request) Decision {
 	decision := Decision{
 		RemainingSpark: state.SparkBalance,
 		Remaining6H:    remaining6H,
+		RemainingDay:   hardRemaining(state.Quota.DayCap, rollingDayUsed(state)),
+		RemainingWeek:  hardRemaining(state.Quota.WeekCap, rollingWeekUsed(state)),
 	}
 
 	if state.DebtActive {
@@ -68,31 +79,42 @@ func Evaluate(state State, req Request) Decision {
 			decision.Reasons = append(decision.Reasons, "spark_exhausted")
 			return decision
 		}
-		if remaining6H <= 0 {
-			decision.Reasons = append(decision.Reasons, "effective_window_exhausted")
+		if quotaExhausted(state.Quota.DayCap, rollingDayUsed(state)) {
+			decision.Reasons = append(decision.Reasons, "day_quota_exhausted")
+			return decision
+		}
+		if quotaExhausted(state.Quota.WeekCap, rollingWeekUsed(state)) {
+			decision.Reasons = append(decision.Reasons, "week_quota_exhausted")
+			return decision
+		}
+		if FatigueHardCapped(state.Fatigue, state.FatigueCap) {
+			decision.Reasons = append(decision.Reasons, "fatigue_exhausted")
 			return decision
 		}
 		decision.RemainingSpark = state.SparkBalance - req.SparkCost
 		decision.Remaining6H = remaining6H - req.StrainCost
+		decision.RemainingDay = projectedRemaining(state.Quota.DayCap, rollingDayUsed(state), req.StrainCost)
+		decision.RemainingWeek = projectedRemaining(state.Quota.WeekCap, rollingWeekUsed(state), req.StrainCost)
 		decision.WouldEnterDebt = decision.RemainingSpark < 0
-		decision.WouldExceedQuota = decision.Remaining6H < 0
+		decision.WouldExceedDay = quotaWouldExceed(state.Quota.DayCap, rollingDayUsed(state), req.StrainCost)
+		decision.WouldExceedWeek = quotaWouldExceed(state.Quota.WeekCap, rollingWeekUsed(state), req.StrainCost)
+		decision.WouldExceedQuota = decision.WouldExceedDay || decision.WouldExceedWeek
 		decision.LockAfterThisCall = decision.WouldEnterDebt || decision.WouldExceedQuota
 		if decision.WouldEnterDebt {
 			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_enter_debt")
 			return decision
 		}
-		if decision.WouldExceedQuota {
-			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_exceed_quota")
+		if decision.WouldExceedDay {
+			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_exceed_day_quota")
+			return decision
+		}
+		if decision.WouldExceedWeek {
+			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_exceed_week_quota")
 			return decision
 		}
 		if decision.RemainingSpark < state.ReserveSpark {
 			decision.ConsumesReserve = true
 			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_consume_spark_reserve")
-			return decision
-		}
-		if decision.Remaining6H < state.ReserveStrain {
-			decision.ConsumesReserve = true
-			decision.Reasons = append(decision.Reasons, string(req.Kind)+"_would_consume_strain_reserve")
 			return decision
 		}
 		decision.Allowed = true
@@ -108,7 +130,11 @@ func Evaluate(state State, req Request) Decision {
 		decision.ConsumesReserve = true
 		decision.RemainingSpark = state.SparkBalance - req.SparkCost
 		decision.Remaining6H = remaining6H - req.StrainCost
-		decision.WouldExceedQuota = decision.Remaining6H < 0
+		decision.RemainingDay = projectedRemaining(state.Quota.DayCap, rollingDayUsed(state), req.StrainCost)
+		decision.RemainingWeek = projectedRemaining(state.Quota.WeekCap, rollingWeekUsed(state), req.StrainCost)
+		decision.WouldExceedDay = quotaWouldExceed(state.Quota.DayCap, rollingDayUsed(state), req.StrainCost)
+		decision.WouldExceedWeek = quotaWouldExceed(state.Quota.WeekCap, rollingWeekUsed(state), req.StrainCost)
+		decision.WouldExceedQuota = decision.WouldExceedDay || decision.WouldExceedWeek
 		decision.WouldEnterDebt = decision.RemainingSpark < 0
 		decision.AllowDebt = decision.WouldEnterDebt
 		decision.LockAfterThisCall = true
@@ -123,4 +149,84 @@ func Evaluate(state State, req Request) Decision {
 
 	decision.Reasons = append(decision.Reasons, "unknown_call_kind")
 	return decision
+}
+
+func rollingDayUsed(state State) int {
+	if state.RollingUsageValid {
+		return state.RollingDayUsed
+	}
+	return state.Quota.DayUsed
+}
+
+func rollingWeekUsed(state State) int {
+	if state.RollingUsageValid {
+		return state.RollingWeekUsed
+	}
+	return state.Quota.WeekUsed
+}
+
+func hardRemaining(cap, used int) int {
+	if cap <= 0 {
+		return 0
+	}
+	remaining := cap - used
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+func projectedRemaining(cap, used, spend int) int {
+	if cap <= 0 {
+		return 0
+	}
+	return cap - used - spend
+}
+
+func quotaExhausted(cap, used int) bool {
+	return cap > 0 && used >= cap
+}
+
+func quotaWouldExceed(cap, used, spend int) bool {
+	return cap > 0 && used+spend > cap
+}
+
+func FatigueHardCapped(fatigue, cap int) bool {
+	return cap > 0 && fatigue >= cap
+}
+
+func FatigueStrainMultiplier(fatigue, cap int) float64 {
+	if fatigue <= 0 || cap <= 0 {
+		return 1.0
+	}
+	ratio := float64(fatigue) / float64(cap)
+	switch {
+	case ratio >= 0.80:
+		return 1.35
+	case ratio >= 0.55:
+		return 1.15
+	case ratio >= 0.30:
+		return 1.05
+	default:
+		return 1.0
+	}
+}
+
+func FatigueZone(fatigue, cap int) string {
+	if fatigue <= 0 || cap <= 0 {
+		return "fresh"
+	}
+	ratio := float64(fatigue) / float64(cap)
+	switch {
+	case ratio >= 1.0:
+		return "hard_cap"
+	case ratio >= 0.80:
+		return "exhausted"
+	case ratio >= 0.55:
+		return "tired"
+	case ratio >= 0.30:
+		return "warming_up"
+	default:
+		return "fresh"
+	}
 }

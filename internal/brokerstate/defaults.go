@@ -25,6 +25,7 @@ func DefaultRuntimeConfig() runtimecore.Config {
 		},
 		ReserveSpark:  0.08,
 		ReserveStrain: 300,
+		FatigueCap:    2_500_000,
 	}
 }
 

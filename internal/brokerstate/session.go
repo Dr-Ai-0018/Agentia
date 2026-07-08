@@ -30,10 +30,13 @@ type ResidentStatus struct {
 	RecoveryMode         string             `json:"recovery_mode"`
 	Window6HCap          int                `json:"window_6h_cap"`
 	Window6HUsed         int                `json:"window_6h_used"`
+	RollingWindow6HUsed  int                `json:"rolling_6h_used,omitempty"`
 	DayCap               int                `json:"day_cap"`
 	DayUsed              int                `json:"day_used"`
+	RollingDayUsed       int                `json:"rolling_day_used,omitempty"`
 	WeekCap              int                `json:"week_cap"`
 	WeekUsed             int                `json:"week_used"`
+	RollingWeekUsed      int                `json:"rolling_week_used,omitempty"`
 	EffectiveWindow6HCap int                `json:"effective_window_6h_cap"`
 	EffectiveDayCap      int                `json:"effective_day_cap"`
 	EffectiveWeekCap     int                `json:"effective_week_cap"`
@@ -64,6 +67,7 @@ func (m *SessionManager) LoadResidentWithRevision(residentID string) (*runtimeco
 		return nil, ResidentStatus{}, 0, err
 	}
 	status := BuildResidentStatusAt(engine, loaded, path, now)
+	status = m.withRollingQuotaUsage(status, now)
 	return engine, status, revision, nil
 }
 
@@ -81,6 +85,25 @@ func (m *SessionManager) SaveResidentExpected(engine *runtimecore.Engine, expect
 		return m.store.SaveResidentSnapshotCAS(state.ResidentID, snapshot, expectedRevision)
 	}
 	return m.store.SaveResidentSnapshot(state.ResidentID, snapshot)
+}
+
+func (m *SessionManager) BuildResidentStatus(engine *runtimecore.Engine, loaded bool, snapshotPath string) ResidentStatus {
+	return m.BuildResidentStatusAt(engine, loaded, snapshotPath, m.rootNow())
+}
+
+func (m *SessionManager) BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath string, now time.Time) ResidentStatus {
+	return m.withRollingQuotaUsage(BuildResidentStatusAt(engine, loaded, snapshotPath, now), now)
+}
+
+func (m *SessionManager) withRollingQuotaUsage(status ResidentStatus, now time.Time) ResidentStatus {
+	usage, err := m.store.RollingQuotaUsage(status.ResidentID, now)
+	if err != nil {
+		return status
+	}
+	status.RollingWindow6HUsed = usage.Window6HUsed
+	status.RollingDayUsed = usage.DayUsed
+	status.RollingWeekUsed = usage.WeekUsed
+	return status
 }
 
 func BuildResidentStatus(engine *runtimecore.Engine, loaded bool, snapshotPath string) ResidentStatus {
