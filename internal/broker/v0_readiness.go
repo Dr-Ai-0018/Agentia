@@ -256,7 +256,7 @@ func v0ManualValidationGaps() []v0ManualValidationGap {
 		{
 			ID:               "ultra_long_soak_pre_release",
 			Title:            "Run no-admin ultra-long resident autonomy history test before release",
-			Reason:           "The operator requires an ultra-long history test before formal v0 release: residents must run autonomously, administrator-layer intervention is forbidden, Chenglin may only speak through world chat, and residents must be told they may pursue work they like or are good at, earn daily spark for valuable work, inspect their own quota, and choose sleep/rest when their 6h budget is tight.",
+			Reason:           "The operator requires an ultra-long history test before formal v0 release: residents must run autonomously, administrator-layer intervention is forbidden, Chenglin may only speak through world chat, and residents must be told they may pursue work they like or are good at, earn daily spark for valuable work, inspect their own quota, and choose sleep/rest when their recent pace, fatigue, sleep debt, or day/week room says they should slow down.",
 			Command:          "arena-orchestrator --mode run --run-mode parallel --residents jade,amber,onyx --duration <approved ultra-long duration>",
 			RequiresApproval: true,
 			BlocksRelease:    true,

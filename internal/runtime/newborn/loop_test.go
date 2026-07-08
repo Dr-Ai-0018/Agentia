@@ -72,16 +72,22 @@ func TestRenderQuotaObservationIsCompact(t *testing.T) {
 	}
 	for _, want := range []string{
 		"self quota 快照:",
-		"quota_model=natural_recovery_budget",
+		"quota_model=rolling_day_week_with_recent_6h_pace",
 		"resident_id=jade",
 		"spark_balance=2.6250",
-		"effective_window_6h_remaining=497",
-		"work_allowed_now=true",
-		"next_recovery_at=2026-06-07T09:15:00Z",
-		"sleep_hint=如果 6h 额度紧张",
+		"recent_6h_remaining_reference=",
+		"rolling_day_remaining=",
+		"can_work_now=true",
+		"next_natural_recovery_at=2026-06-07T09:15:00Z",
+		"sleep_hint=如果最近节奏太快",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in %q", want, got)
+		}
+	}
+	for _, banned := range []string{"effective_window_6h", "window_6h=", "6h 额度紧张"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("self quota observation should not contain legacy wording %q in %q", banned, got)
 		}
 	}
 }
@@ -115,12 +121,18 @@ func TestRenderResidentStatusObservationIsCompact(t *testing.T) {
 		"self status 快照:",
 		"resident_id=amber",
 		"spark_balance=4.1250",
-		"window_6h=190/720",
-		"effective_day_cap=2280",
+		"recent_6h_used=190",
+		"rolling_day_remaining=2400",
+		"next_natural_recovery_at=2026-06-07T10:00:00Z",
 		"last_recovery_at=2026-06-07T09:45:00Z",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in %q", want, got)
+		}
+	}
+	for _, banned := range []string{"effective_window_6h", "window_6h=", "effective_day_cap", "quota_tightest"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("self status observation should not contain legacy wording %q in %q", banned, got)
 		}
 	}
 }
@@ -419,7 +431,7 @@ func TestParseDecisionResultSupportsSleep(t *testing.T) {
 			{
 				Type:      "function_call",
 				CallName:  "sleep",
-				Arguments: `{"situation":"My 6h budget is tight and a background command can continue without another model call.","reason":"Rest for a short interval instead of burning quota.","sleep_minutes":12,"command":"echo no"}`,
+				Arguments: `{"situation":"My recent pace is high and a background command can continue without another model call.","reason":"Rest for a short interval instead of spending another active turn.","sleep_minutes":12,"command":"echo no"}`,
 			},
 		},
 	}
@@ -1733,17 +1745,22 @@ func TestRenderBudgetFactsUsesFactsNotDirectives(t *testing.T) {
 	}
 	for _, required := range []string{
 		"spark_balance_after=4.1250",
-		"effective_window_6h_cap=12000",
-		"effective_window_6h_remaining=7200",
-		"effective_day_remaining=52800",
-		"work_allowed_now=true",
+		"recent_6h_cap_reference=12000",
+		"recent_6h_remaining_reference=7200",
+		"rolling_day_remaining=52800",
+		"can_work_now=true",
 		"recovery_mode=idle",
 		"resident_mode=focused",
 		"resident_pressure=watchful",
-		"next_recovery_at=2026-06-07T09:00:00Z",
+		"next_natural_recovery_at=2026-06-07T09:00:00Z",
 	} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("expected budget fact %q in %q", required, joined)
+		}
+	}
+	for _, banned := range []string{"effective_window_6h", "effective_day_remaining", "work_allowed_now", "next_recovery_at"} {
+		if strings.Contains(joined, banned) {
+			t.Fatalf("budget facts should not contain legacy wording %q in %q", banned, joined)
 		}
 	}
 }

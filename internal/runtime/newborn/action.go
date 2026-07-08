@@ -157,63 +157,90 @@ func (e *IncusActionExecutor) executeSelfQuota(profile ResidentProfile) string {
 }
 
 func renderResidentStatusObservation(status brokerstate.ResidentStatus) string {
+	recent6HUsed := recent6HUsed(status.RollingWindow6HUsed, status.Window6HUsed)
+	sleepDepth := string(status.Sleep.Depth)
+	if sleepDepth == "" {
+		sleepDepth = "awake"
+	}
 	lines := []string{
 		"self status 快照:",
 		fmt.Sprintf("resident_id=%s", status.ResidentID),
 		fmt.Sprintf("spark_balance=%.4f", status.SparkBalance),
 		fmt.Sprintf("fatigue=%d", status.Fatigue),
-		fmt.Sprintf("sleep_debt=%d", status.SleepDebt),
+		fmt.Sprintf("sleep_depth=%s", sleepDepth),
+		fmt.Sprintf("sleep_debt_hours=%.2f", status.Sleep.DebtHours),
 		fmt.Sprintf("debt_active=%t", status.DebtActive),
 		fmt.Sprintf("debt_amount=%.4f", status.DebtAmount),
 		fmt.Sprintf("recovery_mode=%s", compactValue(status.RecoveryMode)),
-		fmt.Sprintf("window_6h=%d/%d", status.Window6HUsed, status.Window6HCap),
-		fmt.Sprintf("effective_window_6h_cap=%d", status.EffectiveWindow6HCap),
-		fmt.Sprintf("day=%d/%d", status.DayUsed, status.DayCap),
-		fmt.Sprintf("effective_day_cap=%d", status.EffectiveDayCap),
-		fmt.Sprintf("week=%d/%d", status.WeekUsed, status.WeekCap),
-		fmt.Sprintf("effective_week_cap=%d", status.EffectiveWeekCap),
-		fmt.Sprintf("next_recovery_at=%s", compactValue(status.NextRecoveryAt)),
+		fmt.Sprintf("recent_6h_used=%d", recent6HUsed),
+		fmt.Sprintf("recent_6h_cap_reference=%d", status.Window6HCap),
+		fmt.Sprintf("recent_6h_remaining_reference=%d", maxInt(0, status.Window6HCap-recent6HUsed)),
+		fmt.Sprintf("rolling_day_used=%d", status.RollingDayUsed),
+		fmt.Sprintf("rolling_day_cap=%d", status.DayCap),
+		fmt.Sprintf("rolling_day_remaining=%d", maxInt(0, status.DayCap-status.RollingDayUsed)),
+		fmt.Sprintf("rolling_week_used=%d", status.RollingWeekUsed),
+		fmt.Sprintf("rolling_week_cap=%d", status.WeekCap),
+		fmt.Sprintf("rolling_week_remaining=%d", maxInt(0, status.WeekCap-status.RollingWeekUsed)),
+		fmt.Sprintf("next_natural_recovery_at=%s", compactValue(status.NextRecoveryAt)),
 	}
 	if !status.LastRecoveryAt.IsZero() {
 		lines = append(lines, fmt.Sprintf("last_recovery_at=%s", status.LastRecoveryAt.UTC().Format(time.RFC3339)))
 	}
-	if len(status.Physiology.SummaryLines) > 0 {
-		limit := status.Physiology.SummaryLines
-		if len(limit) > 2 {
-			limit = limit[:2]
-		}
-		lines = append(lines, "physiology="+compactValue(strings.Join(limit, " | ")))
+	if status.Physiology.Mode != "" {
+		lines = append(lines, fmt.Sprintf("current_state=%s", status.Physiology.Mode))
+	}
+	if status.Physiology.Pressure != "" {
+		lines = append(lines, fmt.Sprintf("current_pressure=%s", status.Physiology.Pressure))
 	}
 	return strings.Join(lines, "\n")
 }
 
 func renderQuotaObservation(out broker.QuotaOutput) string {
+	sleepDepth := string(out.Status.Sleep.Depth)
+	if sleepDepth == "" {
+		sleepDepth = "awake"
+	}
+	recent6H := recent6HUsed(out.Quota.RollingWindow6HUsed, out.Quota.Window6HUsed)
 	lines := []string{
 		"self quota 快照:",
-		"quota_model=natural_recovery_budget",
+		"quota_model=rolling_day_week_with_recent_6h_pace",
 		fmt.Sprintf("resident_id=%s", out.Status.ResidentID),
 		fmt.Sprintf("spark_balance=%.4f", out.Status.SparkBalance),
 		fmt.Sprintf("debt_active=%t", out.Status.DebtActive),
 		fmt.Sprintf("debt_amount=%.4f", out.Status.DebtAmount),
 		fmt.Sprintf("recovery_mode=%s", compactValue(out.Quota.RecoveryMode)),
-		fmt.Sprintf("window_6h_remaining=%d", out.Quota.Window6HRemaining),
-		fmt.Sprintf("effective_window_6h_remaining=%d", out.Quota.EffectiveWindow6HRemaining),
-		fmt.Sprintf("day_remaining=%d", out.Quota.DayRemaining),
-		fmt.Sprintf("effective_day_remaining=%d", out.Quota.EffectiveDayRemaining),
-		fmt.Sprintf("week_remaining=%d", out.Quota.WeekRemaining),
-		fmt.Sprintf("effective_week_remaining=%d", out.Quota.EffectiveWeekRemaining),
-		fmt.Sprintf("work_allowed_now=%t", out.Quota.WorkAllowedNow),
-		fmt.Sprintf("next_recovery_at=%s", compactValue(out.Quota.NextRecoveryAt)),
+		fmt.Sprintf("recent_6h_used=%d", recent6H),
+		fmt.Sprintf("recent_6h_cap_reference=%d", out.Quota.Window6HCap),
+		fmt.Sprintf("recent_6h_remaining_reference=%d", maxInt(0, out.Quota.Window6HCap-recent6H)),
+		fmt.Sprintf("rolling_day_used=%d", out.Quota.RollingDayUsed),
+		fmt.Sprintf("rolling_day_cap=%d", out.Quota.DayCap),
+		fmt.Sprintf("rolling_day_remaining=%d", out.Quota.RollingDayRemaining),
+		fmt.Sprintf("rolling_week_used=%d", out.Quota.RollingWeekUsed),
+		fmt.Sprintf("rolling_week_cap=%d", out.Quota.WeekCap),
+		fmt.Sprintf("rolling_week_remaining=%d", out.Quota.RollingWeekRemaining),
+		fmt.Sprintf("fatigue=%d", out.Status.Fatigue),
+		fmt.Sprintf("sleep_depth=%s", sleepDepth),
+		fmt.Sprintf("sleep_debt_hours=%.2f", out.Status.Sleep.DebtHours),
+		fmt.Sprintf("can_work_now=%t", out.Quota.WorkAllowedNow),
+		fmt.Sprintf("next_natural_recovery_at=%s", compactValue(out.Quota.NextRecoveryAt)),
 		fmt.Sprintf("recovery_tick_minutes=%d", out.Quota.RecoveryTickMinutes),
-		"sleep_hint=如果 6h 额度紧张，可以主动 sleep 几分钟或十几分钟；睡眠期间不会继续消耗模型调用，醒来后再查 self_quota。",
+		"recent_6h_note=recent_6h 是近期节奏观察，不是单独硬门槛；真正会挡住普通行动的是 rolling_day / rolling_week、spark、欠账或疲劳。",
+		"sleep_hint=如果最近节奏太快、疲劳上来、睡眠债变重，或 day/week 剩余很少，可以主动 sleep 几分钟或十几分钟；睡眠期间不会继续消耗模型调用，醒来后再查 self_quota。",
 	}
 	if reason := compactValue(out.Quota.BlockingReason); reason != "" {
-		lines = append(lines, "blocking_reason="+reason)
+		lines = append(lines, "pause_reason_code="+reason)
 	}
 	if summary := compactValue(out.Quota.BlockingSummary); summary != "" {
-		lines = append(lines, "blocking_summary="+summary)
+		lines = append(lines, "pause_reason="+summary)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func recent6HUsed(rolling, legacy int) int {
+	if rolling > 0 {
+		return rolling
+	}
+	return legacy
 }
 
 func compactValue(s string) string {

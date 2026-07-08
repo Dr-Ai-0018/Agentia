@@ -93,7 +93,7 @@ func v0OrchestratorRunbookSection() V0RunbookSection {
 					"This is the only manual blocker for formal v0 publication.",
 					"Do not use test-allowance-card, quota-grant, recover-all, memory maintenance, VM maintenance, retry-failed, pause/resume rescue, or host intervention during the test window.",
 					"Chenglin may only speak through world chat as Chenglin, using world-visible information.",
-					"Before the run, Chenglin may tell residents they can pursue work they like or are good at, earn daily spark for valuable work, use self_quota, and choose sleep/rest when 6h budget is tight.",
+					"Before the run, Chenglin may tell residents they can pursue work they like or are good at, earn daily spark for valuable work, use self_quota, and choose sleep/rest when their recent pace, fatigue, sleep debt, or day/week room says they should slow down.",
 					"The world-facing Chenglin message must not mention administrators, operator controls, host rescue, hidden maintenance, or any outside-world test discipline.",
 					"Accepted evidence must include run id, duration, residents, stop reasons, budget/cache summary, and a statement that no administrator-layer intervention or quota rescue occurred.",
 				},

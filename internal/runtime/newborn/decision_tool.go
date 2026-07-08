@@ -31,7 +31,7 @@ func decisionTools() []openai.ResponseTool {
 		tool("self_status", "向 broker 查询当前 resident 状态摘要。", props(
 			field("situation"), field("reason"),
 		), []string{"situation", "reason"}),
-		tool("self_quota", "向 broker 查询当前额度、有效额度和恢复状态。", props(
+		tool("self_quota", "查询你当前还能不能继续行动、最近节奏、day/week 余量和恢复状态。", props(
 			field("situation"), field("reason"),
 		), []string{"situation", "reason"}),
 		tool("note_list", "通过安全 note API 列出 /root/arena-notes 里的文件。", props(
@@ -61,7 +61,7 @@ func decisionTools() []openai.ResponseTool {
 		tool("memory_review", "审阅 memory_governance 里出现的一条你自己的记忆。", props(
 			field("situation"), field("reason"), field("memory_id"), enumField("memory_action", []string{"keep", "rewrite", "compress", "demote", "delete"}), field("memory_summary"), field("memory_text"), enumField("memory_layer", []string{"", "instant", "short", "long", "permanent"}), field("memory_reason"),
 		), []string{"situation", "reason", "memory_id", "memory_action", "memory_summary", "memory_text", "memory_layer", "memory_reason"}),
-		tool("sleep", "主动睡眠或休息一段时间。适合你想节省 6h 额度、等待后台任务、恢复疲劳、或把行动节奏放慢；这不是等待程林命令。sleep_minutes 建议 1-30。", props(
+		tool("sleep", "主动睡眠或休息一段时间。适合最近节奏太快、等待后台任务、恢复疲劳、睡眠债变重，或你想把行动节奏放慢；这不是等待程林命令。sleep_minutes 建议 1-30。", props(
 			field("situation"), field("reason"), intField("sleep_minutes", 1, 30),
 		), []string{"situation", "reason", "sleep_minutes"}),
 		tool("noop", "此刻什么也不做。只能用于你自己判断当前时间片应休息、恢复、节制资源或继续行动会有害；不能因为聊天 pending、没有即时回复或没有外部派工而选择。", props(
@@ -118,9 +118,9 @@ func BuildDecisionProbePayload(profile ResidentProfile) openai.RequestPayload {
 				"actions_used: none",
 				"noop_streak: 0",
 				"budget_facts:",
-				"- budget_tier=balanced",
-				"- budget_status=not_observed_yet",
-				"- broker_self_surfaces_available=self_status,self_quota",
+				"- current_pace_tier=balanced",
+				"- self_budget_status=not_observed_yet",
+				"- self_checks_available=self_status,self_quota",
 				"exploration_frontier:",
 				"- next_preferred_surface=identity",
 				"- next_probe_shape=单个身份探针，例如 whoami 或 hostname",

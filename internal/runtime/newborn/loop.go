@@ -788,12 +788,12 @@ func baselineCaptureComplete(surfaces map[ExplorationSurface]bool) bool {
 
 func renderBudgetFacts(state loopState) []string {
 	tier := budgetTier(state)
-	out := []string{"budget_tier=" + tier}
+	out := []string{"current_pace_tier=" + tier}
 	if state.LastBrokerUsage == nil {
 		out = append(out,
-			"budget_status=not_observed_yet",
+			"self_budget_status=not_observed_yet",
 			"next_call_cost_estimate=bootstrap_range",
-			"broker_self_surfaces_available=self_status,self_quota",
+			"self_checks_available=self_status,self_quota",
 		)
 		return out
 	}
@@ -804,50 +804,32 @@ func renderBudgetFacts(state loopState) []string {
 	)
 	if state.LastBrokerUsage.AfterStatus != nil {
 		status := state.LastBrokerUsage.AfterStatus
-		effectiveWindow := status.Physiology.EffectiveWindow6HCap
-		if effectiveWindow <= 0 {
-			effectiveWindow = status.Window6HCap
+		recent6H := recent6HUsed(status.RollingWindow6HUsed, status.Window6HUsed)
+		rollingDay := status.RollingDayUsed
+		if rollingDay == 0 {
+			rollingDay = status.DayUsed
 		}
-		effectiveDay := status.Physiology.EffectiveDayCap
-		if effectiveDay <= 0 {
-			effectiveDay = status.DayCap
-		}
-		effectiveWeek := status.Physiology.EffectiveWeekCap
-		if effectiveWeek <= 0 {
-			effectiveWeek = status.WeekCap
-		}
-		windowRemaining := status.Physiology.Window6HRemaining
-		if windowRemaining <= 0 && effectiveWindow >= status.Window6HUsed {
-			windowRemaining = effectiveWindow - status.Window6HUsed
-		}
-		dayRemaining := status.Physiology.DayRemaining
-		if dayRemaining <= 0 && effectiveDay >= status.DayUsed {
-			dayRemaining = effectiveDay - status.DayUsed
-		}
-		weekRemaining := status.Physiology.WeekRemaining
-		if weekRemaining <= 0 && effectiveWeek >= status.WeekUsed {
-			weekRemaining = effectiveWeek - status.WeekUsed
+		rollingWeek := status.RollingWeekUsed
+		if rollingWeek == 0 {
+			rollingWeek = status.WeekUsed
 		}
 		out = append(out,
-			fmt.Sprintf("effective_window_6h_cap=%d", effectiveWindow),
-			fmt.Sprintf("effective_window_6h_remaining=%d", maxInt(0, effectiveWindow-status.Window6HUsed)),
-			fmt.Sprintf("effective_day_remaining=%d", maxInt(0, effectiveDay-status.DayUsed)),
-			fmt.Sprintf("next_recovery_at=%s", status.NextRecoveryAt),
+			fmt.Sprintf("recent_6h_used=%d", recent6H),
+			fmt.Sprintf("recent_6h_cap_reference=%d", status.Window6HCap),
+			fmt.Sprintf("recent_6h_remaining_reference=%d", maxInt(0, status.Window6HCap-recent6H)),
+			fmt.Sprintf("rolling_day_remaining=%d", maxInt(0, status.DayCap-rollingDay)),
+			fmt.Sprintf("rolling_week_remaining=%d", maxInt(0, status.WeekCap-rollingWeek)),
+			fmt.Sprintf("next_natural_recovery_at=%s", status.NextRecoveryAt),
 			fmt.Sprintf("recovery_mode=%s", status.RecoveryMode),
 			fmt.Sprintf("resident_mode=%s", status.Physiology.Mode),
 			fmt.Sprintf("resident_pressure=%s", status.Physiology.Pressure),
 		)
 		if state.LastBrokerUsage.Quota != nil {
 			out = append(out,
-				fmt.Sprintf("work_allowed_now=%t", state.LastBrokerUsage.Quota.WorkAllowedNow),
-				fmt.Sprintf("blocking_reason=%s", state.LastBrokerUsage.Quota.BlockingReason),
+				fmt.Sprintf("can_work_now=%t", state.LastBrokerUsage.Quota.WorkAllowedNow),
+				fmt.Sprintf("pause_reason_code=%s", state.LastBrokerUsage.Quota.BlockingReason),
 			)
 		}
-		_ = windowRemaining
-		_ = dayRemaining
-		_ = weekRemaining
-		_ = effectiveDay
-		_ = effectiveWeek
 	}
 	return out
 }
@@ -1132,7 +1114,7 @@ func fallbackAcceptance(rounds []RoundLog, stoppedReason string) string {
 	if len(rounds) == 0 {
 		switch {
 		case strings.HasPrefix(stoppedReason, "broker_preflight_denied:"):
-			return "本次运行没有发生实时 VM 探索，因为 resident 在任何模型调用前被 broker preflight 阻止。下一步是在重试前检查 resident 运行状态、资金、reserve policy 和 6h 额度。"
+			return "本次运行没有发生实时 VM 探索，因为行动开始前就被当前状态边界挡下了。下一步先查看自己的状态、spark、day/week 余量、疲劳和睡眠情况，再决定工作或休息。"
 		case stoppedReason == "duration_window_too_short":
 			return "本次运行在实时探索轮次开始前结束。时间窗口太短，不适合安全消耗一次真实模型调用，因此没有执行 VM 动作。"
 		default:
