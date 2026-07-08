@@ -17,6 +17,7 @@ import type {
   WorldTicketReplyRequest,
   WorldVisibleThread,
 } from "../../types/domain";
+import { fatigueMoodFromLevel } from "../../features/residents/residentSpeak";
 import type { ArenaConsoleApi } from "./types";
 
 type HttpOptions = {
@@ -392,14 +393,6 @@ function normalizeFatigueMood(input: string | undefined): FatigueMood | null {
     default:
       return null;
   }
-}
-
-function fatigueMoodFromLevel(level: number): FatigueMood {
-  if (level >= 80) return "exhausted";
-  if (level >= 60) return "quite_tired";
-  if (level >= 40) return "some_tiredness";
-  if (level >= 20) return "warming_up";
-  return "fresh";
 }
 
 function normalizeSleep(input: ApiResidentBudget["sleep"]): ResidentBudget["sleep"] {
