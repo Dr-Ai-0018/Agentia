@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/runtimeguard"
 	"ai-arena/internal/tokenledger"
 )
@@ -165,6 +166,44 @@ func TestRunBudgetStatusSummarizesResidents(t *testing.T) {
 		if resident.Sleep.Depth == "" {
 			t.Fatalf("expected sleep status for %s: %#v", resident.ResidentID, resident)
 		}
+	}
+}
+
+func TestRunBudgetStatusIncludesSixHourBurnSamples(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	if _, err := app.RunReset("amber", time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("reset amber: %v", err)
+	}
+	store := brokerstate.New(filepath.Join(root, "brokerstate"))
+	now := time.Now().UTC()
+	for _, event := range []brokerstate.QuotaEvent{
+		{ResidentID: "amber", Kind: brokerstate.QuotaEventWorkCall, StrainCost: 12, CreatedAt: now.Add(-5*time.Hour - 45*time.Minute)},
+		{ResidentID: "amber", Kind: brokerstate.QuotaEventAcceptanceCall, StrainCost: 18, CreatedAt: now.Add(-10 * time.Minute)},
+		{ResidentID: "amber", Kind: brokerstate.QuotaEventTestAllowance, StrainCost: 999, CreatedAt: now.Add(-5 * time.Minute)},
+	} {
+		if _, err := store.AppendQuotaEvent(event); err != nil {
+			t.Fatalf("append quota event: %v", err)
+		}
+	}
+
+	out, err := app.RunBudgetStatus([]string{"amber"})
+	if err != nil {
+		t.Fatalf("budget status: %v", err)
+	}
+	if len(out.Residents) != 1 {
+		t.Fatalf("expected one resident: %#v", out)
+	}
+	burn := out.Residents[0].SixHourBurn
+	if len(burn) != brokerstate.SixHourBurnSampleCount {
+		t.Fatalf("burn sample count = %d, want %d: %v", len(burn), brokerstate.SixHourBurnSampleCount, burn)
+	}
+	total := 0
+	for _, sample := range burn {
+		total += sample
+	}
+	if total != 30 {
+		t.Fatalf("burn sample total = %d, want 30: %v", total, burn)
 	}
 }
 

@@ -59,15 +59,10 @@ func DerivePhysiology(status ResidentStatus, now time.Time) ResidentPhysiology {
 	dayRemain := maxInt(0, dayCap-status.DayUsed)
 	weekRemain := maxInt(0, weekCap-status.WeekUsed)
 
-	windowRatio := remainRatio(windowRemain, windowCap)
 	dayRatio := remainRatio(dayRemain, dayCap)
 	weekRatio := remainRatio(weekRemain, weekCap)
-	tightestLayer := "6h"
-	tightestRatio := windowRatio
-	if dayRatio < tightestRatio {
-		tightestLayer = "day"
-		tightestRatio = dayRatio
-	}
+	tightestLayer := "day"
+	tightestRatio := dayRatio
 	if weekRatio < tightestRatio {
 		tightestLayer = "week"
 		tightestRatio = weekRatio

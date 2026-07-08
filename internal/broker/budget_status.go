@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"ai-arena/internal/brokerstate"
 )
@@ -44,6 +45,7 @@ type ResidentBudgetStatus struct {
 	NextRecoveryAt              string        `json:"next_recovery_at,omitempty"`
 	Fatigue                     FatigueStatus `json:"fatigue"`
 	Sleep                       SleepStatus   `json:"sleep"`
+	SixHourBurn                 []int         `json:"six_hour_burn,omitempty"`
 }
 
 type FatigueStatus struct {
@@ -136,8 +138,14 @@ const sparkPerInternalUSD = 100.0
 func (a *App) RunBudgetStatus(residentIDs []string) (BudgetStatusOutput, error) {
 	residentIDs = normalizeResidentIDs(residentIDs, a.cfg.Residents)
 	out := BudgetStatusOutput{ResidentCount: len(residentIDs)}
+	now := time.Now().UTC()
+	store := brokerstate.New(join(a.root, "brokerstate"))
 	for _, residentID := range residentIDs {
 		status, err := a.RunStatus(residentID)
+		if err != nil {
+			return BudgetStatusOutput{}, err
+		}
+		sixHourBurn, err := store.SixHourBurnSamples(residentID, now)
 		if err != nil {
 			return BudgetStatusOutput{}, err
 		}
@@ -169,6 +177,7 @@ func (a *App) RunBudgetStatus(residentIDs []string) (BudgetStatusOutput, error) 
 			NextRecoveryAt:              status.NextRecoveryAt,
 			Fatigue:                     buildFatigueStatus(status),
 			Sleep:                       buildSleepStatus(status),
+			SixHourBurn:                 sixHourBurn,
 		}
 		out.Residents = append(out.Residents, row)
 		out.Totals.SparkBalance += row.SparkBalance

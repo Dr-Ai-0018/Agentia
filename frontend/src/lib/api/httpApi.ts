@@ -103,6 +103,7 @@ type ApiResidentBudget = {
   quota_tightest_layer?: string;
   pressure?: string;
   next_recovery_at?: string;
+  six_hour_burn?: number[];
   fatigue?: {
     level?: number;
     mood?: string;
@@ -281,7 +282,7 @@ function emptyBudget(resident: ResidentId): ResidentBudget {
     resident,
     sparkBalance: 0,
     workAllowedNow: false,
-    tightestLayer: "6h",
+    tightestLayer: "day",
     pressure: "critical",
     nextRecoveryAt: "",
     remaining: { "6h": 0, day: 0, week: 0 },
@@ -370,6 +371,7 @@ function normalizeBudget(input: ApiResidentBudget): ResidentBudget | null {
     },
     fatigue: normalizeFatigue(input.fatigue),
     sleep: normalizeSleep(input.sleep),
+    sixHourBurn: normalizeSixHourBurn(input.six_hour_burn),
   };
 }
 
@@ -412,6 +414,11 @@ function normalizeSleepDepth(input: string | undefined): NonNullable<ResidentBud
     default:
       return "awake";
   }
+}
+
+function normalizeSixHourBurn(input: number[] | undefined): number[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  return input.map((sample) => Math.max(0, Math.round(Number.isFinite(sample) ? sample : 0)));
 }
 
 function normalizeFollowups(input: ApiFollowup[] | undefined, inbox: ApiInbox | undefined): FollowupItem[] {
@@ -580,7 +587,6 @@ function normalizeRunStatus(status: string | undefined): RunStatus {
 }
 
 function normalizeLayer(layer: string | undefined): QuotaLayer {
-  if (layer === "6h" || layer === "window_6h") return "6h";
   if (layer === "week") return "week";
   return "day";
 }

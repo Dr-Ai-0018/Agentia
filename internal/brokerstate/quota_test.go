@@ -1,6 +1,9 @@
 package brokerstate
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBuildQuotaSnapshot(t *testing.T) {
 	snapshot := BuildQuotaSnapshot(ResidentStatus{
@@ -55,4 +58,36 @@ func TestBuildQuotaSnapshotBlocksOnRollingDayQuota(t *testing.T) {
 	if snapshot.BlockingReason != "day_quota_exhausted" {
 		t.Fatalf("unexpected blocking reason: %s", snapshot.BlockingReason)
 	}
+}
+
+func TestPhysiologyTightestQuotaIgnoresSixHourObservation(t *testing.T) {
+	status := ResidentStatus{
+		SparkBalance:         3.5,
+		Window6HCap:          12000,
+		Window6HUsed:         12000,
+		DayCap:               60000,
+		DayUsed:              6000,
+		WeekCap:              150000,
+		WeekUsed:             60000,
+		EffectiveWindow6HCap: 12000,
+		EffectiveDayCap:      60000,
+		EffectiveWeekCap:     150000,
+	}
+
+	physiology := DerivePhysiology(status, testNow())
+	if physiology.QuotaTightestLayer == "6h" {
+		t.Fatalf("6h observation must not be reported as tightest gate: %#v", physiology)
+	}
+	if physiology.QuotaTightestLayer != "week" {
+		t.Fatalf("tightest layer = %s, want week", physiology.QuotaTightestLayer)
+	}
+
+	snapshot := BuildQuotaSnapshot(status)
+	if !snapshot.WorkAllowedNow {
+		t.Fatalf("6h observation exhaustion must not block work: %#v", snapshot)
+	}
+}
+
+func testNow() time.Time {
+	return time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
 }

@@ -39,6 +39,8 @@ type RollingQuotaUsage struct {
 	WeekUsed     int `json:"rolling_week_used"`
 }
 
+const SixHourBurnSampleCount = 12
+
 func (e QuotaEvent) CountsTowardRollingUsage() bool {
 	switch e.Kind {
 	case QuotaEventWorkCall, QuotaEventAcceptanceCall, QuotaEventFinalNotice:
@@ -126,6 +128,14 @@ func (s *Store) RollingQuotaUsage(residentID string, now time.Time) (RollingQuot
 	return RollingQuotaUsageFromEvents(events, now), nil
 }
 
+func (s *Store) SixHourBurnSamples(residentID string, now time.Time) ([]int, error) {
+	events, _, err := s.LoadQuotaEvents(residentID)
+	if err != nil {
+		return nil, err
+	}
+	return SixHourBurnSamplesFromEvents(events, now), nil
+}
+
 func RollingQuotaUsageFromEvents(events []QuotaEvent, now time.Time) RollingQuotaUsage {
 	now = now.UTC()
 	window6HSince := now.Add(-6 * time.Hour)
@@ -150,6 +160,42 @@ func RollingQuotaUsageFromEvents(events []QuotaEvent, now time.Time) RollingQuot
 		if createdAt.After(weekSince) {
 			out.WeekUsed += event.StrainCost
 		}
+	}
+	return out
+}
+
+func SixHourBurnSamplesFromEvents(events []QuotaEvent, now time.Time) []int {
+	return BurnSamplesFromEvents(events, now, 6*time.Hour, SixHourBurnSampleCount)
+}
+
+func BurnSamplesFromEvents(events []QuotaEvent, now time.Time, window time.Duration, bucketCount int) []int {
+	if bucketCount <= 0 {
+		return nil
+	}
+	out := make([]int, bucketCount)
+	if window <= 0 {
+		return out
+	}
+	now = now.UTC()
+	since := now.Add(-window)
+	bucketSize := window / time.Duration(bucketCount)
+	if bucketSize <= 0 {
+		bucketSize = window
+	}
+
+	for _, event := range events {
+		if !event.CountsTowardRollingUsage() {
+			continue
+		}
+		createdAt := event.CreatedAt.UTC()
+		if !createdAt.After(since) || createdAt.After(now) {
+			continue
+		}
+		index := int(createdAt.Sub(since) / bucketSize)
+		if index >= bucketCount {
+			index = bucketCount - 1
+		}
+		out[index] += event.StrainCost
 	}
 	return out
 }
