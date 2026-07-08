@@ -109,6 +109,9 @@ export const telemetry: OperatorTelemetry = {
       nextRecoveryAt: "2026-06-30T14:45:00Z",
       remaining: { "6h": 80, day: 31, week: 60 },
       rawRemaining: { "6h": 1824800, day: 685500, week: 1110000 },
+      fatigue: { level: 62, mood: "quite_tired" },
+      sleep: { depth: "awake", debtHours: 1.4 },
+      sixHourBurn: [22, 20, 18, 22, 24, 18, 16, 18, 20, 22, 19, 17],
     },
     {
       resident: "amber",
@@ -119,6 +122,9 @@ export const telemetry: OperatorTelemetry = {
       nextRecoveryAt: "2026-06-30T14:45:00Z",
       remaining: { "6h": 90, day: 44, week: 75 },
       rawRemaining: { "6h": 1836000, day: 901750, week: 1370000 },
+      fatigue: { level: 34, mood: "some_tiredness" },
+      sleep: { depth: "sleep", debtHours: 0.3 },
+      sixHourBurn: [15, 18, 16, 14, 20, 25, 30, 32, 28, 22, 18, 14],
     },
     {
       resident: "onyx",
@@ -129,6 +135,9 @@ export const telemetry: OperatorTelemetry = {
       nextRecoveryAt: "2026-06-30T14:45:00Z",
       remaining: { "6h": 95, day: 80, week: 18 },
       rawRemaining: { "6h": 2824000, day: 1220000, week: 520000 },
+      fatigue: { level: 82, mood: "exhausted" },
+      sleep: { depth: "awake", debtHours: 3.8 },
+      sixHourBurn: [26, 28, 30, 28, 32, 30, 33, 30, 28, 30, 32, 28],
     },
   ],
   alerts: [

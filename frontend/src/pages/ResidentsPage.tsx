@@ -2,9 +2,20 @@ import { useState } from "react";
 import { Sparkline } from "../components/charts/Sparkline";
 import { dataMode } from "../lib/api/client";
 import { eventStream } from "../data/mockConsole";
-import { describeDoing, forecastFromRemainingPct, layerWindowLabel, pressureToQuotaTone, residentStateLabel, verbLabel } from "../features/residents/residentSpeak";
+import {
+  describeDoing,
+  fatigueMoodFromLevel,
+  fatigueMoodLabel,
+  forecastFromRemainingPct,
+  layerWindowLabel,
+  pressureToQuotaTone,
+  residentStateLabel,
+  sleepDebtHint,
+  sleepDepthLabel,
+  verbLabel,
+} from "../features/residents/residentSpeak";
 import { residentLabel } from "../features/residents/residentTheme";
-import type { OperatorTelemetry, QuotaLayer, ResidentBudget, ResidentId, ResidentRuntime } from "../types/domain";
+import type { OperatorTelemetry, ResidentBudget, ResidentId, ResidentRuntime } from "../types/domain";
 
 const sparkFallback: Record<ResidentId, number[]> = {
   jade: [22, 20, 18, 22, 24, 18, 16, 18, 20, 22, 19, 17],
@@ -12,7 +23,9 @@ const sparkFallback: Record<ResidentId, number[]> = {
   onyx: [26, 28, 30, 28, 32, 30, 33, 30, 28, 30, 32, 28],
 };
 
-const LAYERS: QuotaLayer[] = ["6h", "day", "week"];
+// Only day / week are real gates in the 2026-07-07 quota model. 6h is
+// rendered as an observation sparkline in its own section above.
+const GATE_LAYERS = ["day", "week"] as const;
 
 export function ResidentsPage({ telemetry }: { telemetry: OperatorTelemetry }) {
   const [active, setActive] = useState<ResidentId>(telemetry.residents[0]?.resident ?? "jade");
@@ -52,9 +65,13 @@ function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget:
   const [showDebug, setShowDebug] = useState(false);
   const state = residentStateLabel(runtime.status);
   const doing = describeDoing(runtime);
-  const spark = sparkFallback[runtime.resident] ?? [15, 18, 22, 20, 24, 22, 26];
-  const peak = Math.round(Math.max(...spark));
-  const mean = Math.round(spark.reduce((sum, v) => sum + v, 0) / spark.length);
+  const burn = budget.sixHourBurn ?? sparkFallback[runtime.resident] ?? [15, 18, 22, 20, 24, 22, 26];
+  const peak = Math.round(Math.max(...burn));
+  const mean = Math.round(burn.reduce((sum, v) => sum + v, 0) / burn.length);
+
+  const mood = budget.fatigue?.mood ?? (typeof budget.fatigue?.level === "number" ? fatigueMoodFromLevel(budget.fatigue.level) : null);
+  const sleepDepth = budget.sleep?.depth ?? "awake";
+  const debtHint = budget.sleep ? sleepDebtHint(budget.sleep.debtHours) : null;
 
   const recent = recentActionsFor(runtime.resident);
 
@@ -78,23 +95,52 @@ function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget:
         <span className={`resident-state resident-state--${state.variant}`}>{state.text}</span>
       </header>
 
+      {mood || budget.sleep ? (
+        <section className="resident-section">
+          <div className="section-title">
+            <h3>状态</h3>
+            <span className="section-title__hint">她自己的感受</span>
+          </div>
+          <div className="fatigue-card">
+            {mood ? (
+              <div className="fatigue-row">
+                <span className={`fatigue-dot fatigue-dot--${mood}`} />
+                <span className="fatigue-row__mood">{fatigueMoodLabel(mood)}</span>
+              </div>
+            ) : null}
+            {budget.sleep && sleepDepth !== "awake" ? (
+              <div className="fatigue-row fatigue-row--sub">
+                <span className="fatigue-row__label">睡眠</span>
+                <span className="fatigue-row__val">{sleepDepthLabel(sleepDepth)}</span>
+              </div>
+            ) : null}
+            {debtHint ? (
+              <div className="fatigue-row fatigue-row--warn">
+                <span className="fatigue-row__label">睡眠债</span>
+                <span className="fatigue-row__val">{debtHint}</span>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <section className="resident-section">
         <div className="section-title">
           <h3>最近 6h 节奏</h3>
-          <span className="section-title__hint">峰值 {peak} · 均值 {mean}</span>
+          <span className="section-title__hint">峰值 {peak} · 均值 {mean} · 只观察，不挡人</span>
         </div>
         <div className="resident-detail__spark">
-          <Sparkline values={spark} color="#1f2328" height={56} />
+          <Sparkline values={burn} color="#1f2328" height={56} />
         </div>
       </section>
 
       <section className="resident-section">
         <div className="section-title">
           <h3>额度</h3>
-          <span className="section-title__hint">最紧一层：{layerWindowLabel(budget.tightestLayer)}</span>
+          <span className="section-title__hint">今日 · 本周 = 真挡</span>
         </div>
         <div className="quota-layers">
-          {LAYERS.map((layer) => {
+          {GATE_LAYERS.map((layer) => {
             const pct = budget.remaining[layer];
             const isTightest = layer === budget.tightestLayer;
             const tone = isTightest ? pressureToQuotaTone(budget.pressure) : "ok";

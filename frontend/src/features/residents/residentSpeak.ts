@@ -1,4 +1,4 @@
-import type { Pressure, QuotaLayer, ResidentRuntime, ResidentStatus } from "../../types/domain";
+import type { FatigueMood, Pressure, QuotaLayer, ResidentRuntime, ResidentStatus, SleepDepth } from "../../types/domain";
 
 const verbMap: Record<string, string> = {
   guest_exec: "接待来客",
@@ -115,4 +115,46 @@ function humanizeHours(hours: number): string {
   const days = hours / 24;
   if (days < 10) return `~ ${days.toFixed(1)}d`;
   return `~ ${Math.round(days)}d`;
+}
+
+// Feel-words for fatigue. Deliberately no numbers — residents and
+// operators should read this like a person's state, not a gauge.
+const fatigueMoodMap: Record<FatigueMood, string> = {
+  fresh: "精力充沛",
+  warming_up: "热了点身",
+  some_tiredness: "有点累",
+  quite_tired: "很累了，该歇歇",
+  exhausted: "撑不住了，得睡了",
+};
+
+export function fatigueMoodLabel(mood: FatigueMood): string {
+  return fatigueMoodMap[mood];
+}
+
+// Fallback if backend only sends a raw fatigue level (0-100) and not a mood.
+export function fatigueMoodFromLevel(level: number): FatigueMood {
+  if (level < 20) return "fresh";
+  if (level < 40) return "warming_up";
+  if (level < 60) return "some_tiredness";
+  if (level < 80) return "quite_tired";
+  return "exhausted";
+}
+
+const sleepDepthMap: Record<SleepDepth, string> = {
+  awake: "醒着",
+  rest: "在歇一会儿",
+  sleep: "在睡",
+  deep_sleep: "深度睡眠",
+};
+
+export function sleepDepthLabel(depth: SleepDepth): string {
+  return sleepDepthMap[depth];
+}
+
+// Sleep debt hint. Only surfaces above 2h to avoid nagging the operator
+// about normal minor debt accumulation.
+export function sleepDebtHint(debtHours: number): string | null {
+  if (debtHours < 2) return null;
+  if (debtHours < 4) return "最近睡得不够，恢复慢一点";
+  return "欠了不少觉，得连着睡几天才能追回来";
 }

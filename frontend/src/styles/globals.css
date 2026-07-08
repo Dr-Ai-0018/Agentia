@@ -1845,6 +1845,83 @@ button {
   background: var(--bg-panel);
 }
 
+.fatigue-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+}
+
+.fatigue-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-primary);
+}
+
+.fatigue-row__mood {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.fatigue-row--sub {
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding-left: 18px;
+}
+
+.fatigue-row--warn {
+  color: var(--accent-warning);
+  font-size: 13px;
+  padding-left: 18px;
+}
+
+.fatigue-row__label {
+  color: var(--text-muted);
+  min-width: 60px;
+}
+
+.fatigue-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.fatigue-dot--fresh {
+  background: var(--accent-good);
+}
+
+.fatigue-dot--warming_up {
+  background: var(--accent-good);
+  opacity: 0.7;
+}
+
+.fatigue-dot--some_tiredness {
+  background: var(--accent-warning);
+}
+
+.fatigue-dot--quite_tired {
+  background: var(--accent-warning);
+  box-shadow: 0 0 0 2px var(--accent-warning-soft);
+}
+
+.fatigue-dot--exhausted {
+  background: var(--accent-danger);
+}
+
+.resident-card__mood {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: -4px;
+}
+
 .quota-layers {
   display: flex;
   flex-direction: column;

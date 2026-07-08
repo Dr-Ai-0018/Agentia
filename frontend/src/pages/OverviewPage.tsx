@@ -1,7 +1,8 @@
 import { Sparkline } from "../components/charts/Sparkline";
 import { ResidentCard } from "../features/residents/ResidentCard";
 import { residentLabel } from "../features/residents/residentTheme";
-import type { AlertItem, FollowupItem, OperatorTelemetry } from "../types/domain";
+import { sleepDebtHint } from "../features/residents/residentSpeak";
+import type { AlertItem, FollowupItem, OperatorTelemetry, ResidentId } from "../types/domain";
 
 type OverviewPageProps = {
   telemetry: OperatorTelemetry;
@@ -47,7 +48,7 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
           })}
         </div>
 
-        {telemetry.alerts.length > 0 ? (
+        {(telemetry.alerts.length > 0 || sleepDebtHintsFrom(telemetry).length > 0) ? (
           <>
             <div className="section-title">
               <h3>值得留意的</h3>
@@ -56,6 +57,17 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
             <div className="watchlist">
               {telemetry.alerts.map((alert, index) => (
                 <WatchItem alert={alert} key={`${alert.kind}-${alert.resident ?? "system"}-${index}`} />
+              ))}
+              {sleepDebtHintsFrom(telemetry).map((entry) => (
+                <div className="watchlist__item" key={`sleep-${entry.resident}`}>
+                  <span className="watchlist__dot watchlist__dot--info" />
+                  <div className="watchlist__txt">
+                    <div>
+                      <span className="watchlist__subject">{residentLabel(entry.resident)} </span>
+                      <span>{entry.hint}</span>
+                    </div>
+                  </div>
+                </div>
               ))}
             </div>
           </>
@@ -236,4 +248,14 @@ function memoryReviewHint(count: number): string {
   if (count < 50) return "慢慢翻，她们没催";
   if (count < 200) return "她们攒了些想让你过一眼的";
   return "她们最近有点话唠";
+}
+
+function sleepDebtHintsFrom(telemetry: OperatorTelemetry): Array<{ resident: ResidentId; hint: string }> {
+  const out: Array<{ resident: ResidentId; hint: string }> = [];
+  for (const budget of telemetry.budgets) {
+    if (!budget.sleep) continue;
+    const hint = sleepDebtHint(budget.sleep.debtHours);
+    if (hint) out.push({ resident: budget.resident, hint });
+  }
+  return out;
 }

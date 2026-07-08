@@ -14,6 +14,29 @@ export type QuotaLayer = "6h" | "day" | "week";
 
 export type Pressure = "low" | "moderate" | "high" | "critical";
 
+// Fatigue: continuous variable, 0-100. Rendered as a feel-word, not a
+// number, to residents / operators. Backed by broker fatigue accumulator.
+export type FatigueMood = "fresh" | "warming_up" | "some_tiredness" | "quite_tired" | "exhausted";
+
+// Sleep depth tiers per the 2026-07-07 quota model decision:
+// - rest: 5-30m nap, recovery x1.5
+// - sleep: 30m-4h regular, recovery x2.5
+// - deep_sleep: continuous 4h+ AND 24h cumulative >= 6-8h, recovery x4
+export type SleepDepth = "awake" | "rest" | "sleep" | "deep_sleep";
+
+export interface Fatigue {
+  level: number;
+  mood: FatigueMood;
+}
+
+export interface SleepState {
+  depth: SleepDepth;
+  // Sleep debt in hours. The third ledger — under-slept last 24h means
+  // recovery rates get discounted until debt drops. Cannot be paid off in
+  // one session; needs consecutive nights of proper sleep.
+  debtHours: number;
+}
+
 export interface ActiveRun {
   runId: string;
   purpose: string;
@@ -45,6 +68,18 @@ export interface ResidentRuntime {
   sleepUntil?: string;
 }
 
+// ResidentBudget carries the observation surface for a single resident.
+// After the 2026-07-07 quota model decision (see PLAN.md § Quota Model
+// Decision), the semantics are:
+//   remaining.day  — real rolling 24h remaining %; hard gate at 0
+//   remaining.week — real rolling 7d remaining %; hard gate at 0
+//   remaining["6h"] — OBSERVATION only, not a gate. Rendered as sparkline.
+//   tightestLayer  — which of day/week is currently tightest. Never "6h".
+//   pressure       — derived from day/week + fatigue + sleep debt
+//   fatigue        — continuous accumulator; drains via sleep depth tiers
+//   sleep          — current depth + accumulated sleep debt in hours
+//   sixHourBurn    — last 6h consumption samples for the observation window
+// Fields marked optional so this can roll out before backend adapter emits.
 export interface ResidentBudget {
   resident: ResidentId;
   sparkBalance: number;
@@ -62,6 +97,9 @@ export interface ResidentBudget {
     day: number;
     week: number;
   };
+  fatigue?: Fatigue;
+  sleep?: SleepState;
+  sixHourBurn?: number[];
 }
 
 export interface AlertItem {

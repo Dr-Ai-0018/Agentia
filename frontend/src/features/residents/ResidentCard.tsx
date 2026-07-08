@@ -1,6 +1,12 @@
 import { Sparkline } from "../../components/charts/Sparkline";
 import type { ResidentBudget, ResidentRuntime } from "../../types/domain";
-import { describeDoing, pressureToQuotaTone, residentStateLabel } from "./residentSpeak";
+import {
+  describeDoing,
+  fatigueMoodFromLevel,
+  fatigueMoodLabel,
+  pressureToQuotaTone,
+  residentStateLabel,
+} from "./residentSpeak";
 import { residentLabel } from "./residentTheme";
 
 type ResidentCardProps = {
@@ -19,9 +25,14 @@ export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
   const state = residentStateLabel(runtime.status);
   const doing = describeDoing(runtime);
   const quotaTone = pressureToQuotaTone(budget.pressure);
-  const remaining = budget.remaining[budget.tightestLayer];
-  const layerLabel = layerToText(budget.tightestLayer);
-  const sparkValues = spark ?? defaultSpark[runtime.resident] ?? [15, 18, 22, 20, 24, 22, 26];
+  // 6h is observation-only in the new model; the "tightest" gate is always
+  // day or week. Fall back to day if a legacy budget still reports "6h".
+  const gateLayer: "day" | "week" =
+    budget.tightestLayer === "week" ? "week" : "day";
+  const remaining = budget.remaining[gateLayer];
+  const layerLabel = gateLayer === "day" ? "今日" : "本周";
+  const burn = budget.sixHourBurn ?? spark ?? defaultSpark[runtime.resident] ?? [15, 18, 22, 20, 24, 22, 26];
+  const mood = budget.fatigue?.mood ?? (typeof budget.fatigue?.level === "number" ? fatigueMoodFromLevel(budget.fatigue.level) : null);
 
   return (
     <article className="resident-card">
@@ -42,6 +53,13 @@ export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
         )}
       </p>
 
+      {mood ? (
+        <div className="resident-card__mood">
+          <span className={`fatigue-dot fatigue-dot--${mood}`} />
+          <span>{fatigueMoodLabel(mood)}</span>
+        </div>
+      ) : null}
+
       <div className="resident-card__metrics">
         <div>
           <div className="resident-card__metric-label">精力（spark）</div>
@@ -56,7 +74,7 @@ export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
       </div>
 
       <div className="resident-card__spark">
-        <Sparkline values={sparkValues} color="#1f2328" height={36} />
+        <Sparkline values={burn} color="#1f2328" height={36} />
       </div>
 
       <div className="resident-card__quota">
@@ -73,10 +91,4 @@ export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
       </div>
     </article>
   );
-}
-
-function layerToText(layer: "6h" | "day" | "week"): string {
-  if (layer === "6h") return "近 6h ";
-  if (layer === "day") return "今日";
-  return "本周";
 }
