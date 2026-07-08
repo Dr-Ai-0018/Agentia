@@ -71,7 +71,7 @@ function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget:
 
   const mood = budget.fatigue?.mood ?? (typeof budget.fatigue?.level === "number" ? fatigueMoodFromLevel(budget.fatigue.level) : null);
   const sleepDepth = budget.sleep?.depth ?? "awake";
-  const debtHint = budget.sleep ? sleepDebtHint(budget.sleep.debtHours) : null;
+  const debtHint = budget.sleep ? sleepDebtHint(budget.sleep.debtHours, runtime.resident) : null;
 
   const recent = recentActionsFor(runtime.resident);
 
@@ -105,13 +105,13 @@ function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget:
             {mood ? (
               <div className="fatigue-row">
                 <span className={`fatigue-dot fatigue-dot--${mood}`} />
-                <span className="fatigue-row__mood">{fatigueMoodLabel(mood)}</span>
+                <span className="fatigue-row__mood">{fatigueMoodLabel(mood, runtime.resident)}</span>
               </div>
             ) : null}
             {budget.sleep && sleepDepth !== "awake" ? (
               <div className="fatigue-row fatigue-row--sub">
                 <span className="fatigue-row__label">睡眠</span>
-                <span className="fatigue-row__val">{sleepDepthLabel(sleepDepth)}</span>
+                <span className="fatigue-row__val">{sleepDepthLabel(sleepDepth, runtime.resident)}</span>
               </div>
             ) : null}
             {debtHint ? (

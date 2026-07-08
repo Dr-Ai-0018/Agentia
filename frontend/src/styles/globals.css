@@ -245,6 +245,47 @@ button {
   color: var(--accent-warning);
 }
 
+.demo-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 24px;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--accent-warning-soft),
+    var(--accent-warning-soft) 12px,
+    #fff2b8 12px,
+    #fff2b8 24px
+  );
+  border-bottom: 1px solid var(--accent-warning);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.demo-strip svg {
+  color: var(--accent-warning);
+  flex-shrink: 0;
+}
+
+.demo-strip strong {
+  color: var(--accent-warning);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.demo-strip__sep {
+  color: var(--text-muted);
+}
+
+.demo-strip code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  padding: 1px 6px;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+}
+
 .app-topbar__sync--warn:hover {
   background: var(--accent-warning-soft);
 }

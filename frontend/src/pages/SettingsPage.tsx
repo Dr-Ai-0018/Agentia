@@ -19,10 +19,12 @@ export function SettingsPage() {
       >
         {isMock ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
         <div className="mode-banner__body">
-          <strong>Mode = {dataMode}</strong>
+          <strong>
+            {isMock ? "演示模式 · Mode = mock" : `真实数据 · Mode = ${dataMode}`}
+          </strong>
           <p>
             {isMock
-              ? "现在页面上看到的是内置 fixture 数据，不是真实 backend。24h 长测前必须切到 http。"
+              ? "现在整个 console 展示的都是内置演示数据，不是真实 backend——住户状态、额度、疲劳、睡眠债这些数字都是编好的样本。24h 长测前必须切到 http。"
               : "连接到真实 backend，页面上的数字都是活的。"}
           </p>
         </div>

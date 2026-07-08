@@ -108,6 +108,17 @@ export function ConsoleShell({ activePage, onNavigate, children, lastFetchedAt, 
           </div>
         </header>
 
+        {dataMode === "mock" ? (
+          <div className="demo-strip" role="note">
+            <AlertTriangle size={14} strokeWidth={1.8} />
+            <span>
+              <strong>演示中</strong>
+              <span className="demo-strip__sep"> · </span>
+              这是内置的演示数据，不是真实 backend。切到 <code>http</code> 模式才会看到真实住户状态。
+            </span>
+          </div>
+        ) : null}
+
         <main className="app-content">{children}</main>
       </div>
     </div>

@@ -119,16 +119,20 @@ function humanizeHours(hours: number): string {
 
 // Feel-words for fatigue. Deliberately no numbers — residents and
 // operators should read this like a person's state, not a gauge.
-const fatigueMoodMap: Record<FatigueMood, string> = {
-  fresh: "精力充沛",
-  warming_up: "热了点身",
-  some_tiredness: "有点累",
-  quite_tired: "很累了，该歇歇",
-  exhausted: "撑不住了，得睡了",
+// Each tier has multiple variants; a stable hash of (resident, tier)
+// picks one so the same resident says the same variant for a given
+// mood (personality-like), but different residents in the same mood
+// say different sentences (not machine-flat).
+const fatigueMoodVariants: Record<FatigueMood, string[]> = {
+  fresh: ["精力充沛", "状态刚刚好", "今天挺来劲的"],
+  warming_up: ["热了点身", "刚进入状态", "开始有节奏了"],
+  some_tiredness: ["有点累", "开始有点乏", "肩膀有点沉"],
+  quite_tired: ["很累了，该歇歇", "扛不住多久了", "眼睛开始涩了"],
+  exhausted: ["撑不住了，得睡了", "整个人都空了", "再干下去要出错了"],
 };
 
-export function fatigueMoodLabel(mood: FatigueMood): string {
-  return fatigueMoodMap[mood];
+export function fatigueMoodLabel(mood: FatigueMood, resident?: string): string {
+  return pickVariant(fatigueMoodVariants[mood], resident, `mood:${mood}`);
 }
 
 // Fallback if backend only sends a raw fatigue level (0-100) and not a mood.
@@ -140,21 +144,50 @@ export function fatigueMoodFromLevel(level: number): FatigueMood {
   return "exhausted";
 }
 
-const sleepDepthMap: Record<SleepDepth, string> = {
-  awake: "醒着",
-  rest: "在歇一会儿",
-  sleep: "在睡",
-  deep_sleep: "深度睡眠",
+const sleepDepthVariants: Record<SleepDepth, string[]> = {
+  awake: ["醒着"],
+  rest: ["在歇一会儿", "在小憩", "闭眼缓一缓"],
+  sleep: ["在睡", "正在睡", "睡着了"],
+  deep_sleep: ["深度睡眠", "睡得很沉", "深睡中"],
 };
 
-export function sleepDepthLabel(depth: SleepDepth): string {
-  return sleepDepthMap[depth];
+export function sleepDepthLabel(depth: SleepDepth, resident?: string): string {
+  return pickVariant(sleepDepthVariants[depth], resident, `sleep:${depth}`);
 }
 
 // Sleep debt hint. Only surfaces above 2h to avoid nagging the operator
 // about normal minor debt accumulation.
-export function sleepDebtHint(debtHours: number): string | null {
+const sleepDebtVariants = {
+  mild: [
+    "最近睡得不够，恢复慢一点",
+    "这几晚都没睡够，白天有点飘",
+    "睡眠账刚开始欠一点",
+  ],
+  heavy: [
+    "欠了不少觉，得连着睡几天才能追回来",
+    "睡眠债堆得有点厚，一觉补不完",
+    "这一阵子觉都不够，得慢慢还",
+  ],
+} as const;
+
+export function sleepDebtHint(debtHours: number, resident?: string): string | null {
   if (debtHours < 2) return null;
-  if (debtHours < 4) return "最近睡得不够，恢复慢一点";
-  return "欠了不少觉，得连着睡几天才能追回来";
+  const tier = debtHours < 4 ? "mild" : "heavy";
+  return pickVariant(sleepDebtVariants[tier], resident, `debt:${tier}`);
+}
+
+// pickVariant chooses one string deterministically from a list based on a
+// seed string. Same seed → same choice, so a given resident in a given
+// mood always shows the same variant (feels personality-like), but two
+// residents in the same mood pick different variants.
+function pickVariant(list: readonly string[], resident: string | undefined, tierKey: string): string {
+  if (list.length === 0) return "";
+  if (list.length === 1) return list[0];
+  const seed = `${resident ?? "any"}::${tierKey}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  const idx = Math.abs(hash) % list.length;
+  return list[idx];
 }

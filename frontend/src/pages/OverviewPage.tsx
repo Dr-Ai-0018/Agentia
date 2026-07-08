@@ -243,18 +243,27 @@ function firstIntFrom(text: string): number {
   return Number(match[1].replace(/,/g, "")) || 0;
 }
 
+const memoryHintVariants = {
+  zero: ["她们最近没多想", "碎念很少，比较沉静"],
+  few: ["慢慢翻，她们没催", "有几条你什么时候看都行", "她们没在等你答话"],
+  some: ["她们攒了些想让你过一眼的", "碎念在攒着，找个空翻翻", "有点想让你看看的东西了"],
+  many: ["她们最近有点话唠", "一箩筐想让你看的", "这两天她们脑子挺满的"],
+} as const;
+
 function memoryReviewHint(count: number): string {
-  if (count === 0) return "她们最近没多想";
-  if (count < 50) return "慢慢翻，她们没催";
-  if (count < 200) return "她们攒了些想让你过一眼的";
-  return "她们最近有点话唠";
+  // Rotate by day-of-week so the hint changes over time without flickering
+  // between polls. Same day → same variant; a new day → likely a new one.
+  const day = new Date().getDate();
+  const tier = count === 0 ? "zero" : count < 50 ? "few" : count < 200 ? "some" : "many";
+  const list = memoryHintVariants[tier];
+  return list[day % list.length];
 }
 
 function sleepDebtHintsFrom(telemetry: OperatorTelemetry): Array<{ resident: ResidentId; hint: string }> {
   const out: Array<{ resident: ResidentId; hint: string }> = [];
   for (const budget of telemetry.budgets) {
     if (!budget.sleep) continue;
-    const hint = sleepDebtHint(budget.sleep.debtHours);
+    const hint = sleepDebtHint(budget.sleep.debtHours, budget.resident);
     if (hint) out.push({ resident: budget.resident, hint });
   }
   return out;

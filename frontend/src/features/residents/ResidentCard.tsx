@@ -56,7 +56,7 @@ export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
       {mood ? (
         <div className="resident-card__mood">
           <span className={`fatigue-dot fatigue-dot--${mood}`} />
-          <span>{fatigueMoodLabel(mood)}</span>
+          <span>{fatigueMoodLabel(mood, runtime.resident)}</span>
         </div>
       ) : null}
 
