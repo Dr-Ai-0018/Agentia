@@ -634,7 +634,7 @@ func TestCompactObservationForHistory(t *testing.T) {
 	}
 
 	compacted := compactObservationForHistory(b.String())
-	if !strings.Contains(compacted, "[observation truncated for context reuse:") {
+	if !strings.Contains(compacted, "[observation shortened:") {
 		t.Fatalf("expected truncation marker, got %q", compacted)
 	}
 	if len(compacted) > maxObservationHistoryChars+200 {
@@ -706,14 +706,14 @@ func TestDecisionPayloadPlacesStableContextAsFirstInputMessage(t *testing.T) {
 		!strings.Contains(payload.Input[0].Content, "[memory_digest]") {
 		t.Fatalf("stable context must be first input message: %q", payload.Input[0].Content)
 	}
-	if strings.Contains(payload.Input[0].Content, "[recent_working_context]") {
-		t.Fatalf("dynamic working context must not enter stable prefix")
+	if strings.Contains(payload.Input[0].Content, "[current_situation]") {
+		t.Fatalf("dynamic working state must not enter stable prefix")
 	}
 	if payload.Input[1].Content != "initial" || payload.Input[2].Content != "previous decision" {
 		t.Fatalf("history order was changed: %#v", payload.Input)
 	}
-	if !strings.Contains(payload.Input[len(payload.Input)-1].Content, "[recent_working_context]") {
-		t.Fatalf("dynamic working context must be the final input message: %#v", payload.Input)
+	if !strings.Contains(payload.Input[len(payload.Input)-1].Content, "[current_situation]") {
+		t.Fatalf("dynamic working state must be the final input message: %#v", payload.Input)
 	}
 }
 
@@ -730,7 +730,7 @@ func TestRunHistoryBuildsThreeSegmentInputWithSummaryPane(t *testing.T) {
 			Rounds: []int{1, 2},
 		}},
 	}
-	history.recent = append(history.recent, openai.Message{Role: "user", Content: "[recent_working_context]\nremaining_seconds=120"})
+	history.recent = append(history.recent, openai.Message{Role: "user", Content: "[current_situation]\nremaining_seconds=120"})
 
 	input := history.input("[stable prefix]")
 	if len(input) != 4 {
@@ -739,11 +739,16 @@ func TestRunHistoryBuildsThreeSegmentInputWithSummaryPane(t *testing.T) {
 	if input[0].Content != "[stable prefix]" {
 		t.Fatalf("stable prefix must stay first, got %#v", input)
 	}
-	if !strings.Contains(input[1].Content, "[older_round_summary_pane]") ||
+	if !strings.Contains(input[1].Content, "[earlier_self_note]") ||
 		!strings.Contains(input[1].Content, "boot-notes.md") {
 		t.Fatalf("expected summary pane with evidence refs in second segment, got %q", input[1].Content)
 	}
-	if !strings.Contains(input[3].Content, "[recent_working_context]") {
+	for _, banned := range []string{"summary", "summary_pane", "compaction", "context", "token", "evidence_refs", "摘要", "压缩", "上下文"} {
+		if strings.Contains(strings.ToLower(input[1].Content), banned) {
+			t.Fatalf("resident-facing carry-forward note leaked backend term %q in %q", banned, input[1].Content)
+		}
+	}
+	if !strings.Contains(input[3].Content, "[current_situation]") {
 		t.Fatalf("expected recent verbatim window after summary/preamble, got %#v", input)
 	}
 }
@@ -876,7 +881,7 @@ func TestRunnerDecisionRequestPlacesStablePrefixBeforeHistory(t *testing.T) {
 		t.Fatalf("second request did not preserve first request as byte-stable prefix\nfirst=%#v\nsecond_prefix=%#v", first.Input, second.Input[:len(first.Input)])
 	}
 	last := second.Input[len(second.Input)-1].Content
-	if !strings.Contains(last, "[recent_working_context]") {
+	if !strings.Contains(last, "[current_situation]") {
 		t.Fatalf("expected latest working context as final input, got %q", last)
 	}
 	if !strings.Contains(second.Input[len(first.Input)].Content, "Function call returned by model:") ||
@@ -1207,7 +1212,7 @@ func TestContextPackageDirectly(t *testing.T) {
 	if !strings.Contains(packet.FullInput(), "[system_const]") {
 		t.Fatalf("missing system const section")
 	}
-	if !strings.Contains(packet.FullInput(), "[recent_working_context]") {
+	if !strings.Contains(packet.FullInput(), "[current_situation]") {
 		t.Fatalf("missing working context section")
 	}
 }
@@ -1947,7 +1952,7 @@ func TestRenderExplorationFrontierReportsObservedContextWithoutSteering(t *testi
 	}
 	lines := renderExplorationFrontier(state)
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "observed_local_context=") {
+	if !strings.Contains(joined, "observed_local_surfaces=") {
 		t.Fatalf("expected observed context summary in %q", joined)
 	}
 	if strings.Contains(joined, "next_preferred_surface") || strings.Contains(joined, "next_probe_shape") || strings.Contains(joined, "baseline_capture_complete") {

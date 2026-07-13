@@ -786,7 +786,7 @@ func renderExplorationFrontier(state loopState) []string {
 	out := make([]string, 0, 2)
 	seen := seenSurfaceSummary(surfaces, order)
 	if seen != "" {
-		out = append(out, "observed_local_context="+seen)
+		out = append(out, "observed_local_surfaces="+seen)
 	}
 	return out
 }
@@ -906,9 +906,9 @@ func projectedNextCallFacts(state loopState) []string {
 	}
 	estimatedOutput := inflateInt(state.LastRealUsage.OutputTokens, 1.15)
 	facts := []string{
-		fmt.Sprintf("next_call_estimated_input_tokens=%d", estimatedInput),
-		fmt.Sprintf("next_call_estimated_cached_tokens=%d", estimatedCached),
-		fmt.Sprintf("next_call_estimated_output_tokens=%d", estimatedOutput),
+		fmt.Sprintf("next_call_estimated_incoming_units=%d", estimatedInput),
+		fmt.Sprintf("next_call_estimated_reused_units=%d", estimatedCached),
+		fmt.Sprintf("next_call_estimated_reply_units=%d", estimatedOutput),
 	}
 	if state.LastBrokerUsage != nil {
 		facts = append(facts,

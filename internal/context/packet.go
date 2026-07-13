@@ -150,7 +150,7 @@ func buildMemoryDigest(digest MemoryDigest) string {
 
 func buildRecentWorkingContext(resident string, working WorkingContext) string {
 	lines := []string{
-		"[recent_working_context]",
+		"[current_situation]",
 		fmt.Sprintf("resident: %s", resident),
 		fmt.Sprintf("remaining_countdown_seconds: %d", working.RemainingSeconds),
 		fmt.Sprintf("actions_used: %s", summarizeActions(working.UsedActions)),
@@ -173,7 +173,7 @@ func buildRecentWorkingContext(resident string, working WorkingContext) string {
 		}
 	}
 	if len(working.FrontierStatus) > 0 {
-		lines = append(lines, "local_context_status:")
+		lines = append(lines, "local_world_seen:")
 		limit := working.FrontierStatus
 		if len(limit) > 3 {
 			limit = limit[:3]

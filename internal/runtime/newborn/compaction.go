@@ -2,6 +2,7 @@ package newborn
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -60,6 +61,7 @@ func (r *Runner) compactHistory(profile ResidentProfile, stablePrefix string, hi
 	event.CachePrefixHitOnCompactionCall = result.CachedTokens > 0
 	text := strings.TrimSpace(result.OutputText)
 	if violation := checkCompactionEpistemicGuard(text); violation != nil {
+		log.Printf("runtime_compaction_guard_rejected resident=%s run_id=%s trigger=%s term=%q", profile.Name, state.RunGroupID, trigger, violation.Term)
 		event.Outcome = CompactionOutcomeGuardRejected
 		event.GuardRejectedSample = violation.Sample
 		dropped := history.silentTrimRecentRounds(keepRecentRounds)

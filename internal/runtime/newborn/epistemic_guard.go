@@ -1,6 +1,9 @@
 package newborn
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 type EpistemicGuardViolation struct {
 	Term   string
@@ -50,8 +53,7 @@ func checkCompactionEpistemicGuard(text string) *EpistemicGuardViolation {
 		return &EpistemicGuardViolation{Term: "empty_output", Sample: ""}
 	}
 	for _, term := range compactionReservedTerms {
-		needle := strings.ToLower(term)
-		if strings.Contains(normalized, needle) {
+		if containsReservedTerm(normalized, strings.ToLower(term)) {
 			return &EpistemicGuardViolation{
 				Term:   term,
 				Sample: redactedGuardSample(text, term),
@@ -59,6 +61,49 @@ func checkCompactionEpistemicGuard(text string) *EpistemicGuardViolation {
 		}
 	}
 	return nil
+}
+
+func containsReservedTerm(text, term string) bool {
+	if term == "" {
+		return false
+	}
+	if !asciiAlphaNumOnlyWithSpaces(term) {
+		return strings.Contains(text, term)
+	}
+	start := 0
+	for {
+		idx := strings.Index(text[start:], term)
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		beforeOK := idx == 0 || !isASCIIAlphaNum(rune(text[idx-1]))
+		afterIndex := idx + len(term)
+		afterOK := afterIndex >= len(text) || !isASCIIAlphaNum(rune(text[afterIndex]))
+		if beforeOK && afterOK {
+			return true
+		}
+		start = idx + len(term)
+	}
+}
+
+func asciiAlphaNumOnlyWithSpaces(s string) bool {
+	hasAlphaNum := false
+	for _, r := range s {
+		switch {
+		case r == ' ':
+			continue
+		case isASCIIAlphaNum(r):
+			hasAlphaNum = true
+		default:
+			return false
+		}
+	}
+	return hasAlphaNum
+}
+
+func isASCIIAlphaNum(r rune) bool {
+	return r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_')
 }
 
 func redactedGuardSample(text, term string) string {

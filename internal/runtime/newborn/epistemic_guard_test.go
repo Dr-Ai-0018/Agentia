@@ -68,3 +68,12 @@ func TestCompactionEpistemicGuardRejectsMetaTermsWithRedactedSample(t *testing.T
 		t.Fatalf("guard sample must be redacted, got %q", violation.Sample)
 	}
 }
+
+func TestCompactionEpistemicGuardUsesASCIIBoundaries(t *testing.T) {
+	if violation := checkCompactionEpistemicGuard("I kept the discussion concrete and grounded."); violation != nil {
+		t.Fatalf("discussion should not trip session guard: %#v", violation)
+	}
+	if violation := checkCompactionEpistemicGuard("I noticed the session label in my notes."); violation == nil || violation.Term != "session" {
+		t.Fatalf("expected session to trip guard, got %#v", violation)
+	}
+}

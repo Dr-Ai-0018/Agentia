@@ -32,7 +32,7 @@ func compactObservationForHistory(observation string) string {
 	compacted = strings.TrimSpace(compacted)
 
 	if truncatedByLines || truncatedByChars {
-		suffix := fmt.Sprintf("\n[observation truncated for context reuse: original_lines=%d original_chars=%d kept_lines=%d kept_chars=%d]",
+		suffix := fmt.Sprintf("\n[observation shortened: original_lines=%d original_chars=%d kept_lines=%d kept_chars=%d]",
 			len(strings.Split(trimmed, "\n")),
 			len(trimmed),
 			len(strings.Split(compacted, "\n")),

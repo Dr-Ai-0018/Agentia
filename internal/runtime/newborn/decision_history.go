@@ -196,18 +196,18 @@ func summaryPaneHistoryMessage(pane *SummaryPane) (openai.Message, bool) {
 		return openai.Message{}, false
 	}
 	lines := []string{
-		"[older_round_summary_pane]",
+		"[earlier_self_note]",
 		strings.TrimSpace(pane.Text),
 	}
 	if len(pane.EvidenceRefs) > 0 {
-		lines = append(lines, "evidence_refs:")
+		lines = append(lines, "参考过的线索:")
 		for _, ref := range pane.EvidenceRefs {
 			if strings.TrimSpace(ref.Kind) == "" || strings.TrimSpace(ref.Ref) == "" {
 				continue
 			}
-			line := fmt.Sprintf("- kind=%s ref=%s", strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.Ref))
+			line := fmt.Sprintf("- 类型=%s 名字=%s", strings.TrimSpace(ref.Kind), strings.TrimSpace(ref.Ref))
 			if len(ref.Rounds) > 0 {
-				line += fmt.Sprintf(" rounds=%v", ref.Rounds)
+				line += fmt.Sprintf(" 当时轮次=%v", ref.Rounds)
 			}
 			lines = append(lines, line)
 		}
