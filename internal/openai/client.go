@@ -82,9 +82,10 @@ func (e *FailoverError) Unwrap() error {
 }
 
 type APIError struct {
-	StatusCode int
-	Body       string
-	Retryable  bool
+	StatusCode      int
+	Body            string
+	Retryable       bool
+	ContextOverflow bool
 }
 
 func (e *APIError) Error() string {
@@ -109,6 +110,14 @@ func IsRetryableError(err error) bool {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.Retryable
+	}
+	return false
+}
+
+func IsContextOverflowError(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.ContextOverflow
 	}
 	return false
 }
@@ -262,10 +271,15 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			raw, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
+			bodyText := strings.TrimSpace(string(raw))
 			lastErr = &APIError{
-				StatusCode: resp.StatusCode,
-				Body:       strings.TrimSpace(string(raw)),
-				Retryable:  shouldRetryHTTPStatus(resp.StatusCode),
+				StatusCode:      resp.StatusCode,
+				Body:            bodyText,
+				Retryable:       shouldRetryHTTPStatus(resp.StatusCode),
+				ContextOverflow: isContextOverflowResponse(resp.StatusCode, bodyText),
+			}
+			if apiErr, ok := lastErr.(*APIError); ok && apiErr.ContextOverflow {
+				apiErr.Retryable = false
 			}
 			if shouldRetryHTTPStatus(resp.StatusCode) && attempt < 4 {
 				time.Sleep(retryDelay(attempt))
@@ -318,6 +332,9 @@ func normalizeEndpoints(endpoints []Endpoint) []Endpoint {
 func shouldFailover(err error) bool {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
+		if apiErr.ContextOverflow {
+			return false
+		}
 		return apiErr.Retryable
 	}
 	return err != nil
@@ -330,6 +347,28 @@ func shouldRetryHTTPStatus(status int) bool {
 	default:
 		return false
 	}
+}
+
+func isContextOverflowResponse(status int, body string) bool {
+	if status != http.StatusBadRequest && status != http.StatusRequestEntityTooLarge {
+		return false
+	}
+	body = strings.ToLower(body)
+	for _, needle := range []string{
+		"context_length_exceeded",
+		"context length exceeded",
+		"context window",
+		"maximum context length",
+		"request_too_large",
+		"request too large",
+		"prompt is too long",
+		"too many tokens",
+	} {
+		if strings.Contains(body, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func retryDelay(attempt int) time.Duration {

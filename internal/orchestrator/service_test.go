@@ -168,6 +168,9 @@ func TestServiceWritesResidentProgressStatus(t *testing.T) {
 	if got.TotalInputTokens != 100 || got.TotalCachedTokens != 64 || got.TotalOutputTokens != 7 {
 		t.Fatalf("unexpected token progress: %#v", got)
 	}
+	if got.SummaryPane == nil || got.SummaryPane.Text != "我前面确认了机器状态。" || got.SummaryPane.EvidenceRefs[0].Ref != "round-1" {
+		t.Fatalf("expected summary pane to be exposed on resident progress, got %#v", got.SummaryPane)
+	}
 
 	close(release)
 	select {
@@ -925,6 +928,17 @@ func (r *progressRunner) Run(profile newborn.ResidentProfile, duration time.Dura
 		TotalInputTokens:  100,
 		TotalCachedTokens: 64,
 		TotalOutputTokens: 7,
+		SummaryPane: &newborn.SummaryPane{
+			Text:           "我前面确认了机器状态。",
+			UpdatedAt:      "2026-07-13T12:00:00Z",
+			RoundsAbsorbed: 1,
+			ApproxTokens:   16,
+			EvidenceRefs: []newborn.SummaryPaneEvidenceRef{{
+				Kind:   "round",
+				Ref:    "round-1",
+				Rounds: []int{1},
+			}},
+		},
 	})
 	r.emit(newborn.ProgressEvent{
 		Phase:               "round_finished",

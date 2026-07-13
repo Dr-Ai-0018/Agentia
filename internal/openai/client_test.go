@@ -50,6 +50,40 @@ func TestPostStreamReturnsRetryableAPIErrorAfter429Exhausted(t *testing.T) {
 	}
 }
 
+func TestPostStreamClassifiesContextOverflowWithoutRetry(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	_, err := PostStream(client, "http://example.invalid", "key", RequestPayload{
+		Model:        "test-model",
+		Instructions: "test",
+		Input:        []Message{{Role: "user", Content: "hello"}},
+	}, false)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Fatalf("context overflow should not retry same payload, got %d attempts", attempts)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || !apiErr.ContextOverflow {
+		t.Fatalf("expected context overflow APIError, got %T %[1]v", err)
+	}
+	if IsRetryableError(err) {
+		t.Fatalf("context overflow should not be retryable without compaction")
+	}
+	if !IsContextOverflowError(err) {
+		t.Fatalf("expected context overflow classification")
+	}
+}
+
 func TestPostStreamWithFailoverUsesBackupAfterRetryablePrimaryFailure(t *testing.T) {
 	attemptsByHost := map[string]int{}
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

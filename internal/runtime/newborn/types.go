@@ -168,6 +168,20 @@ type BrokerUsageLog struct {
 	AfterStatus        *brokerstate.ResidentStatus `json:"after_status,omitempty"`
 }
 
+type SummaryPaneEvidenceRef struct {
+	Kind   string `json:"kind"`
+	Ref    string `json:"ref"`
+	Rounds []int  `json:"rounds,omitempty"`
+}
+
+type SummaryPane struct {
+	Text           string                   `json:"text"`
+	UpdatedAt      string                   `json:"updated_at"`
+	RoundsAbsorbed int                      `json:"rounds_absorbed"`
+	ApproxTokens   int                      `json:"approx_tokens"`
+	EvidenceRefs   []SummaryPaneEvidenceRef `json:"evidence_refs,omitempty"`
+}
+
 type RoundLog struct {
 	Round        int             `json:"round"`
 	RemainingSec int             `json:"remaining_sec"`
@@ -186,24 +200,26 @@ type RoundLog struct {
 }
 
 type ProgressEvent struct {
-	Phase               string `json:"phase"`
-	Round               int    `json:"round,omitempty"`
-	RemainingSec        int    `json:"remaining_sec,omitempty"`
-	Action              string `json:"action,omitempty"`
-	ResponseID          string `json:"response_id,omitempty"`
-	InFlightStartedAt   string `json:"in_flight_started_at,omitempty"`
-	LastRoundFinishedAt string `json:"last_round_finished_at,omitempty"`
-	InputTokens         int    `json:"input_tokens,omitempty"`
-	CachedTokens        int    `json:"cached_tokens,omitempty"`
-	OutputTokens        int    `json:"output_tokens,omitempty"`
-	TotalInputTokens    int    `json:"total_input_tokens,omitempty"`
-	TotalCachedTokens   int    `json:"total_cached_tokens,omitempty"`
-	TotalOutputTokens   int    `json:"total_output_tokens,omitempty"`
+	Phase               string       `json:"phase"`
+	Round               int          `json:"round,omitempty"`
+	RemainingSec        int          `json:"remaining_sec,omitempty"`
+	Action              string       `json:"action,omitempty"`
+	ResponseID          string       `json:"response_id,omitempty"`
+	InFlightStartedAt   string       `json:"in_flight_started_at,omitempty"`
+	LastRoundFinishedAt string       `json:"last_round_finished_at,omitempty"`
+	InputTokens         int          `json:"input_tokens,omitempty"`
+	CachedTokens        int          `json:"cached_tokens,omitempty"`
+	OutputTokens        int          `json:"output_tokens,omitempty"`
+	TotalInputTokens    int          `json:"total_input_tokens,omitempty"`
+	TotalCachedTokens   int          `json:"total_cached_tokens,omitempty"`
+	TotalOutputTokens   int          `json:"total_output_tokens,omitempty"`
+	SummaryPane         *SummaryPane `json:"summary_pane,omitempty"`
 }
 
 type RunOptions struct {
-	ContinueOnNoop bool
-	Purpose        string
+	ContinueOnNoop         bool
+	Purpose                string
+	CompactionRecentRounds int
 }
 
 type FinalReport struct {

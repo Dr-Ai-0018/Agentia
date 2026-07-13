@@ -114,7 +114,7 @@ func buildSystemConst(identity ResidentIdentity) string {
 func buildWorldState(world string) string {
 	sections := []string{
 		"[world_state]",
-		"opening_condition: 你刚在这个环境里醒来，正在从观察中形成自己的理解。",
+		"continuity_condition: 你正在这个环境里延续自己的生活和工作；从可见事实、记忆、笔记和世界消息接续。",
 		"network_notice: 当前预期 outbound IPv4 可用；用观察确认，而不是直接假设。",
 	}
 	world = strings.TrimSpace(world)
@@ -173,7 +173,7 @@ func buildRecentWorkingContext(resident string, working WorkingContext) string {
 		}
 	}
 	if len(working.FrontierStatus) > 0 {
-		lines = append(lines, "exploration_frontier:")
+		lines = append(lines, "local_context_status:")
 		limit := working.FrontierStatus
 		if len(limit) > 3 {
 			limit = limit[:3]

@@ -55,24 +55,25 @@ type ResidentRun struct {
 }
 
 type ResidentRunStatus struct {
-	Resident            string `json:"resident"`
-	Status              string `json:"status"`
-	UpdatedAt           string `json:"updated_at"`
-	Error               string `json:"error,omitempty"`
-	TransientBlocked    bool   `json:"transient_blocked,omitempty"`
-	CurrentPhase        string `json:"current_phase,omitempty"`
-	CurrentRound        int    `json:"current_round,omitempty"`
-	RemainingSec        int    `json:"remaining_sec,omitempty"`
-	LastAction          string `json:"last_action,omitempty"`
-	LastResponseID      string `json:"last_response_id,omitempty"`
-	InFlightStartedAt   string `json:"in_flight_started_at,omitempty"`
-	LastRoundFinishedAt string `json:"last_round_finished_at,omitempty"`
-	InputTokens         int    `json:"input_tokens,omitempty"`
-	CachedTokens        int    `json:"cached_tokens,omitempty"`
-	OutputTokens        int    `json:"output_tokens,omitempty"`
-	TotalInputTokens    int    `json:"total_input_tokens,omitempty"`
-	TotalCachedTokens   int    `json:"total_cached_tokens,omitempty"`
-	TotalOutputTokens   int    `json:"total_output_tokens,omitempty"`
+	Resident            string               `json:"resident"`
+	Status              string               `json:"status"`
+	UpdatedAt           string               `json:"updated_at"`
+	Error               string               `json:"error,omitempty"`
+	TransientBlocked    bool                 `json:"transient_blocked,omitempty"`
+	CurrentPhase        string               `json:"current_phase,omitempty"`
+	CurrentRound        int                  `json:"current_round,omitempty"`
+	RemainingSec        int                  `json:"remaining_sec,omitempty"`
+	LastAction          string               `json:"last_action,omitempty"`
+	LastResponseID      string               `json:"last_response_id,omitempty"`
+	InFlightStartedAt   string               `json:"in_flight_started_at,omitempty"`
+	LastRoundFinishedAt string               `json:"last_round_finished_at,omitempty"`
+	InputTokens         int                  `json:"input_tokens,omitempty"`
+	CachedTokens        int                  `json:"cached_tokens,omitempty"`
+	OutputTokens        int                  `json:"output_tokens,omitempty"`
+	TotalInputTokens    int                  `json:"total_input_tokens,omitempty"`
+	TotalCachedTokens   int                  `json:"total_cached_tokens,omitempty"`
+	TotalOutputTokens   int                  `json:"total_output_tokens,omitempty"`
+	SummaryPane         *newborn.SummaryPane `json:"summary_pane,omitempty"`
 }
 
 type RunEvent struct {
@@ -87,16 +88,17 @@ type RunEvent struct {
 }
 
 type RunContract struct {
-	RunID          string        `json:"run_id"`
-	RetryOf        string        `json:"retry_of,omitempty"`
-	Mode           RunMode       `json:"mode"`
-	Residents      []string      `json:"residents"`
-	Duration       time.Duration `json:"duration"`
-	OutDir         string        `json:"out_dir"`
-	ResetResident  bool          `json:"reset_resident"`
-	Verbose        bool          `json:"verbose"`
-	ContinueOnNoop bool          `json:"continue_on_noop,omitempty"`
-	Purpose        string        `json:"purpose,omitempty"`
+	RunID                  string        `json:"run_id"`
+	RetryOf                string        `json:"retry_of,omitempty"`
+	Mode                   RunMode       `json:"mode"`
+	Residents              []string      `json:"residents"`
+	Duration               time.Duration `json:"duration"`
+	OutDir                 string        `json:"out_dir"`
+	ResetResident          bool          `json:"reset_resident"`
+	Verbose                bool          `json:"verbose"`
+	ContinueOnNoop         bool          `json:"continue_on_noop,omitempty"`
+	Purpose                string        `json:"purpose,omitempty"`
+	CompactionRecentRounds int           `json:"compaction_recent_rounds,omitempty"`
 }
 
 type RunSummary struct {
@@ -166,14 +168,15 @@ type RunRecord struct {
 }
 
 type RunInput struct {
-	Residents      []string
-	Duration       time.Duration
-	OutDir         string
-	Verbose        bool
-	ResetResident  bool
-	Mode           RunMode
-	ContinueOnNoop bool
-	Purpose        string
+	Residents              []string
+	Duration               time.Duration
+	OutDir                 string
+	Verbose                bool
+	ResetResident          bool
+	Mode                   RunMode
+	ContinueOnNoop         bool
+	Purpose                string
+	CompactionRecentRounds int
 }
 
 type Service struct {
@@ -383,16 +386,17 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 	}
 	started := time.Now().UTC()
 	contract := RunContract{
-		RunID:          fmt.Sprintf("orchestrator-%s", started.Format("20060102T150405.000000000Z")),
-		RetryOf:        strings.TrimSpace(retryOf),
-		Mode:           input.Mode,
-		Residents:      append([]string(nil), input.Residents...),
-		Duration:       input.Duration,
-		OutDir:         input.OutDir,
-		ResetResident:  input.ResetResident,
-		Verbose:        input.Verbose,
-		ContinueOnNoop: input.ContinueOnNoop,
-		Purpose:        strings.TrimSpace(input.Purpose),
+		RunID:                  fmt.Sprintf("orchestrator-%s", started.Format("20060102T150405.000000000Z")),
+		RetryOf:                strings.TrimSpace(retryOf),
+		Mode:                   input.Mode,
+		Residents:              append([]string(nil), input.Residents...),
+		Duration:               input.Duration,
+		OutDir:                 input.OutDir,
+		ResetResident:          input.ResetResident,
+		Verbose:                input.Verbose,
+		ContinueOnNoop:         input.ContinueOnNoop,
+		Purpose:                strings.TrimSpace(input.Purpose),
+		CompactionRecentRounds: input.CompactionRecentRounds,
 	}
 	runStatus := RunStatus{
 		RunID:     contract.RunID,
@@ -601,8 +605,9 @@ func (s *Service) runResident(resident string, input RunInput, runStatus *RunSta
 	}
 	if aware, ok := runner.(optionAwareRunner); ok {
 		aware.SetRunOptions(newborn.RunOptions{
-			ContinueOnNoop: input.ContinueOnNoop,
-			Purpose:        input.Purpose,
+			ContinueOnNoop:         input.ContinueOnNoop,
+			Purpose:                input.Purpose,
+			CompactionRecentRounds: input.CompactionRecentRounds,
 		})
 	}
 	report, err := runner.Run(profile, input.Duration, input.OutDir, input.Verbose, input.ResetResident)
@@ -687,6 +692,9 @@ func (s *Service) updateResidentProgress(runStatus *RunStatus, statusMu *sync.Mu
 		}
 		if event.TotalOutputTokens > 0 {
 			item.TotalOutputTokens = event.TotalOutputTokens
+		}
+		if event.SummaryPane != nil {
+			item.SummaryPane = event.SummaryPane
 		}
 		item.UpdatedAt = now
 		runStatus.UpdatedAt = now

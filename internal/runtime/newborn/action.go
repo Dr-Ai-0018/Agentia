@@ -298,7 +298,7 @@ func classifyCommandIntent(decision AgentDecision) string {
 	case decision.NextAction == "memory_review":
 		return "memory_review"
 	case containsBaselineMarkers(command):
-		return "baseline_note_capture"
+		return "continuity_note_capture"
 	case strings.Contains(command, "apt update") || strings.Contains(command, "apt-get update"):
 		return "package_refresh"
 	case strings.Contains(command, "systemctl") || strings.Contains(command, "service ") || strings.Contains(command, "ps "):
@@ -396,7 +396,7 @@ func guestCommand(instance, script string, activity tokenledger.ActivityType) Ac
 			RawOutput:   raw,
 		}
 	}
-	return ActionResult{Observation: string(out), Activity: activity}
+	return ActionResult{Observation: limitActionObservation(string(out)), Activity: activity}
 }
 
 func executeNoteList(profile ResidentProfile) ActionResult {
@@ -434,7 +434,7 @@ func executeNoteRead(profile ResidentProfile, decision AgentDecision) ActionResu
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
 		return ActionResult{Observation: "note_read failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_read_failed", RawOutput: raw}
 	}
-	return ActionResult{Observation: "note_read 读取 /root/arena-notes/" + file + ":\n" + string(out), Activity: tokenledger.ActivityLightWork}
+	return ActionResult{Observation: "note_read 读取 /root/arena-notes/" + file + ":\n" + limitActionObservation(string(out)), Activity: tokenledger.ActivityLightWork}
 }
 
 func appendGuestNote(instance, noteFile, text string) ActionResult {
@@ -562,6 +562,10 @@ func limitRawOutput(raw string) string {
 	}
 	omitted := len(raw) - actionRawOutputMax
 	return raw[:actionRawOutputMax] + "\n[raw_output_truncated bytes_omitted=" + strconv.Itoa(omitted) + "]"
+}
+
+func limitActionObservation(raw string) string {
+	return limitRawOutput(strings.TrimSpace(raw))
 }
 
 func actionError(observation, kind, raw string) ActionResult {

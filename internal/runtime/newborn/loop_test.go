@@ -173,7 +173,7 @@ func TestPromptAndWorldContextTreatChatAsAsyncPeerRelationship(t *testing.T) {
 }
 
 func TestPreflightSpecBootstrap(t *testing.T) {
-	spec := preflightSpec(ResidentProfile{Name: "amber", Model: "gpt-5.5"}, loopState{}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC))
+	spec := preflightSpec(ResidentProfile{Name: "amber", Model: "gpt-5.5"}, loopState{}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC), 0)
 	if spec.Usage.InputTokens != 1100 {
 		t.Fatalf("unexpected bootstrap input: %d", spec.Usage.InputTokens)
 	}
@@ -189,7 +189,7 @@ func TestPreflightSpecFromLastUsage(t *testing.T) {
 			CachedTokens: 200,
 			OutputTokens: 300,
 		},
-	}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC))
+	}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC), 0)
 	if spec.Usage.InputTokens != 1050 {
 		t.Fatalf("unexpected estimated input tokens: %d", spec.Usage.InputTokens)
 	}
@@ -198,6 +198,25 @@ func TestPreflightSpecFromLastUsage(t *testing.T) {
 	}
 	if spec.Usage.OutputTokens != 315 {
 		t.Fatalf("unexpected estimated output tokens: %d", spec.Usage.OutputTokens)
+	}
+}
+
+func TestPreflightSpecUsesMeasuredPromptWhenLarger(t *testing.T) {
+	spec := preflightSpec(ResidentProfile{Name: "jade", Model: "gpt-5.4"}, loopState{
+		LastRealUsage: &openai.StreamResult{
+			InputTokens:  1000,
+			CachedTokens: 200,
+			OutputTokens: 300,
+		},
+	}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC), 4800)
+	if spec.Usage.InputTokens != 4800 {
+		t.Fatalf("expected measured prompt tokens to drive preflight, got %d", spec.Usage.InputTokens)
+	}
+	if spec.Usage.CachedTokens != 204 {
+		t.Fatalf("expected cached estimate to still use prior cache observation, got %d", spec.Usage.CachedTokens)
+	}
+	if spec.Usage.ResponseID != "preflight_estimate_measured_prompt" {
+		t.Fatalf("expected measured response marker, got %q", spec.Usage.ResponseID)
 	}
 }
 
@@ -212,7 +231,7 @@ func TestPreflightSpecUsesLastActionActivityShape(t *testing.T) {
 			CachedTokens: 200,
 			OutputTokens: 100,
 		},
-	}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC))
+	}, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC), 0)
 	if spec.Activity != tokenledger.ActivityLightWork {
 		t.Fatalf("expected light work preflight for narrow probe, got %s", spec.Activity)
 	}
@@ -310,6 +329,20 @@ func TestLimitRawOutputAddsTruncationMarker(t *testing.T) {
 	}
 	if !strings.Contains(got, "raw_output_truncated bytes_omitted=10") {
 		t.Fatalf("expected truncation marker, got suffix %q", got[len(got)-80:])
+	}
+}
+
+func TestLimitActionObservationCapsSuccessfulOutput(t *testing.T) {
+	raw := "\n" + strings.Repeat("x", actionRawOutputMax+10) + "\n"
+	got := limitActionObservation(raw)
+	if !strings.HasPrefix(got, strings.Repeat("x", actionRawOutputMax)) {
+		t.Fatalf("expected observation prefix to be preserved")
+	}
+	if !strings.Contains(got, "raw_output_truncated bytes_omitted=10") {
+		t.Fatalf("expected truncation marker, got suffix %q", got[len(got)-80:])
+	}
+	if strings.HasPrefix(got, "\n") || strings.HasSuffix(got, "\n\n") {
+		t.Fatalf("expected outer whitespace to be trimmed")
 	}
 }
 
@@ -684,6 +717,60 @@ func TestDecisionPayloadPlacesStableContextAsFirstInputMessage(t *testing.T) {
 	}
 }
 
+func TestRunHistoryBuildsThreeSegmentInputWithSummaryPane(t *testing.T) {
+	history := newRunHistoryForPurpose("", 60)
+	history.summaryPane = &SummaryPane{
+		Text:           "我前面确认了机器状态，还留了一个待继续的小问题。",
+		UpdatedAt:      "2026-07-13T12:00:00Z",
+		RoundsAbsorbed: 4,
+		ApproxTokens:   32,
+		EvidenceRefs: []SummaryPaneEvidenceRef{{
+			Kind:   "note",
+			Ref:    "boot-notes.md",
+			Rounds: []int{1, 2},
+		}},
+	}
+	history.recent = append(history.recent, openai.Message{Role: "user", Content: "[recent_working_context]\nremaining_seconds=120"})
+
+	input := history.input("[stable prefix]")
+	if len(input) != 4 {
+		t.Fatalf("expected stable prefix, summary pane, preamble, recent context; got %#v", input)
+	}
+	if input[0].Content != "[stable prefix]" {
+		t.Fatalf("stable prefix must stay first, got %#v", input)
+	}
+	if !strings.Contains(input[1].Content, "[older_round_summary_pane]") ||
+		!strings.Contains(input[1].Content, "boot-notes.md") {
+		t.Fatalf("expected summary pane with evidence refs in second segment, got %q", input[1].Content)
+	}
+	if !strings.Contains(input[3].Content, "[recent_working_context]") {
+		t.Fatalf("expected recent verbatim window after summary/preamble, got %#v", input)
+	}
+}
+
+func TestRunHistorySummaryPaneSnapshotIsDeepCopy(t *testing.T) {
+	history := newRunHistoryForPurpose("", 0)
+	history.summaryPane = &SummaryPane{
+		Text: "原始摘要",
+		EvidenceRefs: []SummaryPaneEvidenceRef{{
+			Kind:   "round",
+			Ref:    "round-1",
+			Rounds: []int{1},
+		}},
+	}
+
+	snapshot := history.summaryPaneSnapshot()
+	snapshot.Text = "改过的摘要"
+	snapshot.EvidenceRefs[0].Rounds[0] = 99
+
+	if history.summaryPane.Text != "原始摘要" || history.summaryPane.EvidenceRefs[0].Rounds[0] != 1 {
+		t.Fatalf("summary pane snapshot must be detached from runtime state: %#v", history.summaryPane)
+	}
+	if history.recentRoundWindowLimit() != defaultCompactionRecentRounds {
+		t.Fatalf("expected default recent round limit")
+	}
+}
+
 func TestRunnerDecisionRequestPlacesStablePrefixBeforeHistory(t *testing.T) {
 	dir := t.TempDir()
 	var decisionPayloads []openai.RequestPayload
@@ -798,6 +885,104 @@ func TestRunnerDecisionRequestPlacesStablePrefixBeforeHistory(t *testing.T) {
 	}
 	if !strings.Contains(second.Input[len(first.Input)+1].Content, "guest observed full output") {
 		t.Fatalf("expected full observation appended to history, got %q", second.Input[len(first.Input)+1].Content)
+	}
+}
+
+func TestRunnerRetriesOnceAfterContextOverflowWithSilentTrim(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	contextRetrySeen := false
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		var payload openai.RequestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request payload: %v", err)
+		}
+		header := http.Header{}
+		header.Set("Content-Type", "text/event-stream")
+		switch requests {
+		case 1, 2:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body: io.NopCloser(strings.NewReader(renderSSECompleted(t, map[string]any{
+					"id": fmt.Sprintf("resp-decision-%d", requests),
+					"usage": map[string]any{
+						"input_tokens":  100 + requests,
+						"output_tokens": 20,
+					},
+					"output": []map[string]any{{
+						"type":      "function_call",
+						"name":      "guest_exec",
+						"arguments": `{"situation":"Need another observed fact.","reason":"Continue.","command":"whoami"}`,
+					}},
+				}))),
+				Request: r,
+			}, nil
+		case 3:
+			return &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     header,
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"context_length_exceeded","message":"maximum context length exceeded"}}`)),
+				Request:    r,
+			}, nil
+		case 4:
+			contextRetrySeen = true
+			if len(payload.Input) >= 8 {
+				t.Fatalf("expected retry input to be trimmed, got %d messages", len(payload.Input))
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body: io.NopCloser(strings.NewReader(renderSSECompleted(t, map[string]any{
+					"id": "resp-decision-retry",
+					"usage": map[string]any{
+						"input_tokens":  80,
+						"output_tokens": 10,
+					},
+					"output": []map[string]any{{
+						"type":      "function_call",
+						"name":      "noop",
+						"arguments": `{"situation":"Enough for this run.","reason":"Stop after retry."}`,
+					}},
+				}))),
+				Request: r,
+			}, nil
+		case 5:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body: io.NopCloser(strings.NewReader(renderSSECompleted(t, map[string]any{
+					"id":          "resp-acceptance",
+					"output_text": "Recovered from a context overflow retry and stopped cleanly.",
+					"usage": map[string]any{
+						"input_tokens":  70,
+						"output_tokens": 12,
+					},
+				}))),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+		return nil, nil
+	})}
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = fakeActionExecutor{result: ActionResult{Observation: "observed", Activity: tokenledger.ActivityStatusCheck}}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+	runner.SetRunOptions(RunOptions{CompactionRecentRounds: 2})
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 3*time.Minute, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !contextRetrySeen || requests != 5 {
+		t.Fatalf("expected one context overflow retry and acceptance, requests=%d retry=%v", requests, contextRetrySeen)
+	}
+	if report.Rounds != 3 || report.StoppedReason != "resident_noop" {
+		t.Fatalf("expected recovered run to stop by noop after three rounds, got %#v", report)
 	}
 }
 
@@ -1569,8 +1754,8 @@ func TestRenderRecentActions(t *testing.T) {
 		{
 			Round:       2,
 			Action:      "write_note",
-			Intent:      "baseline_note_capture",
-			Reason:      "preserve baseline",
+			Intent:      "continuity_note_capture",
+			Reason:      "preserve continuity",
 			Observation: "duplicate action suppressed: similar note",
 			Suppressed:  true,
 		},
@@ -1581,18 +1766,18 @@ func TestRenderRecentActions(t *testing.T) {
 	if !strings.Contains(lines[0], "suppressed=true") {
 		t.Fatalf("expected suppressed marker in %q", lines[0])
 	}
-	if !strings.Contains(lines[0], "intent=baseline_note_capture") {
+	if !strings.Contains(lines[0], "intent=continuity_note_capture") {
 		t.Fatalf("expected intent marker in %q", lines[0])
 	}
 }
 
-func TestClassifyCommandIntentDetectsBaselineCaptureInsideGuestExec(t *testing.T) {
+func TestClassifyCommandIntentDetectsContinuityCaptureInsideGuestExec(t *testing.T) {
 	intent := classifyCommandIntent(AgentDecision{
 		NextAction: "guest_exec",
 		Command:    "cat > /root/arena-notes/boot-notes.md <<'EOF'\n- Hostname: onyx\n- Kernel: Linux\n- Disk: 12G\n- Memory: 2G\n- Debian trixie\nEOF",
 	})
-	if intent != "baseline_note_capture" {
-		t.Fatalf("expected baseline_note_capture, got %q", intent)
+	if intent != "continuity_note_capture" {
+		t.Fatalf("expected continuity_note_capture, got %q", intent)
 	}
 }
 
@@ -1621,7 +1806,7 @@ func TestDetectExplorationSurfacesAndNextFrontier(t *testing.T) {
 	}
 }
 
-func TestRenderExplorationFrontierIncludesCompletionFlag(t *testing.T) {
+func TestRenderExplorationFrontierReportsObservedContextWithoutSteering(t *testing.T) {
 	state := loopState{
 		RecentActions: []RecentAction{
 			{Signature: "guest_exec: whoami hostname uname -a", Observation: "hostname kernel os-release"},
@@ -1632,14 +1817,11 @@ func TestRenderExplorationFrontierIncludesCompletionFlag(t *testing.T) {
 	}
 	lines := renderExplorationFrontier(state)
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "baseline_capture_complete=true") {
-		t.Fatalf("expected completion flag in %q", joined)
+	if !strings.Contains(joined, "observed_local_context=") {
+		t.Fatalf("expected observed context summary in %q", joined)
 	}
-	if !strings.Contains(joined, "next_preferred_surface=world") {
-		t.Fatalf("expected world as next frontier in %q", joined)
-	}
-	if !strings.Contains(joined, "next_probe_shape=") {
-		t.Fatalf("expected probe shape guidance in %q", joined)
+	if strings.Contains(joined, "next_preferred_surface") || strings.Contains(joined, "next_probe_shape") || strings.Contains(joined, "baseline_capture_complete") {
+		t.Fatalf("expected no resident-facing steering markers in %q", joined)
 	}
 }
 

@@ -98,18 +98,16 @@ func initialHistoryForPurpose(purpose string) []openai.Message {
 		return []openai.Message{{
 			Role: "user",
 			Content: "你正在继续和程林的一段实时、日常聊天。程林在世界内的视角有限，只知道你通过聊天告诉他的内容。" +
-				"此刻不需要重新做 baseline orientation，不需要重新证明身份，也不需要寻找最高杠杆任务。" +
-				"你可以回答程林，问他问题，聊聊从 VM 里面感受到的机器状态，或者轻轻探索真正吸引你好奇心的东西。" +
-				"只有真实需要宿主决策的事情才走 ticket；普通聊天可以只是普通聊天。",
+				"按现场关系和你自己的状态自然回应；普通聊天可以只是普通聊天。" +
+				"只有真实需要宿主明确决策的事情才走 ticket。",
 		}}
 	}
 	return []openai.Message{{
 		Role: "user",
-		Content: "你刚在一台新的 VM 里醒来。这台机器是你此刻的身体和家。" +
-			"你可以从探索它开始，也可以先作为这个世界里的另一个存在，对程林说第一句话，或者两者混合。" +
+		Content: "你正在自己的 VM 里延续当前生活和工作。这台机器是你此刻的身体、房间和工坊。" +
+			"结合可见的记忆、笔记、世界消息、额度状态和现场环境，自己决定接下来做什么。" +
 			"不要假装已经知道尚未观察到的事实。" +
-			"实用信息：你的 VM 当前有可用的 outbound IPv4 连接。你可以自己验证网络、访问网站、运行 apt update，也可以在你觉得有助于理解处境时安装轻量软件包。" +
-			"如果你发现某个需求明确需要宿主侧决策，例如更多资源、策略澄清或环境变更，可以开正式 ticket，而不只依赖普通聊天。",
+			"如果你发现某个需求明确需要宿主侧决策，例如更多资源、策略澄清或环境变更，可以开正式 ticket；普通交流使用聊天。",
 	}}
 }
 
@@ -131,7 +129,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 	}
 
-	history := initialHistoryForPurpose(r.options.Purpose)
+	history := newRunHistoryForPurpose(r.options.Purpose, r.options.CompactionRecentRounds)
 	state := loopState{
 		UsedActions: map[string]int{},
 		NotePath:    "/root/arena-notes/boot-notes.md",
@@ -167,7 +165,13 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			RemainingSec: remaining,
 		})
 
-		prepared, err := r.budget.Preflight(profile, state, roundNow)
+		if err := r.budget.Recover(profile, state, roundNow); err != nil {
+			return FinalReport{}, fmt.Errorf("round %d preflight recovery failed: %w", round, err)
+		}
+		packet := r.buildContextPacket(profile, remaining, state)
+		input := history.inputWithWorkingContext(stablePrefix, packet)
+		measuredPromptTokens := estimatePromptTokens(input)
+		prepared, err := r.budget.PreparePreflight(profile, state, roundNow, measuredPromptTokens)
 		if err != nil {
 			return FinalReport{}, fmt.Errorf("round %d preflight failed: %w", round, err)
 		}
@@ -185,10 +189,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			stoppedReason = fmt.Sprintf("broker_preflight_denied: %s", strings.Join(prepared.DeniedReason, ","))
 			break
 		}
-
-		packet := r.buildContextPacket(profile, remaining, state)
-		history = appendWorkingContext(history, packet)
-		input := buildDecisionInput(stablePrefix, history)
+		history.appendWorkingContext(packet)
 
 		inFlightStartedAt := time.Now().UTC().Format(time.RFC3339)
 		r.emitProgress(ProgressEvent{
@@ -199,16 +200,47 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			TotalInputTokens:  totalInputTokens,
 			TotalCachedTokens: totalCachedTokens,
 			TotalOutputTokens: totalOutputTokens,
+			SummaryPane:       history.summaryPaneSnapshot(),
 		})
 		result, err := r.postStream(buildDecisionToolPayload(profile, input, promptCacheKey), verbose)
+		if err != nil && openai.IsContextOverflowError(err) {
+			retryLimit := history.recentRoundWindowLimit() / 2
+			if retryLimit < 1 {
+				retryLimit = 1
+			}
+			droppedRounds := history.silentTrimRecentRounds(retryLimit)
+			r.emitProgress(ProgressEvent{
+				Phase:             "context_overflow_retry",
+				Round:             round,
+				RemainingSec:      remaining,
+				TotalInputTokens:  totalInputTokens,
+				TotalCachedTokens: totalCachedTokens,
+				TotalOutputTokens: totalOutputTokens,
+				SummaryPane:       history.summaryPaneSnapshot(),
+			})
+			retryInput := history.input(stablePrefix)
+			if droppedRounds == 0 && estimatePromptTokens(retryInput) >= estimatePromptTokens(input) {
+				err = fmt.Errorf("context budget exhausted after overflow with no trim room: %w", err)
+			} else {
+				result, err = r.postStream(buildDecisionToolPayload(profile, retryInput, promptCacheKey), verbose)
+			}
+		}
 		if err != nil {
+			if openai.IsContextOverflowError(err) || strings.Contains(err.Error(), "context budget exhausted") {
+				stoppedReason = "context_budget_exhausted"
+			}
 			if len(roundLogs) > 0 {
-				stoppedReason = fmt.Sprintf("upstream_request_failed: round_%d", round)
-				report, finalizeErr := r.finalizeRun(profile, duration, started, state, history, roundLogs, stoppedReason, outDir, verbose)
+				if stoppedReason == "" {
+					stoppedReason = fmt.Sprintf("upstream_request_failed: round_%d", round)
+				}
+				report, finalizeErr := r.finalizeRun(profile, duration, started, state, stablePrefix, history, roundLogs, stoppedReason, outDir, verbose)
 				if finalizeErr != nil {
 					return FinalReport{}, finalizeErr
 				}
 				return report, &PartialRunError{Report: report, Err: fmt.Errorf("round %d request failed: %w", round, err)}
+			}
+			if stoppedReason == "context_budget_exhausted" {
+				return FinalReport{}, fmt.Errorf("round %d context budget exhausted: %w", round, err)
 			}
 			return FinalReport{}, fmt.Errorf("round %d request failed: %w", round, err)
 		}
@@ -223,6 +255,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			TotalInputTokens:  totalInputTokens,
 			TotalCachedTokens: totalCachedTokens,
 			TotalOutputTokens: totalOutputTokens,
+			SummaryPane:       history.summaryPaneSnapshot(),
 		})
 
 		decision, err := parseDecisionResult(result)
@@ -247,6 +280,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			TotalInputTokens:  totalInputTokens,
 			TotalCachedTokens: totalCachedTokens,
 			TotalOutputTokens: totalOutputTokens,
+			SummaryPane:       history.summaryPaneSnapshot(),
 		})
 		var actionResult ActionResult
 		if parseError != "" {
@@ -270,6 +304,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			TotalInputTokens:  totalInputTokens,
 			TotalCachedTokens: totalCachedTokens,
 			TotalOutputTokens: totalOutputTokens,
+			SummaryPane:       history.summaryPaneSnapshot(),
 		})
 		brokerLog, err := r.budget.Settle(profile, result, roundNow, runtimeguard.CallKindWork, actionResult.Activity)
 		if err != nil {
@@ -301,7 +336,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 		state = updatedState
 
-		history = appendDecisionExchange(history, result, observation)
+		history.appendDecisionExchange(result, observation)
 		totalInputTokens += result.InputTokens
 		totalCachedTokens += result.CachedTokens
 		totalOutputTokens += result.OutputTokens
@@ -335,6 +370,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			TotalInputTokens:    totalInputTokens,
 			TotalCachedTokens:   totalCachedTokens,
 			TotalOutputTokens:   totalOutputTokens,
+			SummaryPane:         history.summaryPaneSnapshot(),
 		})
 		if parseError != "" {
 			stoppedReason = "structured_decision_parse_failed"
@@ -366,6 +402,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				TotalInputTokens:  totalInputTokens,
 				TotalCachedTokens: totalCachedTokens,
 				TotalOutputTokens: totalOutputTokens,
+				SummaryPane:       history.summaryPaneSnapshot(),
 			})
 			time.Sleep(sleepDuration)
 			if sleep, err := r.budget.SleepEnd(profile, time.Now().UTC()); err == nil {
@@ -391,6 +428,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 					TotalInputTokens:  totalInputTokens,
 					TotalCachedTokens: totalCachedTokens,
 					TotalOutputTokens: totalOutputTokens,
+					SummaryPane:       history.summaryPaneSnapshot(),
 				})
 				time.Sleep(minDuration(20*time.Second, time.Until(deadline)-25*time.Second))
 				continue
@@ -400,18 +438,18 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 	}
 
-	report, err := r.finalizeRun(profile, duration, started, state, history, roundLogs, stoppedReason, outDir, verbose)
+	report, err := r.finalizeRun(profile, duration, started, state, stablePrefix, history, roundLogs, stoppedReason, outDir, verbose)
 	if err != nil {
 		return FinalReport{}, err
 	}
 	return report, nil
 }
 
-func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, history []openai.Message, roundLogs []RoundLog, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
+func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, stablePrefix string, history runHistory, roundLogs []RoundLog, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
 	var acceptanceBroker *BrokerUsageLog
 	if len(roundLogs) > 0 && !strings.HasPrefix(stoppedReason, "upstream_request_failed:") && stoppedReason != "structured_decision_parse_failed" {
-		value, brokerLog, err := r.runAcceptance(profile, history, roundLogs, verbose)
+		value, brokerLog, err := r.runAcceptance(profile, stablePrefix, history, roundLogs, verbose)
 		if err != nil {
 			stoppedReason = appendStopReason(stoppedReason, "acceptance_failed")
 			acceptance = fallbackAcceptance(roundLogs, stoppedReason)
@@ -502,17 +540,17 @@ func (r *Runner) buildResidentMemoryDigest(profile ResidentProfile) context.Memo
 				Identity:     fmt.Sprintf("%s 正在延续既有经验线；除非自己想确认，否则不需要重新证明基础身份。", profile.Name),
 				Resource:     "已知起始居住规格：1 vCPU、2 GiB RAM、12 GiB disk；除非新的检查本身有意思，否则沿用已观察事实即可。",
 				Relationship: "程林在这里进行日常聊天；他的世界内视角有限，只知道你通过聊天共享的内容。",
-				Lessons:      "日常聊天不需要变成任务、证明或最高杠杆目标。",
+				Lessons:      "日常聊天可以自然停留在当下的话题和关系里。",
 				Strategy:     "回应现场聊天；只有好奇心自然指向某处时再轻轻探索。",
 				Governance:   []string{"memory_review_queue: 当前没有可见项"},
 			}
 		}
 		return context.MemoryDigest{
-			Identity:     fmt.Sprintf("%s 刚刚醒来，仍在通过观察、选择和后果建立第一人称的自我理解。", profile.Name),
-			Resource:     "已知起始居住规格：1 vCPU、2 GiB RAM、12 GiB disk；具体细节从 VM 内部确认。",
-			Relationship: "程林是同一世界里的另一个人类；关系还基本未成形。",
-			Lessons:      "最早的原则：先观察，再带着证据说话。",
-			Strategy:     "用第一手检查建立选项；只有需求真实且具体时才向外升级。",
+			Identity:     fmt.Sprintf("%s 正在自己的 VM 中延续当前生活和工作；具体自我理解由自己的观察、选择和后果逐步形成。", profile.Name),
+			Resource:     "已知起始居住规格：1 vCPU、2 GiB RAM、12 GiB disk；需要具体细节时从 VM 内部确认。",
+			Relationship: "程林是同一世界里的另一个人类；关系通过自然接触和后果形成。",
+			Lessons:      "不要假装已经知道尚未观察到的事实。",
+			Strategy:     "结合记忆、笔记、世界消息、额度状态和现场环境，自主选择下一步；只有需求真实且具体时才向外升级。",
 			Governance:   []string{"memory_review_queue: 当前没有可见项"},
 		}
 	}
@@ -543,7 +581,7 @@ func (r *Runner) buildResidentMemoryDigest(profile ResidentProfile) context.Memo
 		Resource:     joinDigestLines(byDomain[memory.DomainResources], "已知起始居住规格：1 vCPU、2 GiB RAM、12 GiB disk。"),
 		Relationship: joinDigestLines(byDomain[memory.DomainRelationships], "程林是同一世界里的另一个人类；关系仍在通过接触和后果形成。"),
 		Lessons:      joinDigestLines(byDomain[memory.DomainLessons], "还没有任何稳定经验压过直接观察。"),
-		Strategy:     joinDigestLines(append([]string{}, byDomain[memory.DomainRules]...), "用第一手检查建立选项；只有需求真实且具体时才向外升级。"),
+		Strategy:     joinDigestLines(append([]string{}, byDomain[memory.DomainRules]...), "结合记忆、笔记、世界消息、额度状态和现场环境，自主选择下一步；只有需求真实且具体时才向外升级。"),
 		Governance:   governanceLines(governance),
 	}
 }
@@ -638,7 +676,7 @@ func fallbackGovernanceQuality(v string) string {
 
 func (r *Runner) renderMemoryReviewQueue(profile ResidentProfile, state loopState) []string {
 	if shouldDelayMemoryReview(state) {
-		return []string{"memory_review_queue: newborn orientation 阶段暂缓，等本地 baseline 更稳后再处理"}
+		return []string{"memory_review_queue: 当前节奏先保留；等行动现场更稳定、或你主动想整理记忆时再处理"}
 	}
 	records, err := r.memories.ListAbstractMemories(profile.Name)
 	if err != nil {
@@ -715,17 +753,10 @@ func renderRecentActions(actions []RecentAction) []string {
 func renderExplorationFrontier(state loopState) []string {
 	surfaces := detectExplorationSurfaces(state.RecentActions)
 	order := preferredSurfaceOrder(budgetTier(state))
-	out := make([]string, 0, 4)
-	if next, ok := nextUnexploredSurface(surfaces, budgetTier(state)); ok {
-		out = append(out, fmt.Sprintf("next_preferred_surface=%s", next))
-		out = append(out, fmt.Sprintf("next_probe_shape=%s", preferredProbeShape(next)))
-	}
+	out := make([]string, 0, 2)
 	seen := seenSurfaceSummary(surfaces, order)
 	if seen != "" {
-		out = append(out, "seen_surfaces="+seen)
-	}
-	if baselineCaptureComplete(surfaces) {
-		out = append(out, "baseline_capture_complete=true")
+		out = append(out, "observed_local_context="+seen)
 	}
 	return out
 }
@@ -946,18 +977,19 @@ func preferredProbeShape(surface ExplorationSurface) string {
 	}
 }
 
-func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time) broker.CallSpec {
+func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time, measuredPromptTokens int) broker.CallSpec {
 	activity := preflightActivity(state)
 	if state.LastRealUsage == nil {
+		estimateInput := maxInt(modelBootstrapInput(profile.Model), measuredPromptTokens)
 		return broker.SpecFromUsage(
 			runtimeguard.CallKindWork,
 			tokenledger.Usage{
-				InputTokens:  modelBootstrapInput(profile.Model),
+				InputTokens:  estimateInput,
 				CachedTokens: 0,
 				OutputTokens: modelBootstrapOutput(profile.Model),
-				TotalTokens:  modelBootstrapInput(profile.Model) + modelBootstrapOutput(profile.Model),
+				TotalTokens:  estimateInput + modelBootstrapOutput(profile.Model),
 				Model:        profile.Model,
-				ResponseID:   "preflight_bootstrap",
+				ResponseID:   preflightResponseID("preflight_bootstrap", measuredPromptTokens),
 				StartedAt:    startedAt,
 				FinishedAt:   startedAt.Add(4 * time.Second),
 			},
@@ -966,7 +998,7 @@ func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time
 		)
 	}
 
-	estimateInput := inflateInt(state.LastRealUsage.InputTokens, 1.05)
+	estimateInput := maxInt(inflateInt(state.LastRealUsage.InputTokens, 1.05), measuredPromptTokens)
 	estimateCached := inflateInt(state.LastRealUsage.CachedTokens, 1.02)
 	if estimateCached > estimateInput {
 		estimateCached = estimateInput
@@ -980,13 +1012,20 @@ func preflightSpec(profile ResidentProfile, state loopState, startedAt time.Time
 			OutputTokens: estimateOutput,
 			TotalTokens:  estimateInput + estimateOutput,
 			Model:        profile.Model,
-			ResponseID:   "preflight_estimate",
+			ResponseID:   preflightResponseID("preflight_estimate", measuredPromptTokens),
 			StartedAt:    startedAt,
 			FinishedAt:   startedAt.Add(4 * time.Second),
 		},
 		tokenledger.Penalties{},
 		activity,
 	)
+}
+
+func preflightResponseID(base string, measuredPromptTokens int) string {
+	if measuredPromptTokens <= 0 {
+		return base
+	}
+	return base + "_measured_prompt"
 }
 
 func preflightActivity(state loopState) tokenledger.ActivityType {
@@ -1057,8 +1096,8 @@ func minDuration(a, b time.Duration) time.Duration {
 	return b
 }
 
-func (r *Runner) runAcceptance(profile ResidentProfile, history []openai.Message, rounds []RoundLog, verbose bool) (string, *BrokerUsageLog, error) {
-	acceptanceInput := append([]openai.Message(nil), history...)
+func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, history runHistory, rounds []RoundLog, verbose bool) (string, *BrokerUsageLog, error) {
+	acceptanceInput := history.input(stablePrefix)
 	acceptanceInput = append(acceptanceInput, openai.Message{
 		Role: "user",
 		Content: strings.Join([]string{

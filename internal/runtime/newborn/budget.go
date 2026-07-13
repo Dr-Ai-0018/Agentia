@@ -23,7 +23,7 @@ func (b *BudgetController) ResetResident(residentID string, now time.Time) error
 	return err
 }
 
-func (b *BudgetController) Preflight(profile ResidentProfile, state loopState, startedAt time.Time) (*brokerstate.PreparedAdmission, error) {
+func (b *BudgetController) Recover(profile ResidentProfile, state loopState, startedAt time.Time) error {
 	mode := recoveryModeForPreflight(state)
 	if state.LastDecision != nil && state.LastDecision.NextAction == "sleep" {
 		switch {
@@ -36,15 +36,24 @@ func (b *BudgetController) Preflight(profile ResidentProfile, state loopState, s
 			}
 		}
 	}
-	if _, err := b.brokerApp.RunRecoverToNowWithMode(profile.Name, startedAt, mode); err != nil {
-		return nil, err
-	}
-	spec := preflightSpec(profile, state, startedAt)
+	_, err := b.brokerApp.RunRecoverToNowWithMode(profile.Name, startedAt, mode)
+	return err
+}
+
+func (b *BudgetController) PreparePreflight(profile ResidentProfile, state loopState, startedAt time.Time, measuredPromptTokens int) (*brokerstate.PreparedAdmission, error) {
+	spec := preflightSpec(profile, state, startedAt, measuredPromptTokens)
 	prepared, err := b.brokerApp.RunPrepareSpec(profile.Name, spec)
 	if err != nil {
 		return nil, err
 	}
 	return &prepared, nil
+}
+
+func (b *BudgetController) Preflight(profile ResidentProfile, state loopState, startedAt time.Time) (*brokerstate.PreparedAdmission, error) {
+	if err := b.Recover(profile, state, startedAt); err != nil {
+		return nil, err
+	}
+	return b.PreparePreflight(profile, state, startedAt, 0)
 }
 
 func (b *BudgetController) SleepStart(profile ResidentProfile, minutes int, startedAt time.Time, reason string) error {
