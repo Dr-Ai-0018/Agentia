@@ -70,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{runID}/status", s.handleRunStatus)
 	mux.HandleFunc("GET /api/runs/{runID}/summary", s.handleRunSummary)
 	mux.HandleFunc("GET /api/runs/{runID}/report", s.handleRunReport)
+	mux.HandleFunc("GET /api/diagnostics/compaction", s.handleCompactionDiagnostics)
 	mux.HandleFunc("GET /api/budget", s.handleBudget)
 	mux.HandleFunc("GET /api/inbox", s.handleInbox)
 	mux.HandleFunc("GET /api/followups", s.handleFollowups)
@@ -428,6 +429,67 @@ func (s *Server) handleRunReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "run_report_unavailable", err)
 		return
 	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleCompactionDiagnostics(w http.ResponseWriter, r *http.Request) {
+	limit := queryInt(r, "limit", 20)
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	runs, err := s.orchestrator.ListRuns(limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "compaction_diagnostics_unavailable", err)
+		return
+	}
+	out := CompactionDiagnosticsResponse{
+		GeneratedAt:  s.now().Format(time.RFC3339),
+		Runs:         []CompactionRunDiagnostics{},
+		RecentEvents: []CompactionDiagnosticsEvent{},
+	}
+	for _, run := range runs {
+		summary, err := s.orchestrator.ReadRunSummary(run.RunID)
+		if err != nil {
+			continue
+		}
+		for _, residentRun := range summary.Runs {
+			if residentRun.Report == nil || len(residentRun.Report.CompactionEvents) == 0 {
+				continue
+			}
+			report := residentRun.Report
+			item := newCompactionRunDiagnostics(summary.RunID, report.StartedAt, report.Resident)
+			item.RunLabel = summary.Contract.Purpose
+			if item.RunLabel == "" {
+				item.RunLabel = string(summary.Contract.Mode)
+			}
+			cacheHits := 0
+			for _, event := range report.CompactionEvents {
+				item.TotalCompactions++
+				item.TriggerBreakdown[string(event.TriggerReason)]++
+				item.OutcomeBreakdown[string(event.Outcome)]++
+				item.TotalTokensBefore += event.TokensBefore
+				item.TotalTokensAfter += event.TokensAfter
+				if event.CachePrefixHitOnCompactionCall {
+					cacheHits++
+				}
+				if event.SummaryPaneTokensAfter > 0 {
+					item.LatestSummaryPaneTokens = event.SummaryPaneTokensAfter
+				}
+				if event.TokensAfter > 0 {
+					item.CurrentContextWindowTokens = event.TokensAfter
+				}
+				out.RecentEvents = append(out.RecentEvents, compactionDiagnosticsEvent(summary.RunID, event))
+			}
+			if report.SummaryPane != nil && report.SummaryPane.ApproxTokens > 0 {
+				item.LatestSummaryPaneTokens = report.SummaryPane.ApproxTokens
+			}
+			if item.TotalCompactions > 0 {
+				item.CacheHitRateOnCompactionCall = float64(cacheHits) / float64(item.TotalCompactions)
+			}
+			out.Runs = append(out.Runs, item)
+		}
+	}
+	sortCompactionDiagnostics(&out)
 	writeJSON(w, http.StatusOK, out)
 }
 

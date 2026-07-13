@@ -144,6 +144,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 	totalInputTokens := 0
 	totalCachedTokens := 0
 	totalOutputTokens := 0
+	compactionEvents := []CompactionEvent{}
 
 	for {
 		roundNow := time.Now().UTC()
@@ -171,6 +172,13 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		packet := r.buildContextPacket(profile, remaining, state)
 		input := history.inputWithWorkingContext(stablePrefix, packet)
 		measuredPromptTokens := estimatePromptTokens(input)
+		if shouldCompactBeforeModel(history, measuredPromptTokens, profile.Model) {
+			detail := fmt.Sprintf("measured_prompt_tokens=%d recent_rounds=%d limit=%d", measuredPromptTokens, history.recentRounds, history.recentRoundWindowLimit())
+			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerPreflightMeasured, detail, history.recentRoundWindowLimit(), len(roundLogs), verbose)
+			compactionEvents = append(compactionEvents, event)
+			input = history.inputWithWorkingContext(stablePrefix, packet)
+			measuredPromptTokens = estimatePromptTokens(input)
+		}
 		prepared, err := r.budget.PreparePreflight(profile, state, roundNow, measuredPromptTokens)
 		if err != nil {
 			return FinalReport{}, fmt.Errorf("round %d preflight failed: %w", round, err)
@@ -208,7 +216,8 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			if retryLimit < 1 {
 				retryLimit = 1
 			}
-			droppedRounds := history.silentTrimRecentRounds(retryLimit)
+			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerReactiveOverflow, "provider reported context overflow; retrying once after compacting older rounds", retryLimit, len(roundLogs), verbose)
+			compactionEvents = append(compactionEvents, event)
 			r.emitProgress(ProgressEvent{
 				Phase:             "context_overflow_retry",
 				Round:             round,
@@ -219,7 +228,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				SummaryPane:       history.summaryPaneSnapshot(),
 			})
 			retryInput := history.input(stablePrefix)
-			if droppedRounds == 0 && estimatePromptTokens(retryInput) >= estimatePromptTokens(input) {
+			if event.RoundsAbsorbed == 0 && estimatePromptTokens(retryInput) >= estimatePromptTokens(input) {
 				err = fmt.Errorf("context budget exhausted after overflow with no trim room: %w", err)
 			} else {
 				result, err = r.postStream(buildDecisionToolPayload(profile, retryInput, promptCacheKey), verbose)
@@ -233,7 +242,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				if stoppedReason == "" {
 					stoppedReason = fmt.Sprintf("upstream_request_failed: round_%d", round)
 				}
-				report, finalizeErr := r.finalizeRun(profile, duration, started, state, stablePrefix, history, roundLogs, stoppedReason, outDir, verbose)
+				report, finalizeErr := r.finalizeRun(profile, duration, started, state, stablePrefix, history, roundLogs, compactionEvents, stoppedReason, outDir, verbose)
 				if finalizeErr != nil {
 					return FinalReport{}, finalizeErr
 				}
@@ -438,22 +447,23 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 	}
 
-	report, err := r.finalizeRun(profile, duration, started, state, stablePrefix, history, roundLogs, stoppedReason, outDir, verbose)
+	report, err := r.finalizeRun(profile, duration, started, state, stablePrefix, history, roundLogs, compactionEvents, stoppedReason, outDir, verbose)
 	if err != nil {
 		return FinalReport{}, err
 	}
 	return report, nil
 }
 
-func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, stablePrefix string, history runHistory, roundLogs []RoundLog, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
+func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, stablePrefix string, history runHistory, roundLogs []RoundLog, compactionEvents []CompactionEvent, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
 	var acceptanceBroker *BrokerUsageLog
 	if len(roundLogs) > 0 && !strings.HasPrefix(stoppedReason, "upstream_request_failed:") && stoppedReason != "structured_decision_parse_failed" {
-		value, brokerLog, err := r.runAcceptance(profile, stablePrefix, history, roundLogs, verbose)
+		value, brokerLog, acceptanceEvents, err := r.runAcceptance(profile, stablePrefix, history, state, roundLogs, verbose)
+		compactionEvents = append(compactionEvents, acceptanceEvents...)
 		if err != nil {
 			stoppedReason = appendStopReason(stoppedReason, "acceptance_failed")
 			acceptance = fallbackAcceptance(roundLogs, stoppedReason)
-			report, finalizeErr := r.writeFinalReport(profile, duration, started, state, roundLogs, stoppedReason, acceptance, nil, outDir)
+			report, finalizeErr := r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, acceptance, nil, outDir)
 			if finalizeErr != nil {
 				return FinalReport{}, finalizeErr
 			}
@@ -462,10 +472,10 @@ func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, st
 		acceptance = value
 		acceptanceBroker = brokerLog
 	}
-	return r.writeFinalReport(profile, duration, started, state, roundLogs, stoppedReason, acceptance, acceptanceBroker, outDir)
+	return r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, acceptance, acceptanceBroker, outDir)
 }
 
-func (r *Runner) writeFinalReport(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, roundLogs []RoundLog, stoppedReason, acceptance string, acceptanceBroker *BrokerUsageLog, outDir string) (FinalReport, error) {
+func (r *Runner) writeFinalReport(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, history runHistory, roundLogs []RoundLog, compactionEvents []CompactionEvent, stoppedReason, acceptance string, acceptanceBroker *BrokerUsageLog, outDir string) (FinalReport, error) {
 	if err := r.closeRunHistoryGroup(profile, state, time.Now().UTC(), stoppedReason, len(roundLogs)); err != nil {
 		return FinalReport{}, fmt.Errorf("close run history group: %w", err)
 	}
@@ -481,6 +491,8 @@ func (r *Runner) writeFinalReport(profile ResidentProfile, duration time.Duratio
 		AcceptanceBroker: acceptanceBroker,
 		RoundLogs:        roundLogs,
 		StoppedReason:    stoppedReason,
+		SummaryPane:      history.summaryPaneSnapshot(),
+		CompactionEvents: append([]CompactionEvent(nil), compactionEvents...),
 	}
 
 	if err := r.reports.Write(outDir, started, report); err != nil {
@@ -1028,6 +1040,13 @@ func preflightResponseID(base string, measuredPromptTokens int) string {
 	return base + "_measured_prompt"
 }
 
+func shouldCompactBeforeModel(history runHistory, measuredPromptTokens int, model string) bool {
+	if history.recentRounds > history.recentRoundWindowLimit() {
+		return true
+	}
+	return measuredPromptTokens > modelContextTriggerTokens(model)
+}
+
 func preflightActivity(state loopState) tokenledger.ActivityType {
 	if state.LastDecision == nil {
 		return tokenledger.ActivityNormalWork
@@ -1096,7 +1115,12 @@ func minDuration(a, b time.Duration) time.Duration {
 	return b
 }
 
-func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, history runHistory, rounds []RoundLog, verbose bool) (string, *BrokerUsageLog, error) {
+func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, history runHistory, state loopState, rounds []RoundLog, verbose bool) (string, *BrokerUsageLog, []CompactionEvent, error) {
+	events := []CompactionEvent{}
+	if history.recentRounds > 3 {
+		event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerAcceptanceMicro, "final acceptance keeps only the most recent 3 rounds verbatim", 3, len(rounds), verbose)
+		events = append(events, event)
+	}
 	acceptanceInput := history.input(stablePrefix)
 	acceptanceInput = append(acceptanceInput, openai.Message{
 		Role: "user",
@@ -1119,13 +1143,51 @@ func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, his
 		Store:           false,
 	}, verbose)
 	if err != nil {
-		return "", nil, fmt.Errorf("acceptance request failed: %w", err)
+		if openai.IsContextOverflowError(err) {
+			dropped := history.silentTrimRecentRounds(3)
+			events = append(events, CompactionEvent{
+				CompactionID:   fmt.Sprintf("compact-%s-%s", profile.Name, time.Now().UTC().Format("20060102T150405.000000000Z")),
+				RunID:          state.RunGroupID,
+				Resident:       profile.Name,
+				OccurredAt:     time.Now().UTC().Format(time.RFC3339),
+				TriggerReason:  CompactionTriggerAcceptanceMicro,
+				TriggerDetail:  "acceptance overflow fallback silent trim",
+				TokensBefore:   estimatePromptTokens(acceptanceInput),
+				TokensAfter:    estimatePromptTokens(history.input(stablePrefix)),
+				RoundsAbsorbed: dropped,
+				Outcome:        CompactionOutcomeSilentTrim,
+			})
+			acceptanceInput = history.input(stablePrefix)
+			acceptanceInput = append(acceptanceInput, openai.Message{
+				Role: "user",
+				Content: strings.Join([]string{
+					"[acceptance_request]",
+					"现在停止行动。不要再做下一次决策。不要输出任何 command、JSON、schema 或 decision summary。",
+					"只写最终纯文本验收报告。",
+					"严格基于本次运行的 transcript 和已观察事实。",
+					"最近轮次回顾：",
+					renderAcceptanceRoundRecap(rounds),
+				}, "\n"),
+			})
+			result, err = r.postStream(openai.RequestPayload{
+				Model:           profile.Model,
+				Instructions:    acceptanceInstructions(),
+				PromptCacheKey:  fmt.Sprintf("arena-newborn-acceptance-%s-v2", profile.Name),
+				Input:           acceptanceInput,
+				MaxOutputTokens: 220,
+				Stream:          true,
+				Store:           false,
+			}, verbose)
+		}
+		if err != nil {
+			return "", nil, events, fmt.Errorf("acceptance request failed: %w", err)
+		}
 	}
 	brokerLog, err := r.budget.Settle(profile, result, time.Now().UTC(), runtimeguard.CallKindAcceptance, tokenledger.ActivityLightWork)
 	if err != nil {
-		return "", nil, fmt.Errorf("acceptance broker settlement failed: %w", err)
+		return "", nil, events, fmt.Errorf("acceptance broker settlement failed: %w", err)
 	}
-	return normalizeAcceptance(result.OutputText), brokerLog, nil
+	return normalizeAcceptance(result.OutputText), brokerLog, events, nil
 }
 
 func renderAcceptanceRoundRecap(rounds []RoundLog) string {

@@ -927,6 +927,21 @@ func TestRunnerRetriesOnceAfterContextOverflowWithSilentTrim(t *testing.T) {
 				Request:    r,
 			}, nil
 		case 4:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body: io.NopCloser(strings.NewReader(renderSSECompleted(t, map[string]any{
+					"id":          "resp-compaction",
+					"output_text": "我确认过两个事实，现在可以收住这轮。",
+					"usage": map[string]any{
+						"input_tokens":  60,
+						"cached_tokens": 40,
+						"output_tokens": 12,
+					},
+				}))),
+				Request: r,
+			}, nil
+		case 5:
 			contextRetrySeen = true
 			if len(payload.Input) >= 8 {
 				t.Fatalf("expected retry input to be trimmed, got %d messages", len(payload.Input))
@@ -948,7 +963,7 @@ func TestRunnerRetriesOnceAfterContextOverflowWithSilentTrim(t *testing.T) {
 				}))),
 				Request: r,
 			}, nil
-		case 5:
+		case 6:
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Header:     header,
@@ -978,7 +993,7 @@ func TestRunnerRetriesOnceAfterContextOverflowWithSilentTrim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if !contextRetrySeen || requests != 5 {
+	if !contextRetrySeen || requests != 6 {
 		t.Fatalf("expected one context overflow retry and acceptance, requests=%d retry=%v", requests, contextRetrySeen)
 	}
 	if report.Rounds != 3 || report.StoppedReason != "resident_noop" {

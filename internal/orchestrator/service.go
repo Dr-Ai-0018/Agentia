@@ -205,6 +205,10 @@ func New(app *broker.App, client *http.Client, baseURL, apiKey string) *Service 
 	}
 }
 
+func (s *Service) SetStateRootForTest(root string) {
+	s.stateRoot = strings.TrimSpace(root)
+}
+
 func ParseResidentRoster(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))

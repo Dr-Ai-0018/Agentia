@@ -182,6 +182,41 @@ type SummaryPane struct {
 	EvidenceRefs   []SummaryPaneEvidenceRef `json:"evidence_refs,omitempty"`
 }
 
+type CompactionTriggerReason string
+
+const (
+	CompactionTriggerPreflightMeasured CompactionTriggerReason = "preflight_measured"
+	CompactionTriggerAcceptanceMicro   CompactionTriggerReason = "acceptance_microcompact"
+	CompactionTriggerReactiveOverflow  CompactionTriggerReason = "reactive_overflow"
+	CompactionTriggerManual            CompactionTriggerReason = "manual"
+)
+
+type CompactionOutcome string
+
+const (
+	CompactionOutcomeSummarized    CompactionOutcome = "summarized"
+	CompactionOutcomeSilentTrim    CompactionOutcome = "silent_trim"
+	CompactionOutcomeGuardRejected CompactionOutcome = "guard_rejected"
+	CompactionOutcomeFailed        CompactionOutcome = "failed"
+)
+
+type CompactionEvent struct {
+	CompactionID                   string                  `json:"compaction_id"`
+	RunID                          string                  `json:"run_id,omitempty"`
+	Resident                       string                  `json:"resident"`
+	OccurredAt                     string                  `json:"occurred_at"`
+	TriggerReason                  CompactionTriggerReason `json:"trigger_reason"`
+	TriggerDetail                  string                  `json:"trigger_detail,omitempty"`
+	TokensBefore                   int                     `json:"tokens_before"`
+	TokensAfter                    int                     `json:"tokens_after"`
+	RoundsAbsorbed                 int                     `json:"rounds_absorbed"`
+	SummaryPaneTokensAfter         int                     `json:"summary_pane_tokens_after"`
+	Outcome                        CompactionOutcome       `json:"outcome"`
+	GuardRejectedSample            string                  `json:"guard_rejected_sample,omitempty"`
+	DurationMs                     int                     `json:"duration_ms"`
+	CachePrefixHitOnCompactionCall bool                    `json:"cache_prefix_hit_on_compaction_call"`
+}
+
 type RoundLog struct {
 	Round        int             `json:"round"`
 	RemainingSec int             `json:"remaining_sec"`
@@ -223,16 +258,18 @@ type RunOptions struct {
 }
 
 type FinalReport struct {
-	Resident         string          `json:"resident"`
-	Model            string          `json:"model"`
-	DurationSeconds  int             `json:"duration_seconds"`
-	Rounds           int             `json:"rounds"`
-	StartedAt        string          `json:"started_at"`
-	EndedAt          string          `json:"ended_at"`
-	Acceptance       string          `json:"acceptance"`
-	AcceptanceBroker *BrokerUsageLog `json:"acceptance_broker,omitempty"`
-	RoundLogs        []RoundLog      `json:"round_logs"`
-	StoppedReason    string          `json:"stopped_reason,omitempty"`
+	Resident         string            `json:"resident"`
+	Model            string            `json:"model"`
+	DurationSeconds  int               `json:"duration_seconds"`
+	Rounds           int               `json:"rounds"`
+	StartedAt        string            `json:"started_at"`
+	EndedAt          string            `json:"ended_at"`
+	Acceptance       string            `json:"acceptance"`
+	AcceptanceBroker *BrokerUsageLog   `json:"acceptance_broker,omitempty"`
+	RoundLogs        []RoundLog        `json:"round_logs"`
+	StoppedReason    string            `json:"stopped_reason,omitempty"`
+	SummaryPane      *SummaryPane      `json:"summary_pane,omitempty"`
+	CompactionEvents []CompactionEvent `json:"compaction_events,omitempty"`
 }
 
 type PartialRunError struct {

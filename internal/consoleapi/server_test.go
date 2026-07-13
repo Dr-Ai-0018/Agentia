@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"ai-arena/internal/orchestrator"
+	"ai-arena/internal/runtime/newborn"
 	"ai-arena/internal/worldstate"
 )
 
@@ -164,6 +168,109 @@ func TestPreflightReportsAccessWarnings(t *testing.T) {
 	}
 	if out.Overall != "watch" {
 		t.Fatalf("overall = %q, want watch", out.Overall)
+	}
+}
+
+func TestCompactionDiagnosticsRouteAggregatesRunReports(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	server := New(Options{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	server.orchestrator = orchestrator.New(server.broker, &http.Client{}, "", "")
+	server.orchestrator.SetStateRootForTest(filepath.Join(root, "orchestrator-runs"))
+	runID := "orchestrator-20260713T100000.000000000Z"
+	runDir := filepath.Join(root, "orchestrator-runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	status := orchestrator.RunStatus{
+		RunID:     runID,
+		Status:    "finished",
+		Mode:      orchestrator.RunModeParallel,
+		StartedAt: "2026-07-13T10:00:00Z",
+		UpdatedAt: "2026-07-13T10:15:00Z",
+		Residents: []orchestrator.ResidentRunStatus{{
+			Resident:  "jade",
+			Status:    "finished",
+			UpdatedAt: "2026-07-13T10:15:00Z",
+		}},
+	}
+	summary := orchestrator.RunSummary{
+		RunID:     runID,
+		StartedAt: "2026-07-13T10:00:00Z",
+		Mode:      orchestrator.RunModeParallel,
+		Contract: orchestrator.RunContract{
+			RunID:   runID,
+			Mode:    orchestrator.RunModeParallel,
+			Purpose: "long-context-smoke",
+		},
+		Runs: []orchestrator.ResidentRun{{
+			Resident: "jade",
+			Status:   "ok",
+			Report: &newborn.FinalReport{
+				Resident:  "jade",
+				StartedAt: "2026-07-13T10:00:01Z",
+				SummaryPane: &newborn.SummaryPane{
+					ApproxTokens: 42,
+				},
+				CompactionEvents: []newborn.CompactionEvent{{
+					CompactionID:                   "compact-jade-1",
+					RunID:                          runID,
+					Resident:                       "jade",
+					OccurredAt:                     "2026-07-13T10:04:00Z",
+					TriggerReason:                  newborn.CompactionTriggerPreflightMeasured,
+					TriggerDetail:                  "measured prompt",
+					TokensBefore:                   200000,
+					TokensAfter:                    90000,
+					RoundsAbsorbed:                 12,
+					SummaryPaneTokensAfter:         42,
+					Outcome:                        newborn.CompactionOutcomeSummarized,
+					DurationMs:                     1200,
+					CachePrefixHitOnCompactionCall: true,
+				}},
+			},
+		}},
+	}
+	writeTestJSON(t, filepath.Join(runDir, "run-status.json"), status)
+	writeTestJSON(t, filepath.Join(runDir, "summary.json"), summary)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/diagnostics/compaction", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var out CompactionDiagnosticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode diagnostics: %v", err)
+	}
+	if out.GeneratedAt != now.Format(time.RFC3339) {
+		t.Fatalf("generatedAt = %q", out.GeneratedAt)
+	}
+	if len(out.Runs) != 1 || out.Runs[0].RunID != runID || out.Runs[0].Resident != "jade" {
+		t.Fatalf("unexpected run diagnostics: %#v", out.Runs)
+	}
+	if out.Runs[0].TriggerBreakdown["preflight_measured"] != 1 || out.Runs[0].OutcomeBreakdown["summarized"] != 1 {
+		t.Fatalf("unexpected breakdown: %#v %#v", out.Runs[0].TriggerBreakdown, out.Runs[0].OutcomeBreakdown)
+	}
+	if out.Runs[0].CacheHitRateOnCompactionCall != 1 || out.Runs[0].LatestSummaryPaneTokens != 42 {
+		t.Fatalf("unexpected run metrics: %#v", out.Runs[0])
+	}
+	if len(out.RecentEvents) != 1 || out.RecentEvents[0].CompactionID != "compact-jade-1" || out.RecentEvents[0].TokensAfter != 90000 {
+		t.Fatalf("unexpected events: %#v", out.RecentEvents)
+	}
+}
+
+func writeTestJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	raw, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal test json: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 

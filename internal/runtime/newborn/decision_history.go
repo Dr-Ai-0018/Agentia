@@ -3,6 +3,7 @@ package newborn
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"ai-arena/internal/context"
 	"ai-arena/internal/openai"
@@ -101,6 +102,67 @@ func (h *runHistory) silentTrimRecentRounds(limit int) int {
 	return roundsDropped
 }
 
+func (h runHistory) compactionSegment(roundsToAbsorb int) runHistory {
+	if roundsToAbsorb <= 0 {
+		roundsToAbsorb = 1
+	}
+	if roundsToAbsorb > h.recentRounds {
+		roundsToAbsorb = h.recentRounds
+	}
+	messages := roundsToAbsorb * 3
+	if messages > len(h.recent) {
+		messages = len(h.recent)
+	}
+	return runHistory{
+		preamble:         append([]openai.Message(nil), h.preamble...),
+		summaryPane:      h.summaryPaneSnapshot(),
+		recent:           append([]openai.Message(nil), h.recent[:messages]...),
+		recentRounds:     roundsToAbsorb,
+		recentRoundLimit: h.recentRoundLimit,
+	}
+}
+
+func (h *runHistory) installSummaryPane(text string, now time.Time, absorbedRounds, absorbedStart, absorbedEnd int) {
+	if absorbedRounds <= 0 {
+		return
+	}
+	previousText := ""
+	previousRounds := 0
+	evidence := []SummaryPaneEvidenceRef{}
+	if h.summaryPane != nil {
+		previousText = strings.TrimSpace(h.summaryPane.Text)
+		previousRounds = h.summaryPane.RoundsAbsorbed
+		evidence = append(evidence, h.summaryPane.EvidenceRefs...)
+	}
+	text = strings.TrimSpace(text)
+	if previousText != "" {
+		text = strings.TrimSpace(previousText + "\n\n" + text)
+	}
+	if absorbedStart > 0 && absorbedEnd >= absorbedStart {
+		evidence = append(evidence, SummaryPaneEvidenceRef{
+			Kind:   "round",
+			Ref:    fmt.Sprintf("rounds_%d_%d", absorbedStart, absorbedEnd),
+			Rounds: intRange(absorbedStart, absorbedEnd),
+		})
+	}
+	h.summaryPane = &SummaryPane{
+		Text:           text,
+		UpdatedAt:      now.Format(time.RFC3339),
+		RoundsAbsorbed: previousRounds + absorbedRounds,
+		ApproxTokens:   estimateTextTokens(text),
+		EvidenceRefs:   evidence,
+	}
+	messagesToDrop := absorbedRounds * 3
+	if messagesToDrop > len(h.recent) {
+		messagesToDrop = len(h.recent)
+	}
+	h.recent = append([]openai.Message(nil), h.recent[messagesToDrop:]...)
+	h.recentRounds -= absorbedRounds
+	if h.recentRounds < 0 {
+		h.recentRounds = 0
+	}
+}
+
 func estimatePromptTokens(input []openai.Message) int {
 	bytes := 0
 	for _, msg := range input {
@@ -112,6 +174,21 @@ func estimatePromptTokens(input []openai.Message) int {
 	base := (bytes + 3) / 4
 	base += len(input) * 4
 	return inflateInt(base, 1.15)
+}
+
+func estimateTextTokens(text string) int {
+	return estimatePromptTokens([]openai.Message{{Role: "user", Content: text}})
+}
+
+func intRange(start, end int) []int {
+	if end < start {
+		return nil
+	}
+	out := make([]int, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		out = append(out, i)
+	}
+	return out
 }
 
 func summaryPaneHistoryMessage(pane *SummaryPane) (openai.Message, bool) {
