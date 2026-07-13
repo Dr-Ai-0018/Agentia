@@ -9,6 +9,7 @@ import (
 )
 
 const compactionMaxOutputTokens = 900
+const compactionCallTimeout = 60 * time.Second
 
 func (r *Runner) compactHistory(profile ResidentProfile, stablePrefix string, history *runHistory, state loopState, trigger CompactionTriggerReason, triggerDetail string, keepRecentRounds int, completedRounds int, verbose bool) CompactionEvent {
 	started := time.Now().UTC()
@@ -39,7 +40,7 @@ func (r *Runner) compactHistory(profile ResidentProfile, stablePrefix string, hi
 
 	segment := history.compactionSegment(roundsToAbsorb)
 	input := buildCompactionPromptInput(stablePrefix, segment, state.LastSleepDepth)
-	result, err := r.postStream(openai.RequestPayload{
+	result, err := r.postStreamWithTimeout(openai.RequestPayload{
 		Model:           profile.Model,
 		Instructions:    "只写便条正文，保持第一人称、自然、具体。不要解释规则。",
 		PromptCacheKey:  fmt.Sprintf("arena-inner-continuity-%s-v1", profile.Name),
@@ -47,7 +48,7 @@ func (r *Runner) compactHistory(profile ResidentProfile, stablePrefix string, hi
 		MaxOutputTokens: compactionMaxOutputTokens,
 		Stream:          true,
 		Store:           false,
-	}, verbose)
+	}, verbose, compactionCallTimeout)
 	event.DurationMs = int(time.Since(started).Milliseconds())
 	if err != nil {
 		event.Outcome = CompactionOutcomeFailed

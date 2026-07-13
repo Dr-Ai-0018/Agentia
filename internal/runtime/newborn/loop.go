@@ -79,6 +79,24 @@ func (r *Runner) postStream(payload openai.RequestPayload, verbose bool) (openai
 	return openai.PostStream(r.client, r.baseURL, r.apiKey, payload, verbose)
 }
 
+func (r *Runner) postStreamWithTimeout(payload openai.RequestPayload, verbose bool, timeout time.Duration) (openai.StreamResult, error) {
+	if timeout <= 0 {
+		return r.postStream(payload, verbose)
+	}
+	client := &http.Client{Timeout: timeout}
+	if r.client != nil {
+		copyClient := *r.client
+		if copyClient.Timeout == 0 || copyClient.Timeout > timeout {
+			copyClient.Timeout = timeout
+		}
+		client = &copyClient
+	}
+	if len(r.endpoints) > 0 {
+		return openai.PostStreamWithFailover(client, r.endpoints, payload, verbose)
+	}
+	return openai.PostStream(client, r.baseURL, r.apiKey, payload, verbose)
+}
+
 func (r *Runner) SetProgressSink(fn func(ProgressEvent)) {
 	r.progress = fn
 }
