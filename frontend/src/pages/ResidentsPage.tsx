@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Sparkline } from "../components/charts/Sparkline";
 import { dataMode } from "../lib/api/client";
+import { useDevMode } from "../lib/devMode";
 import { eventStream } from "../data/mockConsole";
 import {
   describeDoing,
@@ -14,6 +15,7 @@ import {
   sleepDepthLabel,
   verbLabel,
 } from "../features/residents/residentSpeak";
+import { SummaryPane } from "../features/residents/SummaryPane";
 import { residentLabel } from "../features/residents/residentTheme";
 import type { OperatorTelemetry, ResidentBudget, ResidentId, ResidentRuntime } from "../types/domain";
 
@@ -63,6 +65,7 @@ export function ResidentsPage({ telemetry }: { telemetry: OperatorTelemetry }) {
 
 function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget: ResidentBudget }) {
   const [showDebug, setShowDebug] = useState(false);
+  const [devMode] = useDevMode();
   const state = residentStateLabel(runtime.status);
   const doing = describeDoing(runtime);
   const burn = budget.sixHourBurn ?? sparkFallback[runtime.resident] ?? [15, 18, 22, 20, 24, 22, 26];
@@ -189,6 +192,16 @@ function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget:
           <p className="action-log__empty">这一小段时间还没落笔。</p>
         )}
       </section>
+
+      {devMode && runtime.summaryPane ? (
+        <section className="resident-section resident-section--dev">
+          <div className="section-title">
+            <h3>旧事梳理</h3>
+            <span className="section-title__hint">只在开发模式显示</span>
+          </div>
+          <SummaryPane pane={runtime.summaryPane} />
+        </section>
+      ) : null}
 
       <section className="resident-section resident-section--debug">
         <button

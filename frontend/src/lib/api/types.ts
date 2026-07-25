@@ -1,5 +1,6 @@
 import type {
   AlertItem,
+  CompactionDiagnostics,
   FollowupItem,
   OperatorTelemetry,
   PreflightResponse,
@@ -21,4 +22,5 @@ export interface ArenaConsoleApi {
   sendWorldChatReply(input: WorldChatReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
   sendWorldTicketReply(input: WorldTicketReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
   getPreflight(): Promise<PreflightResponse>;
+  getCompactionDiagnostics(): Promise<CompactionDiagnostics>;
 }

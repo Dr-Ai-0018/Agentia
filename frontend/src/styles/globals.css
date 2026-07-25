@@ -2194,3 +2194,549 @@ button {
     flex-direction: column;
   }
 }
+
+/* Compaction diagnostics panel — operator debug surface for the long-context
+   compaction mechanism. Residents never see this; nav is under "调试" section. */
+
+.diagnostics-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 1200px;
+}
+
+.diagnostics-hero {
+  margin-bottom: 4px;
+}
+
+.diagnostics-hero__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.diagnostics-hero__title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin: 0 0 4px;
+}
+
+.diagnostics-hero__sub {
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+  max-width: 720px;
+}
+
+.diagnostics-hero__anchor {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 8px 0 0;
+  border-left: 2px solid var(--border-default);
+  padding-left: 10px;
+}
+
+.diagnostics-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.diagnostics-refresh:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.diagnostics-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.diagnostics-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--text-primary);
+  border-radius: var(--radius-panel);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.diagnostics-error__hint {
+  color: var(--text-muted);
+}
+
+.diagnostics-loading {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.diagnostics-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.diagnostics-run-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.diagnostics-run-card {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.diagnostics-run-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diagnostics-run-card__resident {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.diagnostics-run-card__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.diagnostics-run-card__label {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 2px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+
+.diagnostics-run-card__count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.diagnostics-run-card__count-num {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.diagnostics-run-card__count-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.diagnostics-run-card__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.diagnostics-run-card__row-label {
+  color: var(--text-muted);
+  min-width: 60px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.diagnostics-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diagnostics-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.diagnostics-pill--ok {
+  border-color: rgba(16, 185, 129, 0.32);
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--text-primary);
+}
+
+.diagnostics-pill--info {
+  border-color: rgba(59, 130, 246, 0.32);
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--text-primary);
+}
+
+.diagnostics-pill--warn {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--text-primary);
+}
+
+.diagnostics-run-card__stats {
+  margin: 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.diagnostics-run-card__stats > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.diagnostics-run-card__stats dt {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.diagnostics-run-card__stats dd {
+  color: var(--text-primary);
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+}
+
+.diagnostics-run-card__delta {
+  color: var(--text-muted);
+  font-family: inherit;
+}
+
+.diagnostics-run-card__cache {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.diagnostics-run-card__cache--ok {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--text-primary);
+}
+
+.diagnostics-run-card__cache--info {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--text-primary);
+}
+
+.diagnostics-run-card__cache--warn {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--text-primary);
+}
+
+.diagnostics-table-wrap {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+  overflow-x: auto;
+}
+
+.diagnostics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.diagnostics-table thead th {
+  text-align: left;
+  padding: 10px 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.diagnostics-table tbody td {
+  padding: 8px 12px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.diagnostics-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.diagnostics-table-row--warn td {
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.diagnostics-table__time,
+.diagnostics-table__nums {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  white-space: nowrap;
+}
+
+.diagnostics-table__delta {
+  color: var(--text-muted);
+}
+
+.diagnostics-resident-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diagnostics-table-detail td {
+  padding: 4px 12px 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.diagnostics-table-detail__label {
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+
+.diagnostics-table-detail__sep {
+  color: var(--text-muted);
+}
+
+.diagnostics-table-detail__guard {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-primary);
+}
+
+.diagnostics-cache-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.diagnostics-cache-badge--hit {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--text-primary);
+}
+
+.diagnostics-cache-badge--miss {
+  background: rgba(245, 158, 11, 0.14);
+  color: var(--text-primary);
+}
+
+.diagnostics-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-panel);
+  font-size: 13px;
+}
+
+/* SummaryPane — operator-only display of the older-round continuity
+   pane, gated by useDevMode() and mounted inside ResidentsPage. Residents
+   never see this. Voice-wise: reads like her own inner retrospection prose. */
+
+.resident-section--dev {
+  border-left: 3px solid var(--border-default);
+  padding-left: 12px;
+  margin-left: -12px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.02), transparent 40%);
+}
+
+.summary-pane {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.summary-pane__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+}
+
+.summary-pane__head[aria-expanded="false"] {
+  border-bottom: none;
+}
+
+.summary-pane__caret {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  color: var(--text-muted);
+  width: 10px;
+  display: inline-block;
+}
+
+.summary-pane__title {
+  font-weight: 600;
+}
+
+.summary-pane__meta {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+
+.summary-pane__body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.summary-pane__text {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.7;
+  font-style: italic;
+  border-left: 2px solid var(--border-default);
+  padding-left: 12px;
+}
+
+.summary-pane__refs {
+  border-top: 1px dashed var(--border-subtle);
+  padding-top: 10px;
+}
+
+.summary-pane__refs-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.summary-pane__refs-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.summary-pane__refs-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.summary-pane__ref-kind {
+  color: var(--text-muted);
+  font-size: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 0 5px;
+  flex-shrink: 0;
+  min-width: 46px;
+  text-align: center;
+}
+
+.summary-pane__ref-body {
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 12px;
+}
+
+.summary-pane__ref-body code {
+  font-family: inherit;
+  font-size: inherit;
+  background: transparent;
+}
+
+.summary-pane__ref-rounds {
+  color: var(--text-muted);
+}
+
+.summary-pane__caveat {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-subtle);
+}
+
+/* Dev-mode toggle in SettingsPage. */
+.dev-mode-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-panel);
+  background: var(--bg-panel);
+  cursor: pointer;
+}
+
+.dev-mode-toggle input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
+.dev-mode-toggle__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.dev-mode-toggle__hint {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}

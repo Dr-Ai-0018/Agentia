@@ -66,6 +66,24 @@ export interface ResidentRuntime {
   totalCachedTokens: number;
   totalOutputTokens: number;
   sleepUntil?: string;
+  summaryPane?: SummaryPane;
+}
+
+// SummaryPane is operator-only long-run continuity data. Text is
+// resident-voice retrospection prose; residents themselves never see this
+// field.
+export interface SummaryPaneEvidenceRef {
+  kind: "round" | "note" | "guest_artifact";
+  ref: string;
+  rounds?: number[];
+}
+
+export interface SummaryPane {
+  text: string;
+  updatedAt: string;
+  roundsAbsorbed: number;
+  approxTokens: number;
+  evidenceRefs?: SummaryPaneEvidenceRef[];
 }
 
 // ResidentBudget carries the observation surface for a single resident.
@@ -217,6 +235,58 @@ export interface WorldTicketReplyRequest {
   body: string;
   close: boolean;
   boundary_ack: true;
+}
+
+// Compaction diagnostics types are operator-only long-run continuity data.
+// Residents never see any of this; the console panel reads these fields.
+export type CompactionTriggerReason =
+  | "preflight_measured"
+  | "acceptance_microcompact"
+  | "reactive_overflow"
+  | "manual";
+
+export type CompactionOutcome =
+  | "summarized"
+  | "silent_trim"
+  | "guard_rejected"
+  | "failed";
+
+export interface CompactionEvent {
+  compactionId: string;
+  runId: string;
+  resident: ResidentId;
+  occurredAt: string;
+  triggerReason: CompactionTriggerReason;
+  triggerDetail?: string;
+  tokensBefore: number;
+  tokensAfter: number;
+  roundsAbsorbed: number;
+  summaryPaneTokensAfter: number;
+  outcome: CompactionOutcome;
+  guardRejectedSample?: string;
+  durationMs: number;
+  cachePrefixHitOnCompactionCall: boolean;
+}
+
+export interface CompactionRunSummary {
+  runId: string;
+  runLabel?: string;
+  runStartedAt: string;
+  resident: ResidentId;
+  totalCompactions: number;
+  triggerBreakdown: Record<CompactionTriggerReason, number>;
+  outcomeBreakdown: Record<CompactionOutcome, number>;
+  totalTokensBefore: number;
+  totalTokensAfter: number;
+  cacheHitRateOnCompactionCall: number;
+  latestSummaryPaneTokens: number;
+  currentContextWindowTokens: number;
+}
+
+export interface CompactionDiagnostics {
+  generatedAt: string;
+  runs: CompactionRunSummary[];
+  recentEvents: CompactionEvent[];
 }
 
 // Compile-time guard: proves a props type P has no keys overlapping with

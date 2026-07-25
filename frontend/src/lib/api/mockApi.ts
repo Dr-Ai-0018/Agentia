@@ -1,3 +1,4 @@
+import { mockCompactionDiagnostics } from "../../data/mockCompaction";
 import { mockPreflight, telemetry, threads } from "../../data/mockConsole";
 import type { ResidentId } from "../../types/domain";
 import type { ArenaConsoleApi } from "./types";
@@ -55,5 +56,10 @@ export class MockArenaConsoleApi implements ArenaConsoleApi {
   async getPreflight() {
     await wait();
     return mockPreflight;
+  }
+
+  async getCompactionDiagnostics() {
+    await wait();
+    return mockCompactionDiagnostics;
   }
 }

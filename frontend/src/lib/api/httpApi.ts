@@ -12,6 +12,8 @@ import type {
   ResidentRuntime,
   RunRecord,
   RunStatus,
+  SummaryPane,
+  SummaryPaneEvidenceRef,
   WorldChatReplyRequest,
   WorldMessage,
   WorldTicketReplyRequest,
@@ -67,6 +69,21 @@ type ApiResidentRunStatus = {
   total_input_tokens?: number;
   total_cached_tokens?: number;
   total_output_tokens?: number;
+  summary_pane?: ApiSummaryPane;
+};
+
+type ApiSummaryPaneEvidenceRef = {
+  kind?: string;
+  ref?: string;
+  rounds?: number[];
+};
+
+type ApiSummaryPane = {
+  text?: string;
+  updated_at?: string;
+  rounds_absorbed?: number;
+  approx_tokens?: number;
+  evidence_refs?: ApiSummaryPaneEvidenceRef[];
 };
 
 type ApiRunRecord = {
@@ -250,6 +267,14 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
   async getPreflight() {
     return parseJson(await fetch(this.url("/preflight")));
   }
+
+  async getCompactionDiagnostics() {
+    // Backend ships this at /api/diagnostics/compaction (codex 6e3c9da,
+    // handler in internal/consoleapi/compaction_diagnostics.go). JSON tags
+    // are camelCase already — shape is a 1:1 match with the frontend
+    // CompactionDiagnostics type, no normalize needed.
+    return parseJson(await fetch(this.url("/diagnostics/compaction")));
+  }
 }
 
 function normalizeSummary(input: ApiSummary): OperatorTelemetry {
@@ -345,8 +370,42 @@ function normalizeResidents(
       totalInputTokens: active?.total_input_tokens ?? 0,
       totalCachedTokens: active?.total_cached_tokens ?? 0,
       totalOutputTokens: active?.total_output_tokens ?? 0,
+      summaryPane: normalizeSummaryPane(active?.summary_pane),
     };
   });
+}
+
+function normalizeSummaryPane(input: ApiSummaryPane | undefined): SummaryPane | undefined {
+  if (!input || !input.text) return undefined;
+  return {
+    text: input.text,
+    updatedAt: input.updated_at ?? "",
+    roundsAbsorbed: input.rounds_absorbed ?? 0,
+    approxTokens: input.approx_tokens ?? 0,
+    evidenceRefs: normalizeEvidenceRefs(input.evidence_refs),
+  };
+}
+
+function normalizeEvidenceRefs(input: ApiSummaryPaneEvidenceRef[] | undefined): SummaryPaneEvidenceRef[] | undefined {
+  if (!input || input.length === 0) return undefined;
+  const refs = input
+    .map((raw): SummaryPaneEvidenceRef | null => {
+      if (!raw || !raw.ref) return null;
+      const kind = normalizeEvidenceKind(raw.kind);
+      if (!kind) return null;
+      return {
+        kind,
+        ref: raw.ref,
+        rounds: Array.isArray(raw.rounds) ? raw.rounds.filter((n) => typeof n === "number") : undefined,
+      };
+    })
+    .filter(Boolean) as SummaryPaneEvidenceRef[];
+  return refs.length > 0 ? refs : undefined;
+}
+
+function normalizeEvidenceKind(kind: string | undefined): SummaryPaneEvidenceRef["kind"] | null {
+  if (kind === "round" || kind === "note" || kind === "guest_artifact") return kind;
+  return null;
 }
 
 function normalizeBudget(input: ApiResidentBudget): ResidentBudget | null {

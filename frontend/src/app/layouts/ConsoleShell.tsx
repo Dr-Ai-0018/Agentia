@@ -1,8 +1,15 @@
-import { AlertTriangle, Clock, Grid, Home, MessageSquare, RefreshCw, Settings, Users } from "lucide-react";
+import { AlertTriangle, Clock, Grid, Home, Layers, MessageSquare, RefreshCw, Settings, Users } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { dataMode } from "../../lib/api/client";
 
-export type ConsolePage = "overview" | "residents" | "world-chat" | "runs" | "system" | "settings";
+export type ConsolePage =
+  | "overview"
+  | "residents"
+  | "world-chat"
+  | "runs"
+  | "system"
+  | "compaction-diagnostics"
+  | "settings";
 
 const navItems: Array<{ id: ConsolePage; label: string; icon: typeof Grid; badge?: number }> = [
   { id: "overview", label: "窗口", icon: Grid },
@@ -10,6 +17,7 @@ const navItems: Array<{ id: ConsolePage; label: string; icon: typeof Grid; badge
   { id: "world-chat", label: "对话", icon: MessageSquare, badge: 3 },
   { id: "runs", label: "起居", icon: Clock },
   { id: "system", label: "房子", icon: Home },
+  { id: "compaction-diagnostics", label: "梳理", icon: Layers },
   { id: "settings", label: "房务", icon: Settings },
 ];
 
@@ -19,6 +27,7 @@ const crumbs: Record<ConsolePage, { root: string; leaf: string }> = {
   "world-chat": { root: "观察", leaf: "对话" },
   runs: { root: "记录", leaf: "起居" },
   system: { root: "记录", leaf: "房子" },
+  "compaction-diagnostics": { root: "调试", leaf: "梳理" },
   settings: { root: "配置", leaf: "房务" },
 };
 

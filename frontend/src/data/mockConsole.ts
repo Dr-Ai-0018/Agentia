@@ -72,6 +72,19 @@ export const telemetry: OperatorTelemetry = {
       totalInputTokens: 8612400,
       totalCachedTokens: 7423100,
       totalOutputTokens: 284900,
+      summaryPane: {
+        text:
+          "今天早上处理完几个 ticket 之后就一直在盯新来的日志采集器，感觉那边节奏比之前想的密不少。中间跟 Amber 借了两次她那台 sandbox 跑几组小实验，结论我记在 note_2026_07_13_ingest.md 里了。下午有一小段特别累，我在椅子上打了个小盹、大概半小时。回来之后想的事就是要不要把周三 fail 的那个 case 挑出来单独看一遍，我记在 note_todo.md 最上面。",
+        updatedAt: "2026-07-13T13:52:41Z",
+        roundsAbsorbed: 42,
+        approxTokens: 6820,
+        evidenceRefs: [
+          { kind: "note", ref: "note_2026_07_13_ingest.md", rounds: [376, 377, 401] },
+          { kind: "note", ref: "note_todo.md", rounds: [415] },
+          { kind: "guest_artifact", ref: "logs/collector-check-20260713.txt", rounds: [388] },
+          { kind: "round", ref: "round-395", rounds: [395] },
+        ],
+      },
     },
     {
       resident: "amber",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ConsoleShell, type ConsolePage } from "./layouts/ConsoleShell";
 import { arenaApi } from "../lib/api/client";
+import { CompactionDiagnosticsPage } from "../pages/CompactionDiagnosticsPage";
 import { OverviewPage } from "../pages/OverviewPage";
 import { ResidentsPage } from "../pages/ResidentsPage";
 import { RunsPage } from "../pages/RunsPage";
@@ -80,6 +81,7 @@ export function App() {
       )}
       {page === "runs" && <RunsPage telemetry={telemetry} />}
       {page === "system" && <SystemPage telemetry={telemetry} />}
+      {page === "compaction-diagnostics" && <CompactionDiagnosticsPage />}
       {page === "settings" && <SettingsPage />}
     </ConsoleShell>
   );

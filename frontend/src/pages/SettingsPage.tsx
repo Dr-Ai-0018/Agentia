@@ -1,10 +1,12 @@
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { dataMode } from "../lib/api/client";
+import { useDevMode } from "../lib/devMode";
 
 export function SettingsPage() {
   const isMock = dataMode === "mock";
   const apiBase = import.meta.env.VITE_API_BASE_PATH ?? "/api";
   const frontendBase = import.meta.env.BASE_URL;
+  const [devMode, setDevMode] = useDevMode();
 
   return (
     <div className="settings-page">
@@ -70,6 +72,26 @@ export function SettingsPage() {
             <dd>关着——部署上永远关。</dd>
           </div>
         </dl>
+      </section>
+
+      <section className="settings-section">
+        <div className="section-title">
+          <h3>开发模式</h3>
+          <span className="section-title__hint">只在当前浏览器生效</span>
+        </div>
+        <label className="dev-mode-toggle">
+          <input
+            type="checkbox"
+            checked={devMode}
+            onChange={(event) => setDevMode(event.target.checked)}
+          />
+          <span className="dev-mode-toggle__body">
+            <strong>{devMode ? "开着" : "关着"}</strong>
+            <span className="dev-mode-toggle__hint">
+              打开后，住户页会多一块旧事梳理。它只给看守长跑的人看，不会进入世界里的对话。
+            </span>
+          </span>
+        </label>
       </section>
     </div>
   );
