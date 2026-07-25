@@ -88,20 +88,21 @@ func (b *BudgetController) Settle(profile ResidentProfile, result openai.StreamR
 		tokenledger.Penalties{},
 		activity,
 	)
-	resp, err := b.brokerApp.RunAdmitSpec(profile.Name, spec, true)
+	resp, err := b.brokerApp.RunSettleProviderSpec(profile.Name, spec)
 	if err != nil {
 		return nil, err
 	}
 
 	log := &BrokerUsageLog{
-		Applied:            resp.Applied,
-		Denied:             resp.Denied,
-		DeniedReason:       append([]string(nil), resp.DeniedReason...),
-		BeforeSpark:        resp.BeforeStatus.SparkBalance,
-		BeforeDebtActive:   resp.BeforeStatus.DebtActive,
-		PreparedSparkCost:  resp.Prepared.Cost.SparkCost,
-		PreparedStrainCost: resp.Prepared.Strain.Rounded,
-		Quota:              &resp.Quota,
+		Applied:              resp.Applied,
+		Denied:               resp.Denied,
+		DeniedReason:         append([]string(nil), resp.DeniedReason...),
+		ProviderCostRecorded: resp.ProviderCostRecorded,
+		BeforeSpark:          resp.BeforeStatus.SparkBalance,
+		BeforeDebtActive:     resp.BeforeStatus.DebtActive,
+		PreparedSparkCost:    resp.Prepared.Cost.SparkCost,
+		PreparedStrainCost:   resp.Prepared.Strain.Rounded,
+		Quota:                &resp.Quota,
 	}
 	if resp.ApplyResult != nil {
 		log.SparkDelta = resp.ApplyResult.SparkEntry.SparkDelta
@@ -116,4 +117,41 @@ func (b *BudgetController) Settle(profile ResidentProfile, result openai.StreamR
 		log.AfterStatus = resp.AfterStatus
 	}
 	return log, nil
+}
+
+func (b *BudgetController) RecordSystemProviderUsage(profile ResidentProfile, result openai.StreamResult, startedAt time.Time, eventKind brokerstate.QuotaEventKind, callKind, costClass string, activity tokenledger.ActivityType, metadata map[string]interface{}) (*BrokerUsageLog, error) {
+	finishedAt := startedAt.Add(4 * time.Second)
+	if finishedAt.Before(startedAt) {
+		finishedAt = startedAt
+	}
+	out, err := b.brokerApp.RunRecordProviderUsage(broker.ProviderUsageRecord{
+		ResidentID: profile.Name,
+		Kind:       eventKind,
+		CallKind:   callKind,
+		Usage: tokenledger.Usage{
+			InputTokens:  result.InputTokens,
+			CachedTokens: result.CachedTokens,
+			OutputTokens: result.OutputTokens,
+			TotalTokens:  result.InputTokens + result.OutputTokens,
+			Model:        profile.Model,
+			ResponseID:   result.ResponseID,
+			StartedAt:    startedAt,
+			FinishedAt:   finishedAt,
+		},
+		Penalties: tokenledger.Penalties{},
+		Activity:  activity,
+		CostClass: costClass,
+		Metadata:  metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &BrokerUsageLog{
+		Applied:              false,
+		ProviderCostRecorded: true,
+		CostClass:            costClass,
+		PreparedSparkCost:    out.Event.SparkCost,
+		PreparedStrainCost:   out.Event.StrainCost,
+		ApplyReason:          string(eventKind),
+	}, nil
 }

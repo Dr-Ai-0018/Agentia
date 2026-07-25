@@ -478,6 +478,22 @@ type CallSpec struct {
 	Activity  tokenledger.ActivityType
 }
 
+type ProviderUsageRecord struct {
+	ResidentID string
+	Kind       brokerstate.QuotaEventKind
+	CallKind   string
+	Usage      tokenledger.Usage
+	Penalties  tokenledger.Penalties
+	Activity   tokenledger.ActivityType
+	CostClass  string
+	Metadata   map[string]interface{}
+}
+
+type ProviderUsageRecordOutput struct {
+	Event     brokerstate.QuotaEvent `json:"event"`
+	EventPath string                 `json:"event_path"`
+}
+
 type App struct {
 	root                 string
 	cfg                  Config
@@ -977,6 +993,63 @@ func (a *App) RunAdmitSpec(residentID string, spec CallSpec, apply bool) (broker
 		Activity:   spec.Activity,
 		Apply:      apply,
 	})
+}
+
+func (a *App) RunSettleProviderSpec(residentID string, spec CallSpec) (brokerstate.AdmitResponse, error) {
+	return a.service(false).AdmitCall(brokerstate.AdmitRequest{
+		ResidentID:                 residentID,
+		Kind:                       spec.Kind,
+		Usage:                      spec.Usage,
+		Penalties:                  spec.Penalties,
+		Activity:                   spec.Activity,
+		Apply:                      true,
+		RecordProviderCostOnDenied: true,
+	})
+}
+
+func (a *App) RunRecordProviderUsage(record ProviderUsageRecord) (ProviderUsageRecordOutput, error) {
+	cost, err := tokenledger.ComputeCost(a.cfg.Runtime.TokenPolicy, record.Usage)
+	if err != nil {
+		return ProviderUsageRecordOutput{}, err
+	}
+	strain := tokenledger.ComputeStrain(a.cfg.Runtime.TokenPolicy, record.Usage, record.Penalties)
+	metadata := map[string]interface{}{}
+	for key, value := range record.Metadata {
+		metadata[key] = value
+	}
+	if strings.TrimSpace(record.CallKind) != "" {
+		metadata["call_kind"] = strings.TrimSpace(record.CallKind)
+	}
+	if strings.TrimSpace(record.CostClass) != "" {
+		metadata["cost_class"] = strings.TrimSpace(record.CostClass)
+	}
+	metadata["model"] = record.Usage.Model
+	metadata["activity"] = string(record.Activity)
+	metadata["input_tokens"] = record.Usage.InputTokens
+	metadata["cached_tokens"] = record.Usage.CachedTokens
+	metadata["output_tokens"] = record.Usage.OutputTokens
+	metadata["total_usd"] = cost.TotalUSD
+	metadata["spark_per_usd"] = cost.SparkPerUSD
+
+	finishedAt := record.Usage.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	event := brokerstate.QuotaEvent{
+		ResidentID: record.ResidentID,
+		Kind:       record.Kind,
+		ResponseID: record.Usage.ResponseID,
+		Action:     string(record.Activity),
+		StrainCost: strain.Rounded,
+		SparkCost:  cost.SparkCost,
+		CreatedAt:  finishedAt,
+		Metadata:   metadata,
+	}
+	path, err := brokerstate.New(join(a.root, "brokerstate")).AppendQuotaEvent(event)
+	if err != nil {
+		return ProviderUsageRecordOutput{}, err
+	}
+	return ProviderUsageRecordOutput{Event: event, EventPath: path}, nil
 }
 
 func SpecFromUsage(kind runtimeguard.CallKind, usage tokenledger.Usage, penalties tokenledger.Penalties, activity tokenledger.ActivityType) CallSpec {

@@ -16,6 +16,8 @@ const (
 	QuotaEventWorkCall         QuotaEventKind = "work_call"
 	QuotaEventAcceptanceCall   QuotaEventKind = "acceptance_call"
 	QuotaEventFinalNotice      QuotaEventKind = "final_notice"
+	QuotaEventProviderDenied   QuotaEventKind = "provider_usage_denied"
+	QuotaEventCompactionCall   QuotaEventKind = "compaction_call"
 	QuotaEventTestAllowance    QuotaEventKind = "test_allowance"
 	QuotaEventManualAdjustment QuotaEventKind = "manual_adjustment"
 )

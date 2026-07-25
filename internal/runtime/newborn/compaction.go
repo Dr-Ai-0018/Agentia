@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"ai-arena/internal/brokerstate"
 	"ai-arena/internal/openai"
+	"ai-arena/internal/tokenledger"
 )
 
 const compactionMaxOutputTokens = 900
@@ -59,6 +61,19 @@ func (r *Runner) compactHistory(profile ResidentProfile, stablePrefix string, hi
 		return event
 	}
 	event.CachePrefixHitOnCompactionCall = result.CachedTokens > 0
+	providerUsage, err := r.budget.RecordSystemProviderUsage(profile, result, started, brokerstate.QuotaEventCompactionCall, "compaction", "continuity_system", tokenledger.ActivityLightWork, map[string]interface{}{
+		"trigger_reason": string(trigger),
+		"trigger_detail": triggerDetail,
+	})
+	if err != nil {
+		log.Printf("runtime_compaction_provider_usage_record_failed resident=%s run_id=%s trigger=%s err=%v", profile.Name, state.RunGroupID, trigger, err)
+		event.Outcome = CompactionOutcomeFailed
+		dropped := history.silentTrimRecentRounds(keepRecentRounds)
+		event.RoundsAbsorbed = dropped
+		event.TokensAfter = estimatePromptTokens(history.input(stablePrefix))
+		return event
+	}
+	event.ProviderUsage = providerUsage
 	text := strings.TrimSpace(result.OutputText)
 	if violation := checkCompactionEpistemicGuard(text); violation != nil {
 		log.Printf("runtime_compaction_guard_rejected resident=%s run_id=%s trigger=%s term=%q", profile.Name, state.RunGroupID, trigger, violation.Term)

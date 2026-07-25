@@ -27,24 +27,26 @@ type PreparedAdmission struct {
 }
 
 type AdmitRequest struct {
-	ResidentID string
-	Kind       runtimeguard.CallKind
-	Usage      tokenledger.Usage
-	Penalties  tokenledger.Penalties
-	Activity   tokenledger.ActivityType
-	Apply      bool
+	ResidentID                 string
+	Kind                       runtimeguard.CallKind
+	Usage                      tokenledger.Usage
+	Penalties                  tokenledger.Penalties
+	Activity                   tokenledger.ActivityType
+	Apply                      bool
+	RecordProviderCostOnDenied bool
 }
 
 type AdmitResponse struct {
-	BeforeStatus ResidentStatus           `json:"before_status"`
-	Quota        QuotaSnapshot            `json:"quota"`
-	Prepared     runtimecore.PreparedCall `json:"prepared"`
-	Applied      bool                     `json:"applied"`
-	AfterStatus  *ResidentStatus          `json:"after_status,omitempty"`
-	ApplyResult  *runtimecore.AppliedCall `json:"apply_result,omitempty"`
-	SnapshotPath string                   `json:"snapshot_path,omitempty"`
-	Denied       bool                     `json:"denied"`
-	DeniedReason []string                 `json:"denied_reason,omitempty"`
+	BeforeStatus         ResidentStatus           `json:"before_status"`
+	Quota                QuotaSnapshot            `json:"quota"`
+	Prepared             runtimecore.PreparedCall `json:"prepared"`
+	Applied              bool                     `json:"applied"`
+	AfterStatus          *ResidentStatus          `json:"after_status,omitempty"`
+	ApplyResult          *runtimecore.AppliedCall `json:"apply_result,omitempty"`
+	SnapshotPath         string                   `json:"snapshot_path,omitempty"`
+	Denied               bool                     `json:"denied"`
+	DeniedReason         []string                 `json:"denied_reason,omitempty"`
+	ProviderCostRecorded bool                     `json:"provider_cost_recorded,omitempty"`
 }
 
 type QuotaGrantRequest struct {
@@ -392,6 +394,12 @@ func (s *BrokerService) AdmitCall(req AdmitRequest) (AdmitResponse, error) {
 		return resp, nil
 	}
 	if prepared.Denied {
+		if req.RecordProviderCostOnDenied {
+			if _, err := s.sessions.store.AppendQuotaEvent(quotaEventFromDeniedProviderUsage(prepared, req.Activity)); err != nil {
+				return AdmitResponse{}, err
+			}
+			resp.ProviderCostRecorded = true
+		}
 		return resp, nil
 	}
 
@@ -485,6 +493,30 @@ func quotaEventFromApplied(prepared PreparedAdmission, applied runtimecore.Appli
 			"activity":          string(activity),
 			"snapshot_revision": strconv.FormatUint(prepared.SnapshotRevision, 10),
 			"fatigue_gain":      applied.Fatigue.FatigueGain,
+		},
+	}
+}
+
+func quotaEventFromDeniedProviderUsage(prepared PreparedAdmission, activity tokenledger.ActivityType) QuotaEvent {
+	finishedAt := prepared.Prepared.Usage.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	return QuotaEvent{
+		ResidentID: prepared.ResidentID,
+		Kind:       QuotaEventProviderDenied,
+		ResponseID: prepared.Prepared.Usage.ResponseID,
+		Action:     string(activity),
+		StrainCost: prepared.Prepared.Strain.Rounded,
+		SparkCost:  prepared.Prepared.Cost.SparkCost,
+		CreatedAt:  finishedAt,
+		Metadata: map[string]interface{}{
+			"model":             prepared.Prepared.Usage.Model,
+			"call_kind":         string(prepared.Prepared.Kind),
+			"activity":          string(activity),
+			"snapshot_revision": strconv.FormatUint(prepared.SnapshotRevision, 10),
+			"denied_reasons":    append([]string(nil), prepared.DeniedReason...),
+			"cost_class":        "provider_cost_record_only",
 		},
 	}
 }

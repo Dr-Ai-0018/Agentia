@@ -70,42 +70,49 @@ type BudgetStatusTotals struct {
 }
 
 type OrchestratorBudgetReportOutput struct {
-	RunID         string                             `json:"run_id"`
-	ResidentCount int                                `json:"resident_count"`
-	Residents     []ResidentOrchestratorBudgetReport `json:"residents"`
-	Totals        OrchestratorBudgetReportTotals     `json:"totals"`
-	CacheHealth   string                             `json:"cache_health"`
-	Warnings      []string                           `json:"warnings,omitempty"`
-	SparkPerUSD   float64                            `json:"spark_per_usd"`
-	InternalUSD   float64                            `json:"internal_usd"`
-	Source        string                             `json:"source"`
+	RunID               string                             `json:"run_id"`
+	ResidentCount       int                                `json:"resident_count"`
+	Residents           []ResidentOrchestratorBudgetReport `json:"residents"`
+	Totals              OrchestratorBudgetReportTotals     `json:"totals"`
+	CacheHealth         string                             `json:"cache_health"`
+	Warnings            []string                           `json:"warnings,omitempty"`
+	SparkPerUSD         float64                            `json:"spark_per_usd"`
+	InternalUSD         float64                            `json:"internal_usd"`
+	ProviderCostOnlyUSD float64                            `json:"provider_cost_only_usd,omitempty"`
+	TotalInternalUSD    float64                            `json:"total_internal_usd"`
+	Source              string                             `json:"source"`
 }
 
 type ResidentOrchestratorBudgetReport struct {
-	ResidentID         string  `json:"resident_id"`
-	Model              string  `json:"model,omitempty"`
-	Rounds             int     `json:"rounds"`
-	ChargedCalls       int     `json:"charged_calls"`
-	InputTokens        int     `json:"input_tokens"`
-	CachedTokens       int     `json:"cached_tokens"`
-	CacheHitRatio      float64 `json:"cache_hit_ratio"`
-	OutputTokens       int     `json:"output_tokens"`
-	TotalTokens        int     `json:"total_tokens"`
-	SpentSpark         float64 `json:"spent_spark"`
-	InternalUSD        float64 `json:"internal_usd"`
-	AllowanceSpark     float64 `json:"allowance_spark,omitempty"`
-	AllowanceUsedRatio float64 `json:"allowance_used_ratio,omitempty"`
+	ResidentID            string  `json:"resident_id"`
+	Model                 string  `json:"model,omitempty"`
+	Rounds                int     `json:"rounds"`
+	ChargedCalls          int     `json:"charged_calls"`
+	ProviderCostOnlyCalls int     `json:"provider_cost_only_calls,omitempty"`
+	InputTokens           int     `json:"input_tokens"`
+	CachedTokens          int     `json:"cached_tokens"`
+	CacheHitRatio         float64 `json:"cache_hit_ratio"`
+	OutputTokens          int     `json:"output_tokens"`
+	TotalTokens           int     `json:"total_tokens"`
+	SpentSpark            float64 `json:"spent_spark"`
+	ProviderCostOnlySpark float64 `json:"provider_cost_only_spark,omitempty"`
+	InternalUSD           float64 `json:"internal_usd"`
+	ProviderCostOnlyUSD   float64 `json:"provider_cost_only_usd,omitempty"`
+	AllowanceSpark        float64 `json:"allowance_spark,omitempty"`
+	AllowanceUsedRatio    float64 `json:"allowance_used_ratio,omitempty"`
 }
 
 type OrchestratorBudgetReportTotals struct {
-	ChargedCalls   int     `json:"charged_calls"`
-	InputTokens    int     `json:"input_tokens"`
-	CachedTokens   int     `json:"cached_tokens"`
-	CacheHitRatio  float64 `json:"cache_hit_ratio"`
-	OutputTokens   int     `json:"output_tokens"`
-	TotalTokens    int     `json:"total_tokens"`
-	SpentSpark     float64 `json:"spent_spark"`
-	AllowanceSpark float64 `json:"allowance_spark,omitempty"`
+	ChargedCalls          int     `json:"charged_calls"`
+	ProviderCostOnlyCalls int     `json:"provider_cost_only_calls,omitempty"`
+	InputTokens           int     `json:"input_tokens"`
+	CachedTokens          int     `json:"cached_tokens"`
+	CacheHitRatio         float64 `json:"cache_hit_ratio"`
+	OutputTokens          int     `json:"output_tokens"`
+	TotalTokens           int     `json:"total_tokens"`
+	SpentSpark            float64 `json:"spent_spark"`
+	ProviderCostOnlySpark float64 `json:"provider_cost_only_spark,omitempty"`
+	AllowanceSpark        float64 `json:"allowance_spark,omitempty"`
 }
 
 type orchestratorBudgetReportSummary struct {
@@ -117,16 +124,28 @@ type orchestratorBudgetReportSummary struct {
 			Model            string `json:"model"`
 			Rounds           int    `json:"rounds"`
 			AcceptanceBroker *struct {
-				Applied    bool    `json:"applied"`
-				SparkDelta float64 `json:"spark_delta"`
+				Applied              bool    `json:"applied"`
+				Denied               bool    `json:"denied"`
+				ProviderCostRecorded bool    `json:"provider_cost_recorded"`
+				SparkDelta           float64 `json:"spark_delta"`
+				PreparedSparkCost    float64 `json:"prepared_spark_cost"`
 			} `json:"acceptance_broker"`
+			CompactionEvents []struct {
+				ProviderUsage *struct {
+					ProviderCostRecorded bool    `json:"provider_cost_recorded"`
+					PreparedSparkCost    float64 `json:"prepared_spark_cost"`
+				} `json:"provider_usage"`
+			} `json:"compaction_events"`
 			RoundLogs []struct {
 				InputTokens  int `json:"input_tokens"`
 				CachedTokens int `json:"cached_tokens"`
 				OutputTokens int `json:"output_tokens"`
 				Broker       *struct {
-					Applied    bool    `json:"applied"`
-					SparkDelta float64 `json:"spark_delta"`
+					Applied              bool    `json:"applied"`
+					Denied               bool    `json:"denied"`
+					ProviderCostRecorded bool    `json:"provider_cost_recorded"`
+					SparkDelta           float64 `json:"spark_delta"`
+					PreparedSparkCost    float64 `json:"prepared_spark_cost"`
 				} `json:"broker"`
 			} `json:"round_logs"`
 		} `json:"report"`
@@ -277,6 +296,10 @@ func (a *App) RunOrchestratorBudgetReport(runID string, allowances map[string]fl
 			row.ChargedCalls++
 			row.SpentSpark += -report.AcceptanceBroker.SparkDelta
 		}
+		if report.AcceptanceBroker != nil && !report.AcceptanceBroker.Applied && report.AcceptanceBroker.ProviderCostRecorded && report.AcceptanceBroker.PreparedSparkCost > 0 {
+			row.ProviderCostOnlyCalls++
+			row.ProviderCostOnlySpark += report.AcceptanceBroker.PreparedSparkCost
+		}
 		for _, round := range report.RoundLogs {
 			row.InputTokens += round.InputTokens
 			row.CachedTokens += round.CachedTokens
@@ -285,22 +308,36 @@ func (a *App) RunOrchestratorBudgetReport(runID string, allowances map[string]fl
 				row.ChargedCalls++
 				row.SpentSpark += -round.Broker.SparkDelta
 			}
+			if round.Broker != nil && !round.Broker.Applied && round.Broker.ProviderCostRecorded && round.Broker.PreparedSparkCost > 0 {
+				row.ProviderCostOnlyCalls++
+				row.ProviderCostOnlySpark += round.Broker.PreparedSparkCost
+			}
+		}
+		for _, event := range report.CompactionEvents {
+			if event.ProviderUsage != nil && event.ProviderUsage.ProviderCostRecorded && event.ProviderUsage.PreparedSparkCost > 0 {
+				row.ProviderCostOnlyCalls++
+				row.ProviderCostOnlySpark += event.ProviderUsage.PreparedSparkCost
+			}
 		}
 		row.TotalTokens = row.InputTokens + row.OutputTokens
 		row.CacheHitRatio = ratio(row.CachedTokens, row.InputTokens)
 		row.SpentSpark = roundFloat(row.SpentSpark)
+		row.ProviderCostOnlySpark = roundFloat(row.ProviderCostOnlySpark)
 		row.InternalUSD = roundFloat(row.SpentSpark / sparkPerInternalUSD)
+		row.ProviderCostOnlyUSD = roundFloat(row.ProviderCostOnlySpark / sparkPerInternalUSD)
 		if allowance := allowances[residentID]; allowance > 0 {
 			row.AllowanceSpark = roundFloat(allowance)
 			row.AllowanceUsedRatio = roundFloat(row.SpentSpark / allowance)
 		}
 		out.Residents = append(out.Residents, row)
 		out.Totals.ChargedCalls += row.ChargedCalls
+		out.Totals.ProviderCostOnlyCalls += row.ProviderCostOnlyCalls
 		out.Totals.InputTokens += row.InputTokens
 		out.Totals.CachedTokens += row.CachedTokens
 		out.Totals.OutputTokens += row.OutputTokens
 		out.Totals.TotalTokens += row.TotalTokens
 		out.Totals.SpentSpark += row.SpentSpark
+		out.Totals.ProviderCostOnlySpark += row.ProviderCostOnlySpark
 		out.Totals.AllowanceSpark += row.AllowanceSpark
 	}
 	sort.Slice(out.Residents, func(i, j int) bool {
@@ -308,9 +345,12 @@ func (a *App) RunOrchestratorBudgetReport(runID string, allowances map[string]fl
 	})
 	out.ResidentCount = len(out.Residents)
 	out.Totals.SpentSpark = roundFloat(out.Totals.SpentSpark)
+	out.Totals.ProviderCostOnlySpark = roundFloat(out.Totals.ProviderCostOnlySpark)
 	out.Totals.AllowanceSpark = roundFloat(out.Totals.AllowanceSpark)
 	out.Totals.CacheHitRatio = ratio(out.Totals.CachedTokens, out.Totals.InputTokens)
 	out.InternalUSD = roundFloat(out.Totals.SpentSpark / sparkPerInternalUSD)
+	out.ProviderCostOnlyUSD = roundFloat(out.Totals.ProviderCostOnlySpark / sparkPerInternalUSD)
+	out.TotalInternalUSD = roundFloat((out.Totals.SpentSpark + out.Totals.ProviderCostOnlySpark) / sparkPerInternalUSD)
 	out.CacheHealth = cacheHealth(out.Totals.CacheHitRatio)
 	if out.CacheHealth == "poor" {
 		out.Warnings = append(out.Warnings, "prompt cache hit ratio is below 50%; do not run another long soak until stable prompt prefix reuse is verified")

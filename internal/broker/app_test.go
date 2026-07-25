@@ -225,9 +225,12 @@ func TestRunOrchestratorBudgetReportSummarizesRunSpend(t *testing.T) {
         "model": "gpt-5.5",
         "rounds": 2,
         "acceptance_broker": {"applied": true, "spark_delta": -0.5},
+        "compaction_events": [
+          {"provider_usage": {"provider_cost_recorded": true, "prepared_spark_cost": 0.75}}
+        ],
         "round_logs": [
           {"input_tokens": 100, "cached_tokens": 0, "output_tokens": 10, "broker": {"applied": true, "spark_delta": -2.5}},
-          {"input_tokens": 200, "cached_tokens": 50, "output_tokens": 20, "broker": {"applied": true, "spark_delta": -3.0}}
+          {"input_tokens": 200, "cached_tokens": 50, "output_tokens": 20, "broker": {"provider_cost_recorded": true, "prepared_spark_cost": 1.25, "denied": true}}
         ]
       }
     },
@@ -256,14 +259,14 @@ func TestRunOrchestratorBudgetReportSummarizesRunSpend(t *testing.T) {
 	if out.ResidentCount != 2 {
 		t.Fatalf("unexpected resident count: %#v", out)
 	}
-	if out.Totals.SpentSpark != 7.5 || out.InternalUSD != 0.075 {
+	if out.Totals.SpentSpark != 4.5 || out.InternalUSD != 0.045 || out.Totals.ProviderCostOnlySpark != 2.0 || out.ProviderCostOnlyUSD != 0.02 || out.TotalInternalUSD != 0.065 {
 		t.Fatalf("unexpected totals: %#v", out)
 	}
 	amber := findBudgetReport(out, "amber")
 	if amber == nil {
 		t.Fatalf("missing amber: %#v", out.Residents)
 	}
-	if amber.SpentSpark != 6.0 || amber.TotalTokens != 330 || amber.CacheHitRatio != 0.1667 || amber.AllowanceUsedRatio != 0.6 {
+	if amber.SpentSpark != 3.0 || amber.ProviderCostOnlySpark != 2.0 || amber.TotalTokens != 330 || amber.CacheHitRatio != 0.1667 || amber.AllowanceUsedRatio != 0.3 {
 		t.Fatalf("unexpected amber report: %#v", amber)
 	}
 	if out.Totals.CacheHitRatio != 0.1316 {
@@ -361,6 +364,59 @@ func TestAppRunAdmitSpecUsesProvidedUsage(t *testing.T) {
 	}
 	if resp.Prepared.Usage.ResponseID != "resp_custom" {
 		t.Fatalf("unexpected response id: %s", resp.Prepared.Usage.ResponseID)
+	}
+}
+
+func TestAppRunSettleProviderSpecRecordsDeniedProviderCostOnlyForRuntimeSettle(t *testing.T) {
+	root := t.TempDir()
+	app := New(root)
+	now := time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)
+	if _, err := app.RunReset("amber", now); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	spec := CallSpec{
+		Kind: runtimeguard.CallKindWork,
+		Usage: tokenledger.Usage{
+			InputTokens:  100,
+			OutputTokens: 1_000_000,
+			TotalTokens:  1_000_100,
+			Model:        "gpt-5.4",
+			ResponseID:   "resp_denied_cli",
+			StartedAt:    now.Add(time.Minute),
+			FinishedAt:   now.Add(time.Minute + 2*time.Second),
+		},
+		Activity: tokenledger.ActivityNormalWork,
+	}
+
+	cliResp, err := app.RunAdmitSpec("amber", spec, true)
+	if err != nil {
+		t.Fatalf("run admit spec: %v", err)
+	}
+	if !cliResp.Denied || cliResp.ProviderCostRecorded {
+		t.Fatalf("plain admit should deny without recording provider cost, got %#v", cliResp)
+	}
+	events, _, err := brokerstate.New(filepath.Join(root, "brokerstate")).LoadQuotaEvents("amber")
+	if err != nil {
+		t.Fatalf("load events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("plain denied admit must not fabricate provider usage event, got %#v", events)
+	}
+
+	spec.Usage.ResponseID = "resp_denied_runtime"
+	runtimeResp, err := app.RunSettleProviderSpec("amber", spec)
+	if err != nil {
+		t.Fatalf("run settle provider spec: %v", err)
+	}
+	if !runtimeResp.Denied || !runtimeResp.ProviderCostRecorded {
+		t.Fatalf("runtime settle should record denied provider cost, got %#v", runtimeResp)
+	}
+	events, _, err = brokerstate.New(filepath.Join(root, "brokerstate")).LoadQuotaEvents("amber")
+	if err != nil {
+		t.Fatalf("load events: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != brokerstate.QuotaEventProviderDenied || events[0].ResponseID != "resp_denied_runtime" {
+		t.Fatalf("expected provider denied event for runtime settle, got %#v", events)
 	}
 }
 

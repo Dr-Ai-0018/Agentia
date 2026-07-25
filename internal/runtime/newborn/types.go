@@ -150,22 +150,24 @@ func mapMemoryReviewAction(action string) memory.Action {
 }
 
 type BrokerUsageLog struct {
-	Applied            bool                        `json:"applied"`
-	Denied             bool                        `json:"denied"`
-	DeniedReason       []string                    `json:"denied_reason,omitempty"`
-	BeforeSpark        float64                     `json:"before_spark"`
-	AfterSpark         float64                     `json:"after_spark,omitempty"`
-	BeforeDebtActive   bool                        `json:"before_debt_active"`
-	AfterDebtActive    bool                        `json:"after_debt_active,omitempty"`
-	SparkDelta         float64                     `json:"spark_delta,omitempty"`
-	Window6HUsed       int                         `json:"window_6h_used,omitempty"`
-	DayUsed            int                         `json:"day_used,omitempty"`
-	WeekUsed           int                         `json:"week_used,omitempty"`
-	ApplyReason        string                      `json:"apply_reason,omitempty"`
-	PreparedSparkCost  float64                     `json:"prepared_spark_cost"`
-	PreparedStrainCost int                         `json:"prepared_strain_cost"`
-	Quota              *brokerstate.QuotaSnapshot  `json:"quota,omitempty"`
-	AfterStatus        *brokerstate.ResidentStatus `json:"after_status,omitempty"`
+	Applied              bool                        `json:"applied"`
+	Denied               bool                        `json:"denied"`
+	DeniedReason         []string                    `json:"denied_reason,omitempty"`
+	ProviderCostRecorded bool                        `json:"provider_cost_recorded,omitempty"`
+	CostClass            string                      `json:"cost_class,omitempty"`
+	BeforeSpark          float64                     `json:"before_spark"`
+	AfterSpark           float64                     `json:"after_spark,omitempty"`
+	BeforeDebtActive     bool                        `json:"before_debt_active"`
+	AfterDebtActive      bool                        `json:"after_debt_active,omitempty"`
+	SparkDelta           float64                     `json:"spark_delta,omitempty"`
+	Window6HUsed         int                         `json:"window_6h_used,omitempty"`
+	DayUsed              int                         `json:"day_used,omitempty"`
+	WeekUsed             int                         `json:"week_used,omitempty"`
+	ApplyReason          string                      `json:"apply_reason,omitempty"`
+	PreparedSparkCost    float64                     `json:"prepared_spark_cost"`
+	PreparedStrainCost   int                         `json:"prepared_strain_cost"`
+	Quota                *brokerstate.QuotaSnapshot  `json:"quota,omitempty"`
+	AfterStatus          *brokerstate.ResidentStatus `json:"after_status,omitempty"`
 }
 
 type SummaryPaneEvidenceRef struct {
@@ -215,6 +217,7 @@ type CompactionEvent struct {
 	GuardRejectedSample            string                  `json:"guard_rejected_sample,omitempty"`
 	DurationMs                     int                     `json:"duration_ms"`
 	CachePrefixHitOnCompactionCall bool                    `json:"cache_prefix_hit_on_compaction_call"`
+	ProviderUsage                  *BrokerUsageLog         `json:"provider_usage,omitempty"`
 }
 
 type RoundLog struct {

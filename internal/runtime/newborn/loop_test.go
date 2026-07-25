@@ -2,6 +2,7 @@ package newborn
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1116,6 +1117,29 @@ func TestRunnerPreflightCompactionInstallsSummaryPane(t *testing.T) {
 	if report.CompactionEvents[0].TriggerReason != CompactionTriggerPreflightMeasured || report.CompactionEvents[0].RoundsAbsorbed != 1 {
 		t.Fatalf("unexpected compaction event: %#v", report.CompactionEvents[0])
 	}
+	if report.CompactionEvents[0].ProviderUsage == nil || !report.CompactionEvents[0].ProviderUsage.ProviderCostRecorded || report.CompactionEvents[0].ProviderUsage.CostClass != "continuity_system" {
+		t.Fatalf("expected system provider usage on compaction event, got %#v", report.CompactionEvents[0].ProviderUsage)
+	}
+	events, _, err := brokerstate.New(filepath.Join(dir, "agents", "brokerstate")).LoadQuotaEvents("jade")
+	if err != nil {
+		t.Fatalf("load quota events: %v", err)
+	}
+	foundCompactionEvent := false
+	rolling := brokerstate.RollingQuotaUsageFromEvents(events, time.Now().UTC().Add(time.Hour))
+	for _, event := range events {
+		if event.Kind == brokerstate.QuotaEventCompactionCall && event.ResponseID == "resp-compact" {
+			foundCompactionEvent = true
+			if event.CountsTowardRollingUsage() {
+				t.Fatalf("compaction system cost must not count toward resident rolling usage: %#v", event)
+			}
+		}
+	}
+	if !foundCompactionEvent {
+		t.Fatalf("expected compaction_call quota event, got %#v", events)
+	}
+	if rolling.Window6HUsed <= 0 {
+		t.Fatalf("expected ordinary work calls to count toward rolling usage")
+	}
 	if len(report.SummaryPane.EvidenceRefs) != 1 || report.SummaryPane.EvidenceRefs[0].Ref != "rounds_1_1" {
 		t.Fatalf("expected structured round evidence ref, got %#v", report.SummaryPane.EvidenceRefs)
 	}
@@ -1439,6 +1463,141 @@ func TestRunnerStopsAfterResidentNoop(t *testing.T) {
 	}
 	if report.AcceptanceBroker.AfterStatus.FinalNoticeUsed {
 		t.Fatalf("normal acceptance must not consume final notice state")
+	}
+}
+
+func TestRunnerDoesNotExecuteActionWhenActualUsageDenied(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if requests != 1 {
+			t.Fatalf("unexpected request %d after actual usage denial", requests)
+		}
+		header := http.Header{}
+		header.Set("Content-Type", "text/event-stream")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     header,
+			Body: io.NopCloser(strings.NewReader(renderSSECompleted(t, map[string]any{
+				"id": "resp-over-budget",
+				"usage": map[string]any{
+					"input_tokens":  100,
+					"output_tokens": 1_000_000,
+				},
+				"output": []map[string]any{{
+					"type":      "function_call",
+					"name":      "guest_exec",
+					"arguments": `{"situation":"Try an expensive action.","reason":"This should be blocked after actual usage is known.","command":"touch /tmp/should-not-exist"}`,
+				}},
+			}))),
+			Request: r,
+		}, nil
+	})}
+	actionCalls := 0
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = fakeActionExecutor{
+		result: ActionResult{Observation: "this must not execute", Activity: tokenledger.ActivityNormalWork},
+		calls:  &actionCalls,
+	}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if actionCalls != 0 {
+		t.Fatalf("actual usage denial must prevent action execution, got calls=%d", actionCalls)
+	}
+	if !strings.HasPrefix(report.StoppedReason, "broker_actual_denied:") {
+		t.Fatalf("expected broker_actual_denied stop, got %q", report.StoppedReason)
+	}
+	if report.Rounds != 1 || len(report.RoundLogs) != 1 {
+		t.Fatalf("expected denied round to be recorded once, got %#v", report)
+	}
+	round := report.RoundLogs[0]
+	if round.Broker == nil || !round.Broker.Denied || !round.Broker.ProviderCostRecorded {
+		t.Fatalf("expected denied provider cost broker log, got %#v", round.Broker)
+	}
+	if !round.ActionError || round.ErrorKind != "actual_usage_denied" {
+		t.Fatalf("expected non-executed action error marker, got %#v", round)
+	}
+	events, _, err := brokerstate.New(filepath.Join(dir, "agents", "brokerstate")).LoadQuotaEvents("jade")
+	if err != nil {
+		t.Fatalf("load quota events: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != brokerstate.QuotaEventProviderDenied || events[0].ResponseID != "resp-over-budget" {
+		t.Fatalf("expected provider_usage_denied event, got %#v", events)
+	}
+}
+
+func TestRunnerDoesNotUseAcceptanceTextWhenActualUsageDenied(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		header := http.Header{}
+		header.Set("Content-Type", "text/event-stream")
+		switch requests {
+		case 1:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body: io.NopCloser(strings.NewReader(renderSSECompleted(t, map[string]any{
+					"id": "resp-noop",
+					"usage": map[string]any{
+						"input_tokens":  100,
+						"output_tokens": 40,
+					},
+					"output": []map[string]any{{
+						"type":      "function_call",
+						"name":      "noop",
+						"arguments": `{"situation":"Done.","reason":"Stop now."}`,
+					}},
+				}))),
+				Request: r,
+			}, nil
+		case 2:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     header,
+				Body: io.NopCloser(strings.NewReader(renderSSECompleted(t, map[string]any{
+					"id":          "resp-acceptance-over-budget",
+					"output_text": "THIS OVER-BUDGET ACCEPTANCE MUST NOT BE USED",
+					"usage": map[string]any{
+						"input_tokens":  100,
+						"output_tokens": 1_000_000,
+					},
+				}))),
+				Request: r,
+			}, nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+		return nil, nil
+	})}
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = fakeActionExecutor{result: ActionResult{Observation: "no operation executed", Activity: tokenledger.ActivityStatusCheck}}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
+	var partial *PartialRunError
+	if !errors.As(err, &partial) {
+		t.Fatalf("expected partial run error after acceptance denial, got report=%#v err=%v", report, err)
+	}
+	report = partial.Report
+	if !strings.Contains(report.StoppedReason, "acceptance_actual_denied:") {
+		t.Fatalf("expected acceptance_actual_denied stop, got %q", report.StoppedReason)
+	}
+	if strings.Contains(report.Acceptance, "THIS OVER-BUDGET") {
+		t.Fatalf("over-budget acceptance text must not be used: %q", report.Acceptance)
+	}
+	if report.AcceptanceBroker == nil || !report.AcceptanceBroker.Denied || !report.AcceptanceBroker.ProviderCostRecorded {
+		t.Fatalf("expected denied acceptance broker log, got %#v", report.AcceptanceBroker)
 	}
 }
 

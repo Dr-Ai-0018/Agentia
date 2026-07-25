@@ -298,6 +298,66 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			}
 			state.ParseFailures++
 		}
+		activity := activityForDecision(decision)
+		if parseError != "" {
+			activity = tokenledger.ActivityStatusCheck
+		}
+		r.emitProgress(ProgressEvent{
+			Phase:             "settle",
+			Round:             round,
+			RemainingSec:      remaining,
+			Action:            decision.NextAction,
+			ResponseID:        result.ResponseID,
+			TotalInputTokens:  totalInputTokens,
+			TotalCachedTokens: totalCachedTokens,
+			TotalOutputTokens: totalOutputTokens,
+			SummaryPane:       history.summaryPaneSnapshot(),
+		})
+		brokerLog, err := r.budget.Settle(profile, result, roundNow, runtimeguard.CallKindWork, activity)
+		if err != nil {
+			return FinalReport{}, fmt.Errorf("round %d broker settlement failed: %w", round, err)
+		}
+		if brokerLog.Denied {
+			observation := brokerDeniedObservation(brokerLog)
+			state.LastRealUsage = &result
+			state.LastBrokerUsage = brokerLog
+			state.LastDecision = &decision
+			state.LastObservation = observation
+			totalInputTokens += result.InputTokens
+			totalCachedTokens += result.CachedTokens
+			totalOutputTokens += result.OutputTokens
+			roundLogs = append(roundLogs, RoundLog{
+				Round:        round,
+				RemainingSec: remaining,
+				Decision:     decision,
+				Observation:  observation,
+				ActionError:  true,
+				ErrorKind:    "actual_usage_denied",
+				ResponseID:   result.ResponseID,
+				ParseError:   parseError,
+				FallbackUsed: fallbackUsed,
+				InputTokens:  result.InputTokens,
+				CachedTokens: result.CachedTokens,
+				OutputTokens: result.OutputTokens,
+				Broker:       brokerLog,
+			})
+			stoppedReason = brokerDeniedStopReason("broker_actual_denied", brokerLog)
+			r.emitProgress(ProgressEvent{
+				Phase:             "actual_usage_denied",
+				Round:             round,
+				RemainingSec:      remaining,
+				Action:            decision.NextAction,
+				ResponseID:        result.ResponseID,
+				InputTokens:       result.InputTokens,
+				CachedTokens:      result.CachedTokens,
+				OutputTokens:      result.OutputTokens,
+				TotalInputTokens:  totalInputTokens,
+				TotalCachedTokens: totalCachedTokens,
+				TotalOutputTokens: totalOutputTokens,
+				SummaryPane:       history.summaryPaneSnapshot(),
+			})
+			break
+		}
 		r.emitProgress(ProgressEvent{
 			Phase:             "action_exec",
 			Round:             round,
@@ -322,21 +382,6 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			actionResult = r.actions.Execute(profile, decision)
 		}
 		observation := actionResult.Observation
-		r.emitProgress(ProgressEvent{
-			Phase:             "settle",
-			Round:             round,
-			RemainingSec:      remaining,
-			Action:            decision.NextAction,
-			ResponseID:        result.ResponseID,
-			TotalInputTokens:  totalInputTokens,
-			TotalCachedTokens: totalCachedTokens,
-			TotalOutputTokens: totalOutputTokens,
-			SummaryPane:       history.summaryPaneSnapshot(),
-		})
-		brokerLog, err := r.budget.Settle(profile, result, roundNow, runtimeguard.CallKindWork, actionResult.Activity)
-		if err != nil {
-			return FinalReport{}, fmt.Errorf("round %d broker settlement failed: %w", round, err)
-		}
 		state.RecentActions = appendRecentAction(state.RecentActions, RecentAction{
 			Round:       round,
 			Action:      decision.NextAction,
@@ -475,13 +520,17 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, stablePrefix string, history runHistory, roundLogs []RoundLog, compactionEvents []CompactionEvent, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
 	var acceptanceBroker *BrokerUsageLog
-	if len(roundLogs) > 0 && !strings.HasPrefix(stoppedReason, "upstream_request_failed:") && stoppedReason != "structured_decision_parse_failed" {
+	if len(roundLogs) > 0 && shouldRunAcceptance(stoppedReason) {
 		value, brokerLog, acceptanceEvents, err := r.runAcceptance(profile, stablePrefix, history, state, roundLogs, verbose)
 		compactionEvents = append(compactionEvents, acceptanceEvents...)
 		if err != nil {
-			stoppedReason = appendStopReason(stoppedReason, "acceptance_failed")
+			if brokerLog != nil && brokerLog.Denied {
+				stoppedReason = appendStopReason(stoppedReason, brokerDeniedStopReason("acceptance_actual_denied", brokerLog))
+			} else {
+				stoppedReason = appendStopReason(stoppedReason, "acceptance_failed")
+			}
 			acceptance = fallbackAcceptance(roundLogs, stoppedReason)
-			report, finalizeErr := r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, acceptance, nil, outDir)
+			report, finalizeErr := r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, acceptance, brokerLog, outDir)
 			if finalizeErr != nil {
 				return FinalReport{}, finalizeErr
 			}
@@ -491,6 +540,16 @@ func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, st
 		acceptanceBroker = brokerLog
 	}
 	return r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, acceptance, acceptanceBroker, outDir)
+}
+
+func shouldRunAcceptance(stoppedReason string) bool {
+	if strings.HasPrefix(stoppedReason, "upstream_request_failed:") {
+		return false
+	}
+	if strings.HasPrefix(stoppedReason, "broker_actual_denied:") || stoppedReason == "broker_actual_denied" {
+		return false
+	}
+	return stoppedReason != "structured_decision_parse_failed"
 }
 
 func (r *Runner) writeFinalReport(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, history runHistory, roundLogs []RoundLog, compactionEvents []CompactionEvent, stoppedReason, acceptance string, acceptanceBroker *BrokerUsageLog, outDir string) (FinalReport, error) {
@@ -1083,6 +1142,41 @@ func preflightActivity(state loopState) tokenledger.ActivityType {
 	}
 }
 
+func activityForDecision(decision AgentDecision) tokenledger.ActivityType {
+	switch decision.NextAction {
+	case "self_status", "self_quota", "noop":
+		return tokenledger.ActivityStatusCheck
+	case "talk_to_chenglin", "submit_ticket", "memory_review":
+		return tokenledger.ActivityLightWork
+	case "sleep":
+		return tokenledger.ActivityStatusCheck
+	case "write_note", "note_list", "note_read", "note_append", "note_replace_with_backup", "note_restore_backup", "note_summarize_or_compact":
+		return tokenledger.ActivityLightWork
+	case "guest_exec":
+		return classifyGuestExecActivity(decision.Command)
+	default:
+		return tokenledger.ActivityNormalWork
+	}
+}
+
+func brokerDeniedStopReason(prefix string, log *BrokerUsageLog) string {
+	reasons := []string{}
+	if log != nil {
+		reasons = append(reasons, log.DeniedReason...)
+	}
+	if len(reasons) == 0 {
+		return prefix
+	}
+	return prefix + ": " + strings.Join(reasons, ",")
+}
+
+func brokerDeniedObservation(log *BrokerUsageLog) string {
+	if log == nil || len(log.DeniedReason) == 0 {
+		return "actual_usage_denied: provider cost was recorded, but the action was not executed because resources were no longer available."
+	}
+	return "actual_usage_denied: provider cost was recorded, but the action was not executed because resources were no longer available: " + strings.Join(log.DeniedReason, ",")
+}
+
 func modelBootstrapInput(model string) int {
 	switch model {
 	case "gpt-5.5":
@@ -1204,6 +1298,9 @@ func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, his
 	brokerLog, err := r.budget.Settle(profile, result, time.Now().UTC(), runtimeguard.CallKindAcceptance, tokenledger.ActivityLightWork)
 	if err != nil {
 		return "", nil, events, fmt.Errorf("acceptance broker settlement failed: %w", err)
+	}
+	if brokerLog.Denied {
+		return "", brokerLog, events, fmt.Errorf("acceptance actual usage denied: %s", strings.Join(brokerLog.DeniedReason, ","))
 	}
 	return normalizeAcceptance(result.OutputText), brokerLog, events, nil
 }
