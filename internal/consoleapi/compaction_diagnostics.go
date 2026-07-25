@@ -1,11 +1,14 @@
 package consoleapi
 
 import (
+	"math"
 	"sort"
 	"time"
 
 	"ai-arena/internal/runtime/newborn"
 )
+
+const diagnosticsSparkPerInternalUSD = 100.0
 
 type CompactionDiagnosticsResponse struct {
 	GeneratedAt  string                       `json:"generatedAt"`
@@ -23,26 +26,33 @@ type CompactionRunDiagnostics struct {
 	OutcomeBreakdown             map[string]int `json:"outcomeBreakdown"`
 	TotalTokensBefore            int            `json:"totalTokensBefore"`
 	TotalTokensAfter             int            `json:"totalTokensAfter"`
+	ProviderCostOnlySpark        float64        `json:"providerCostOnlySpark,omitempty"`
+	ProviderCostOnlyUSD          float64        `json:"providerCostOnlyUsd,omitempty"`
+	ProviderUsageMissing         int            `json:"providerUsageMissing,omitempty"`
 	CacheHitRateOnCompactionCall float64        `json:"cacheHitRateOnCompactionCall"`
 	LatestSummaryPaneTokens      int            `json:"latestSummaryPaneTokens"`
 	CurrentContextWindowTokens   int            `json:"currentContextWindowTokens"`
 }
 
 type CompactionDiagnosticsEvent struct {
-	CompactionID                   string `json:"compactionId"`
-	RunID                          string `json:"runId"`
-	Resident                       string `json:"resident"`
-	OccurredAt                     string `json:"occurredAt"`
-	TriggerReason                  string `json:"triggerReason"`
-	TriggerDetail                  string `json:"triggerDetail,omitempty"`
-	TokensBefore                   int    `json:"tokensBefore"`
-	TokensAfter                    int    `json:"tokensAfter"`
-	RoundsAbsorbed                 int    `json:"roundsAbsorbed"`
-	SummaryPaneTokensAfter         int    `json:"summaryPaneTokensAfter"`
-	Outcome                        string `json:"outcome"`
-	GuardRejectedSample            string `json:"guardRejectedSample,omitempty"`
-	DurationMs                     int    `json:"durationMs"`
-	CachePrefixHitOnCompactionCall bool   `json:"cachePrefixHitOnCompactionCall"`
+	CompactionID                   string  `json:"compactionId"`
+	RunID                          string  `json:"runId"`
+	Resident                       string  `json:"resident"`
+	OccurredAt                     string  `json:"occurredAt"`
+	TriggerReason                  string  `json:"triggerReason"`
+	TriggerDetail                  string  `json:"triggerDetail,omitempty"`
+	TokensBefore                   int     `json:"tokensBefore"`
+	TokensAfter                    int     `json:"tokensAfter"`
+	ProviderCostOnlySpark          float64 `json:"providerCostOnlySpark,omitempty"`
+	ProviderCostOnlyUSD            float64 `json:"providerCostOnlyUsd,omitempty"`
+	ProviderCostClass              string  `json:"providerCostClass,omitempty"`
+	ProviderUsageRecorded          bool    `json:"providerUsageRecorded"`
+	RoundsAbsorbed                 int     `json:"roundsAbsorbed"`
+	SummaryPaneTokensAfter         int     `json:"summaryPaneTokensAfter"`
+	Outcome                        string  `json:"outcome"`
+	GuardRejectedSample            string  `json:"guardRejectedSample,omitempty"`
+	DurationMs                     int     `json:"durationMs"`
+	CachePrefixHitOnCompactionCall bool    `json:"cachePrefixHitOnCompactionCall"`
 }
 
 func newCompactionRunDiagnostics(runID, runStartedAt, resident string) CompactionRunDiagnostics {
@@ -78,6 +88,7 @@ func compactionDiagnosticsEvent(runID string, event newborn.CompactionEvent) Com
 	if eventRunID == "" {
 		eventRunID = runID
 	}
+	providerCostSpark, providerCostUSD, costClass, providerRecorded := compactionProviderCost(event)
 	return CompactionDiagnosticsEvent{
 		CompactionID:                   event.CompactionID,
 		RunID:                          eventRunID,
@@ -87,6 +98,10 @@ func compactionDiagnosticsEvent(runID string, event newborn.CompactionEvent) Com
 		TriggerDetail:                  event.TriggerDetail,
 		TokensBefore:                   event.TokensBefore,
 		TokensAfter:                    event.TokensAfter,
+		ProviderCostOnlySpark:          providerCostSpark,
+		ProviderCostOnlyUSD:            providerCostUSD,
+		ProviderCostClass:              costClass,
+		ProviderUsageRecorded:          providerRecorded,
 		RoundsAbsorbed:                 event.RoundsAbsorbed,
 		SummaryPaneTokensAfter:         event.SummaryPaneTokensAfter,
 		Outcome:                        string(event.Outcome),
@@ -94,6 +109,22 @@ func compactionDiagnosticsEvent(runID string, event newborn.CompactionEvent) Com
 		DurationMs:                     event.DurationMs,
 		CachePrefixHitOnCompactionCall: event.CachePrefixHitOnCompactionCall,
 	}
+}
+
+func compactionProviderCost(event newborn.CompactionEvent) (spark float64, usd float64, costClass string, recorded bool) {
+	if event.ProviderUsage == nil {
+		return 0, 0, "", false
+	}
+	if !event.ProviderUsage.ProviderCostRecorded {
+		return 0, 0, event.ProviderUsage.CostClass, false
+	}
+	spark = roundDiagnosticsFloat(event.ProviderUsage.PreparedSparkCost)
+	usd = roundDiagnosticsFloat(event.ProviderUsage.PreparedSparkCost / diagnosticsSparkPerInternalUSD)
+	return spark, usd, event.ProviderUsage.CostClass, true
+}
+
+func roundDiagnosticsFloat(v float64) float64 {
+	return math.Round(v*10000) / 10000
 }
 
 func sortCompactionDiagnostics(out *CompactionDiagnosticsResponse) {

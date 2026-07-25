@@ -229,6 +229,11 @@ func TestCompactionDiagnosticsRouteAggregatesRunReports(t *testing.T) {
 					Outcome:                        newborn.CompactionOutcomeSummarized,
 					DurationMs:                     1200,
 					CachePrefixHitOnCompactionCall: true,
+					ProviderUsage: &newborn.BrokerUsageLog{
+						ProviderCostRecorded: true,
+						CostClass:            "continuity_system",
+						PreparedSparkCost:    1.25,
+					},
 				}},
 			},
 		}},
@@ -258,8 +263,14 @@ func TestCompactionDiagnosticsRouteAggregatesRunReports(t *testing.T) {
 	if out.Runs[0].CacheHitRateOnCompactionCall != 1 || out.Runs[0].LatestSummaryPaneTokens != 42 {
 		t.Fatalf("unexpected run metrics: %#v", out.Runs[0])
 	}
+	if out.Runs[0].ProviderCostOnlySpark != 1.25 || out.Runs[0].ProviderCostOnlyUSD != 0.0125 || out.Runs[0].ProviderUsageMissing != 0 {
+		t.Fatalf("unexpected provider-only cost metrics: %#v", out.Runs[0])
+	}
 	if len(out.RecentEvents) != 1 || out.RecentEvents[0].CompactionID != "compact-jade-1" || out.RecentEvents[0].TokensAfter != 90000 {
 		t.Fatalf("unexpected events: %#v", out.RecentEvents)
+	}
+	if !out.RecentEvents[0].ProviderUsageRecorded || out.RecentEvents[0].ProviderCostOnlySpark != 1.25 || out.RecentEvents[0].ProviderCostClass != "continuity_system" {
+		t.Fatalf("unexpected event provider cost fields: %#v", out.RecentEvents[0])
 	}
 }
 

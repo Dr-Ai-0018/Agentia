@@ -260,6 +260,10 @@ export interface CompactionEvent {
   triggerDetail?: string;
   tokensBefore: number;
   tokensAfter: number;
+  providerCostOnlySpark?: number;
+  providerCostOnlyUsd?: number;
+  providerCostClass?: string;
+  providerUsageRecorded: boolean;
   roundsAbsorbed: number;
   summaryPaneTokensAfter: number;
   outcome: CompactionOutcome;
@@ -278,6 +282,9 @@ export interface CompactionRunSummary {
   outcomeBreakdown: Record<CompactionOutcome, number>;
   totalTokensBefore: number;
   totalTokensAfter: number;
+  providerCostOnlySpark?: number;
+  providerCostOnlyUsd?: number;
+  providerUsageMissing?: number;
   cacheHitRateOnCompactionCall: number;
   latestSummaryPaneTokens: number;
   currentContextWindowTokens: number;

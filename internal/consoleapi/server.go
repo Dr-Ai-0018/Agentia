@@ -469,6 +469,13 @@ func (s *Server) handleCompactionDiagnostics(w http.ResponseWriter, r *http.Requ
 				item.OutcomeBreakdown[string(event.Outcome)]++
 				item.TotalTokensBefore += event.TokensBefore
 				item.TotalTokensAfter += event.TokensAfter
+				providerCostSpark, providerCostUSD, _, providerRecorded := compactionProviderCost(event)
+				if providerRecorded {
+					item.ProviderCostOnlySpark += providerCostSpark
+					item.ProviderCostOnlyUSD += providerCostUSD
+				} else {
+					item.ProviderUsageMissing++
+				}
 				if event.CachePrefixHitOnCompactionCall {
 					cacheHits++
 				}
@@ -486,6 +493,8 @@ func (s *Server) handleCompactionDiagnostics(w http.ResponseWriter, r *http.Requ
 			if item.TotalCompactions > 0 {
 				item.CacheHitRateOnCompactionCall = float64(cacheHits) / float64(item.TotalCompactions)
 			}
+			item.ProviderCostOnlySpark = roundDiagnosticsFloat(item.ProviderCostOnlySpark)
+			item.ProviderCostOnlyUSD = roundDiagnosticsFloat(item.ProviderCostOnlyUSD)
 			out.Runs = append(out.Runs, item)
 		}
 	}

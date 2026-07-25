@@ -210,6 +210,17 @@ function RunSummaryCard({ run }: { run: CompactionRunSummary }) {
             </span>
           </dd>
         </div>
+        <div>
+          <dt>系统整理成本</dt>
+          <dd>
+            {formatSparkCost(run.providerCostOnlySpark)}
+            <span className="diagnostics-run-card__delta">
+              {" "}
+              · {formatUSD(run.providerCostOnlyUsd)}
+              {run.providerUsageMissing ? ` · 缺 ${run.providerUsageMissing}` : ""}
+            </span>
+          </dd>
+        </div>
       </dl>
     </article>
   );
@@ -229,6 +240,7 @@ function RecentEventsTable({ events }: { events: CompactionEvent[] }) {
             <th>触发</th>
             <th>结果</th>
             <th>上下文前 → 后</th>
+            <th>系统成本</th>
             <th>吞掉的轮数</th>
             <th>用时</th>
             <th>缓存</th>
@@ -271,6 +283,16 @@ function EventRow({ event }: { event: CompactionEvent }) {
           {formatTokens(event.tokensBefore)} → {formatTokens(event.tokensAfter)}
           <span className="diagnostics-table__delta"> · 省 {reduction}%</span>
         </td>
+        <td className="diagnostics-table__nums">
+          {event.providerUsageRecorded ? (
+            <>
+              {formatSparkCost(event.providerCostOnlySpark)}
+              <span className="diagnostics-table__delta"> · {formatUSD(event.providerCostOnlyUsd)}</span>
+            </>
+          ) : (
+            <span className="diagnostics-table__delta">未记录</span>
+          )}
+        </td>
         <td className="diagnostics-table__nums">{event.roundsAbsorbed}</td>
         <td className="diagnostics-table__nums">{Math.round(event.durationMs / 100) / 10}s</td>
         <td>
@@ -284,9 +306,16 @@ function EventRow({ event }: { event: CompactionEvent }) {
       </tr>
       {event.triggerDetail ? (
         <tr className="diagnostics-table-detail">
-          <td colSpan={8}>
+          <td colSpan={9}>
             <span className="diagnostics-table-detail__label">detail · </span>
             {event.triggerDetail}
+            {event.providerCostClass ? (
+              <>
+                <span className="diagnostics-table-detail__sep"> · </span>
+                <span className="diagnostics-table-detail__label">cost · </span>
+                {event.providerCostClass}
+              </>
+            ) : null}
             {event.guardRejectedSample ? (
               <>
                 <span className="diagnostics-table-detail__sep"> · </span>
@@ -306,6 +335,17 @@ function EventRow({ event }: { event: CompactionEvent }) {
 function formatTokens(n: number): string {
   if (n >= 1000) return `${Math.round(n / 100) / 10}K`;
   return String(n);
+}
+
+function formatSparkCost(n: number | undefined): string {
+  if (!n) return "0 spark";
+  return `${Math.round(n * 100) / 100} spark`;
+}
+
+function formatUSD(n: number | undefined): string {
+  if (!n) return "$0";
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
 }
 
 function formatTime(iso: string): string {
