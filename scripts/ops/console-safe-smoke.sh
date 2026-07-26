@@ -25,6 +25,25 @@ status_code() {
   curl -sS -o /dev/null -w '%{http_code}' "$@"
 }
 
+curl_config_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
+status_code_with_config() {
+  local config="$1"
+  local url="$2"
+  printf '%s\n' "$config" | curl -sS -K - -o /dev/null -w '%{http_code}' "$url"
+}
+
+fetch_with_config() {
+  local config="$1"
+  local url="$2"
+  printf '%s\n' "$config" | curl -sS -K - "$url"
+}
+
 print_check() {
   printf '%s\t%s\n' "$1" "$2"
 }
@@ -43,10 +62,11 @@ if [[ -r "$BASIC_AUTH_FILE" ]]; then
   BASIC_USER="$(read_kv user "$BASIC_AUTH_FILE")"
   BASIC_PASSWORD="$(read_kv password "$BASIC_AUTH_FILE")"
   if [[ -n "$BASIC_USER" && -n "$BASIC_PASSWORD" ]]; then
-    print_check public_root_auth "$(status_code -u "${BASIC_USER}:${BASIC_PASSWORD}" "${BASE_URL}/")"
-    print_check public_health_auth "$(status_code -u "${BASIC_USER}:${BASIC_PASSWORD}" "${BASE_URL}/api/health")"
+    basic_config="user = \"$(curl_config_escape "${BASIC_USER}:${BASIC_PASSWORD}")\""
+    print_check public_root_auth "$(status_code_with_config "$basic_config" "${BASE_URL}/")"
+    print_check public_health_auth "$(status_code_with_config "$basic_config" "${BASE_URL}/api/health")"
 
-    html="$(curl -sS -u "${BASIC_USER}:${BASIC_PASSWORD}" "${BASE_URL}/")"
+    html="$(fetch_with_config "$basic_config" "${BASE_URL}/")"
     js_path="$(printf '%s' "$html" | sed -n 's/.*src="\([^"]*index-[^"]*\.js\)".*/\1/p' | head -1)"
     css_path="$(printf '%s' "$html" | sed -n 's/.*href="\([^"]*index-[^"]*\.css\)".*/\1/p' | head -1)"
     print_check public_js "${js_path:-missing}"
@@ -54,7 +74,7 @@ if [[ -r "$BASIC_AUTH_FILE" ]]; then
 
     if [[ -n "$js_path" && -r "${DIST_DIR}${js_path}" ]]; then
       local_js_hash="$(sha256sum "${DIST_DIR}${js_path}" | awk '{print $1}')"
-      remote_js_hash="$(curl -sS -u "${BASIC_USER}:${BASIC_PASSWORD}" "${BASE_URL}${js_path}" | sha256sum | awk '{print $1}')"
+      remote_js_hash="$(fetch_with_config "$basic_config" "${BASE_URL}${js_path}" | sha256sum | awk '{print $1}')"
       if [[ "$local_js_hash" == "$remote_js_hash" ]]; then
         print_check public_js_hash_match yes
       else
@@ -73,16 +93,17 @@ fi
 if [[ -r "$TOKEN_ENV_FILE" ]]; then
   TOKEN="$(read_kv ARENA_CONSOLE_TOKEN "$TOKEN_ENV_FILE")"
   if [[ -n "$TOKEN" ]]; then
+    token_config="header = \"X-Arena-Console-Token: $(curl_config_escape "$TOKEN")\""
     for path in /api/health /api/summary /api/runs /api/preflight /api/diagnostics/compaction; do
-      print_check "backend_${path}" "$(status_code -H "X-Arena-Console-Token: ${TOKEN}" "${BACKEND_URL}${path}")"
+      print_check "backend_${path}" "$(status_code_with_config "$token_config" "${BACKEND_URL}${path}")"
     done
 
-    summary="$(curl -sS -H "X-Arena-Console-Token: ${TOKEN}" "${BACKEND_URL}/api/summary")"
+    summary="$(fetch_with_config "$token_config" "${BACKEND_URL}/api/summary")"
     print_check summary_active_null "$(printf '%s' "$summary" | jq -r '.active_run == null')"
     print_check summary_latest_status "$(printf '%s' "$summary" | jq -r '.latest_run.status // "missing"')"
     print_check summary_run_stale_alerts "$(printf '%s' "$summary" | jq -r '[.alerts[]? | select(.kind == "run_stale")] | length')"
 
-    runs="$(curl -sS -H "X-Arena-Console-Token: ${TOKEN}" "${BACKEND_URL}/api/runs?limit=20")"
+    runs="$(fetch_with_config "$token_config" "${BACKEND_URL}/api/runs?limit=20")"
     printf '%s' "$runs" | jq -r '.[] | select(.status == "abandoned") | ["abandoned_run", .run_id] | @tsv'
   else
     print_check backend_token skipped_empty_env
