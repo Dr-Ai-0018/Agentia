@@ -404,6 +404,36 @@ func TestPreviewTextTruncatesByRunes(t *testing.T) {
 	}
 }
 
+func TestPreviewTextSanitizesReplacementCharacters(t *testing.T) {
+	got := previewText("仍是��很重要", 20)
+	if got != "仍是……很重要" {
+		t.Fatalf("previewText did not sanitize replacement characters: %q", got)
+	}
+	if strings.ContainsRune(got, '\uFFFD') {
+		t.Fatalf("previewText still contains replacement character: %q", got)
+	}
+}
+
+func TestReadHostInboxSummarySanitizesPendingBodies(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+
+	if _, err := store.AppendResidentToChenglin("onyx", "仍是��很重要", now); err != nil {
+		t.Fatalf("append onyx: %v", err)
+	}
+	summary, err := store.ReadHostInboxSummary(10, 10)
+	if err != nil {
+		t.Fatalf("host inbox summary: %v", err)
+	}
+	if len(summary.PendingChatMessages) != 1 {
+		t.Fatalf("expected one pending message, got %#v", summary.PendingChatMessages)
+	}
+	if got := summary.PendingChatMessages[0].Body; got != "仍是……很重要" {
+		t.Fatalf("pending body was not sanitized: %q", got)
+	}
+}
+
 func TestReadHostFollowupsSkipsCompletedInterventions(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)

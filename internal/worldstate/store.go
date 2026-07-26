@@ -756,6 +756,7 @@ func deriveThread(all []Message, resident string) []ThreadMessage {
 		}
 
 		item := ThreadMessage{Message: msg}
+		item.Body = displayText(item.Body)
 		switch msg.Direction {
 		case DirectionResidentToChenglin:
 			item.Status = StatusPending
@@ -1330,6 +1331,7 @@ func normalizeTicketPriority(priority string) string {
 }
 
 func previewText(s string, limit int) string {
+	s = displayText(s)
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
@@ -1341,4 +1343,9 @@ func previewText(s string, limit int) string {
 		return string(runes[:limit]) + "..."
 	}
 	return s
+}
+
+func displayText(s string) string {
+	s = strings.ToValidUTF8(s, "…")
+	return strings.ReplaceAll(s, "\uFFFD", "…")
 }
