@@ -208,7 +208,7 @@ export interface WorldVisibleThread {
 }
 
 // ReplyDraft is the local editing state for the reply composer. It stays
-// inside the world-chat feature — never merge god-view telemetry into it.
+// inside the world-chat feature; outside observation data must not enter it.
 export interface ReplyDraft {
   residentId: ResidentId;
   threadId: string;
@@ -298,11 +298,11 @@ export interface CompactionDiagnostics {
 }
 
 // Compile-time guard: proves a props type P has no keys overlapping with
-// the operator god-view (OperatorTelemetry). Used at world-visible component
-// boundaries to make "no telemetry here" a type-check, not a convention.
+// OperatorTelemetry. Used at world-visible component boundaries to make
+// "no telemetry here" a type-check, not a convention.
 //
 // Usage:
-//   type WorldChatPageProps = AssertNoGodViewLeak<{
+//   type WorldChatPageProps = AssertWorldSurfaceIsolated<{
 //     threads: WorldVisibleThread[];
 //     ...
 //   }>;
@@ -310,5 +310,5 @@ export interface CompactionDiagnostics {
 // If any future maintainer adds `telemetry: OperatorTelemetry` or a matching
 // key like `alerts`, `budgets`, `runs`, etc., the type collapses to `never`
 // and any component using those props fails to compile.
-export type AssertNoGodViewLeak<P> =
+export type AssertWorldSurfaceIsolated<P> =
   Extract<keyof P, keyof OperatorTelemetry> extends never ? P : never;

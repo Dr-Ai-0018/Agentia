@@ -2257,8 +2257,8 @@ button {
   }
 }
 
-/* Compaction diagnostics panel — operator debug surface for the long-context
-   compaction mechanism. Residents never see this; nav is under "调试" section. */
+/* Compaction diagnostics panel for the long-context compaction mechanism.
+   Residents never see this; nav is under the operator tools section. */
 
 .diagnostics-page {
   display: flex;

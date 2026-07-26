@@ -1,8 +1,6 @@
-// WorldChatPage is the entry to the WORLD-VISIBLE surface. Its props are
-// pinned to a narrow shape via AssertNoGodViewLeak so that any future attempt
-// to widen them with a god-view field (telemetry, budgets, runs, alerts, etc.)
-// fails at type-check. Do not weaken this boundary — the reply composer subtree
-// downstream depends on it.
+// WorldChatPage is the entry to the world-visible surface. Its props are pinned
+// to a narrow shape so future outside-observation fields fail at type-check.
+// Do not weaken this boundary; the reply composer subtree depends on it.
 
 import { useEffect, useMemo, useState } from "react";
 import { arenaApi } from "../lib/api/client";
@@ -12,7 +10,7 @@ import { WorldChatThread } from "../features/world-chat/WorldChatThread";
 import { draftFromThread } from "../features/world-chat/worldSafeMappers";
 import { loadPersistedDrafts, persistDrafts } from "../features/world-chat/draftPersistence";
 import type {
-  AssertNoGodViewLeak,
+  AssertWorldSurfaceIsolated,
   ReplyDraft,
   WorldVisibleThread,
 } from "../types/domain";
@@ -23,7 +21,7 @@ const kindLabel: Record<WorldVisibleThread["kind"], string> = {
   ticket: "单据",
 };
 
-type WorldChatPageProps = AssertNoGodViewLeak<{
+type WorldChatPageProps = AssertWorldSurfaceIsolated<{
   threads: WorldVisibleThread[];
   activeThreadId: string;
   onSelectThread: (threadId: string) => void;

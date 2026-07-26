@@ -211,7 +211,7 @@ function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget:
           aria-expanded={showDebug}
         >
           <span>{showDebug ? "▾" : "▸"}</span>
-          <span>调试用：token 账簿</span>
+          <span>调用账簿</span>
           <span className="debug-drawer__hint">跟世界内不相关</span>
         </button>
         {showDebug ? (

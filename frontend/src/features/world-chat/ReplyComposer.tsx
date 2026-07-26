@@ -1,10 +1,10 @@
 // ReplyComposer is a WORLD-VISIBLE surface. It emits Chenglin's world-facing
-// reply and must never receive operator god-view data (run ids, budgets,
+// reply and must never receive outside observation data (run ids, budgets,
 // phases, telemetry, dashboards). Its prop shape below is deliberately
 // narrow — only the reply draft state and callback handlers.
 //
 // If you need to display or reason about operator context, do it OUTSIDE this
-// subtree, never as a prop or hook here. The types/domain.ts AssertNoGodViewLeak
+// subtree, never as a prop or hook here. The types/domain.ts AssertWorldSurfaceIsolated
 // guard on WorldChatPageProps blocks a whole class of accidental leaks at the
 // page boundary; this file relies on that upstream contract.
 
