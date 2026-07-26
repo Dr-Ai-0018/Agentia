@@ -195,16 +195,37 @@ export interface OperatorTelemetry {
 export interface WorldMessage {
   id: string;
   from: "chenglin" | ResidentId;
+  to: "chenglin" | ResidentId;
+  direction: "resident_to_chenglin" | "chenglin_to_resident";
   createdAt: string;
   body: string;
+  status: "pending" | "replied" | "delivered";
+  replyToId?: string;
+  readAt?: string;
 }
 
 export interface WorldVisibleThread {
   resident: ResidentId;
   threadId: string;
-  targetId: string;
+  targetId?: string;
   kind: FollowupKind;
   messages: WorldMessage[];
+  total: number;
+  pendingCount: number;
+  repliedCount: number;
+  deliveredCount: number;
+  hasMore: boolean;
+  nextBefore?: string;
+  lastMessageAt?: string;
+  lastPreview?: string;
+}
+
+export interface WorldThreadPage {
+  resident: ResidentId;
+  messages: WorldMessage[];
+  total: number;
+  hasMore: boolean;
+  nextBefore?: string;
 }
 
 // ReplyDraft is the local editing state for the reply composer. It stays
@@ -227,6 +248,12 @@ export interface ReplyDraft {
 // context from ever reaching the world through this door.
 export interface WorldChatReplyRequest {
   message_id: string;
+  body: string;
+  boundary_ack: true;
+}
+
+export interface WorldChatRequest {
+  resident: ResidentId;
   body: string;
   boundary_ack: true;
 }

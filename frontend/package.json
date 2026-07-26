@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 8787",
     "test:formatting": "node scripts/run-formatting-tests.mjs",
+    "test:api": "node scripts/run-api-contract-tests.mjs",
     "typecheck": "tsc -b"
   },
   "dependencies": {

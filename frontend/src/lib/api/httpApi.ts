@@ -15,7 +15,9 @@ import type {
   SummaryPane,
   SummaryPaneEvidenceRef,
   WorldChatReplyRequest,
+  WorldChatRequest,
   WorldMessage,
+  WorldThreadPage,
   WorldTicketReplyRequest,
   WorldVisibleThread,
 } from "../../types/domain";
@@ -144,9 +146,31 @@ type ApiThreadMessage = {
   direction?: string;
   resident: string;
   from?: string;
+  to?: string;
   body: string;
   created_at?: string;
   status?: string;
+  reply_to_id?: string;
+  read_at?: string;
+};
+
+type ApiThreadSummary = {
+  resident: string;
+  last_message_at?: string;
+  last_direction?: string;
+  last_status?: string;
+  last_preview?: string;
+  pending_count?: number;
+  replied_count?: number;
+  delivered_count?: number;
+};
+
+type ApiThreadPage = {
+  resident: string;
+  messages?: ApiThreadMessage[];
+  total?: number;
+  has_more?: boolean;
+  next_before?: string;
 };
 
 type ApiTicketSummary = {
@@ -232,15 +256,29 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
   }
 
   async listWorldThreads() {
-    const inbox = await parseJson<ApiInbox>(await fetch(this.url("/inbox?limit=20")));
-    return threadsFromInbox(inbox);
+    const summaries = await parseJson<ApiThreadSummary[]>(await fetch(this.url("/threads")));
+    return Promise.all(summaries.map(async (summary) => {
+      const resident = asResident(summary.resident);
+      if (!resident) throw new Error(`Unknown resident in thread summary: ${summary.resident}`);
+      const page = await this.getWorldThreadPage(resident);
+      return threadFromSummary(summary, page);
+    }));
   }
 
   async getWorldThread(threadId: string) {
-    const threads = await this.listWorldThreads();
-    const thread = threads.find((item) => item.threadId === threadId);
-    if (!thread) throw new Error(`World thread not found: ${threadId}`);
-    return thread;
+    const resident = residentFromThreadID(threadId);
+    const summaries = await parseJson<ApiThreadSummary[]>(await fetch(this.url("/threads")));
+    const summary = summaries.find((item) => item.resident === resident);
+    if (!summary) throw new Error(`World thread not found: ${threadId}`);
+    return threadFromSummary(summary, await this.getWorldThreadPage(resident));
+  }
+
+  async getWorldThreadPage(resident: ResidentId, before?: string, limit = 50): Promise<WorldThreadPage> {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (before) query.set("before", before);
+    return normalizeThreadPage(await parseJson<ApiThreadPage>(
+      await fetch(this.url(`/messages/${resident}/thread?${query.toString()}`)),
+    ));
   }
 
   async getResidentThreads(resident: ResidentId) {
@@ -255,6 +293,16 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
         body: JSON.stringify(input),
       }),
     );
+  }
+
+  async sendWorldChat(input: WorldChatRequest) {
+    return messageFromThreadMessage(await parseJson<ApiThreadMessage>(
+      await fetch(this.url("/chat"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    ));
   }
 
   async sendWorldTicketReply(input: WorldTicketReplyRequest) {
@@ -595,45 +643,62 @@ function followupsFromInbox(inbox: ApiInbox | undefined): FollowupItem[] {
   return [...chat, ...tickets];
 }
 
-function threadsFromInbox(inbox: ApiInbox | undefined): WorldVisibleThread[] {
-  const chatThreads = (inbox?.pending_chat_messages ?? []).map((message): WorldVisibleThread | null => {
-    const resident = asResident(message.resident);
-    if (!resident) return null;
-    return {
-      resident,
-      threadId: threadIDFor("chat", message.resident, message.id),
-      targetId: message.id,
-      kind: "chat",
-      messages: [messageFromThreadMessage(message)],
-    };
-  });
-  const ticketThreads = (inbox?.open_tickets ?? []).map((ticket): WorldVisibleThread | null => {
-    const resident = asResident(ticket.resident);
-    if (!resident) return null;
-    return {
-      resident,
-      threadId: threadIDFor("ticket", ticket.resident, ticket.id),
-      targetId: ticket.id,
-      kind: "ticket",
-      messages: [{
-        id: ticket.id,
-        from: resident,
-        createdAt: ticket.created_at ? ageFromNow(ticket.created_at) : "",
-        body: ticket.last_preview || ticket.title || "",
-      }],
-    };
-  });
-  return [...chatThreads, ...ticketThreads].filter(Boolean) as WorldVisibleThread[];
-}
-
-function messageFromThreadMessage(input: ApiThreadMessage): WorldMessage {
+export function messageFromThreadMessage(input: ApiThreadMessage): WorldMessage {
   const resident = asResident(input.resident) ?? "jade";
+  const from = input.from === "chenglin" || input.direction === "chenglin_to_resident" ? "chenglin" : resident;
   return {
     id: input.id,
-    from: input.from === "chenglin" || input.direction === "chenglin_to_resident" ? "chenglin" : resident,
-    createdAt: input.created_at ? ageFromNow(input.created_at) : "",
+    from,
+    to: from === "chenglin" ? resident : "chenglin",
+    direction: from === "chenglin" ? "chenglin_to_resident" : "resident_to_chenglin",
+    createdAt: input.created_at ?? "",
     body: input.body,
+    status: normalizeMessageStatus(input.status, from),
+    replyToId: input.reply_to_id || undefined,
+    readAt: input.read_at || undefined,
   };
+}
+
+function normalizeThreadPage(input: ApiThreadPage): WorldThreadPage {
+  const resident = asResident(input.resident);
+  if (!resident) throw new Error(`Unknown resident in thread page: ${input.resident}`);
+  return {
+    resident,
+    messages: (input.messages ?? []).map(messageFromThreadMessage),
+    total: input.total ?? 0,
+    hasMore: input.has_more ?? false,
+    nextBefore: input.next_before || undefined,
+  };
+}
+
+function threadFromSummary(summary: ApiThreadSummary, page: WorldThreadPage): WorldVisibleThread {
+  const target = [...page.messages].reverse().find((message) => message.status === "pending");
+  return {
+    resident: page.resident,
+    threadId: `chat-${page.resident}`,
+    targetId: target?.id,
+    kind: "chat",
+    messages: page.messages,
+    total: page.total,
+    pendingCount: summary.pending_count ?? 0,
+    repliedCount: summary.replied_count ?? 0,
+    deliveredCount: summary.delivered_count ?? 0,
+    hasMore: page.hasMore,
+    nextBefore: page.nextBefore,
+    lastMessageAt: summary.last_message_at,
+    lastPreview: summary.last_preview,
+  };
+}
+
+function residentFromThreadID(threadId: string): ResidentId {
+  const resident = asResident(threadId.replace(/^chat-/, ""));
+  if (!resident) throw new Error(`Invalid world thread id: ${threadId}`);
+  return resident;
+}
+
+function normalizeMessageStatus(status: string | undefined, from: WorldMessage["from"]): WorldMessage["status"] {
+  if (status === "pending" || status === "replied" || status === "delivered") return status;
+  return from === "chenglin" ? "delivered" : "pending";
 }
 
 function normalizeResidentStatus(status: string | undefined): ResidentRuntime["status"] {

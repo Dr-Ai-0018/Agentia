@@ -2,10 +2,12 @@ package consoleapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -666,5 +668,125 @@ func TestRateLimiter(t *testing.T) {
 	now = now.Add(time.Second)
 	if !limiter.allow("client") {
 		t.Fatal("expected request after refill to pass")
+	}
+}
+
+func TestThreadsRouteReturnsStableResidentsAndPagedHistory(t *testing.T) {
+	server := New(Options{Root: t.TempDir()})
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 4; i++ {
+		if _, err := server.world.AppendResidentToChenglin("amber", fmt.Sprintf("full message %d", i), now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatalf("append message: %v", err)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/threads", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("threads status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var summaries []worldstate.ResidentThreadSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &summaries); err != nil {
+		t.Fatalf("decode summaries: %v", err)
+	}
+	if len(summaries) != 3 || summaries[0].Resident != "jade" || summaries[1].Resident != "amber" || summaries[2].Resident != "onyx" {
+		t.Fatalf("unexpected stable summaries: %#v", summaries)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/messages/amber/thread?limit=2", nil)
+	rec = httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	var page worldstate.ThreadPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode page: %v", err)
+	}
+	if rec.Code != http.StatusOK || page.Total != 4 || !page.HasMore || len(page.Messages) != 2 || page.Messages[0].Body != "full message 2" {
+		t.Fatalf("unexpected page status=%d page=%#v", rec.Code, page)
+	}
+}
+
+func TestChatRouteAllowsConsecutiveMessagesAndKeepsReplySemantics(t *testing.T) {
+	root := t.TempDir()
+	server := New(Options{Root: root, Token: "secret"})
+	residentMessage, err := server.world.AppendResidentToChenglin("jade", "Do you agree?", time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("append resident message: %v", err)
+	}
+
+	for _, body := range []string{"先说第一件事。", "再补充第二件事。"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(fmt.Sprintf(`{"resident":"jade","body":%q,"boundary_ack":true}`, body)))
+		req.Header.Set("X-Arena-Console-Token", "secret")
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("chat status = %d; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	thread, err := server.world.ReadThreadForResident("jade")
+	if err != nil {
+		t.Fatalf("read thread: %v", err)
+	}
+	if len(thread) != 3 || thread[0].Status != worldstate.StatusPending || thread[1].ReplyToID != "" || thread[2].ReplyToID != "" {
+		t.Fatalf("ordinary chat changed pending reply semantics: %#v", thread)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/reply", strings.NewReader(fmt.Sprintf(`{"message_id":%q,"body":"我同意。","boundary_ack":true}`, residentMessage.ID)))
+	req.Header.Set("X-Arena-Console-Token", "secret")
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reply status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	thread, err = server.world.ReadThreadForResident("jade")
+	if err != nil || thread[0].Status != worldstate.StatusReplied || thread[3].ReplyToID != residentMessage.ID {
+		t.Fatalf("reply semantics not preserved: err=%v thread=%#v", err, thread)
+	}
+}
+
+func TestChatRouteRejectsAuthResidentBoundaryAndBodyLimit(t *testing.T) {
+	server := New(Options{Root: t.TempDir(), Token: "secret"})
+	tests := []struct {
+		name   string
+		token  string
+		body   string
+		status int
+	}{
+		{name: "auth", body: `{"resident":"jade","body":"hello","boundary_ack":true}`, status: http.StatusUnauthorized},
+		{name: "resident", token: "secret", body: `{"resident":"nobody","body":"hello","boundary_ack":true}`, status: http.StatusBadRequest},
+		{name: "boundary", token: "secret", body: `{"resident":"jade","body":"look at the dashboard","boundary_ack":true}`, status: http.StatusBadRequest},
+		{name: "ack", token: "secret", body: `{"resident":"jade","body":"hello","boundary_ack":false}`, status: http.StatusBadRequest},
+		{name: "body_limit", token: "secret", body: `{"resident":"jade","body":"` + strings.Repeat("a", 33<<10) + `","boundary_ack":true}`, status: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(test.body))
+			if test.token != "" {
+				req.Header.Set("X-Arena-Console-Token", test.token)
+			}
+			rec := httptest.NewRecorder()
+			server.Handler().ServeHTTP(rec, req)
+			if rec.Code != test.status {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, test.status, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestChatRouteHasIndependentWriteRateLimit(t *testing.T) {
+	server := New(Options{Root: t.TempDir()})
+	server.writeLimiter = newRateLimiter(1, 2)
+	for attempt := 0; attempt < 3; attempt++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"resident":"jade","body":"hello","boundary_ack":true}`))
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, req)
+		want := http.StatusOK
+		if attempt == 2 {
+			want = http.StatusTooManyRequests
+		}
+		if rec.Code != want {
+			t.Fatalf("attempt %d status = %d, want %d; body=%s", attempt+1, rec.Code, want, rec.Body.String())
+		}
 	}
 }

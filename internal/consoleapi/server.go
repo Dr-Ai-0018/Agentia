@@ -26,6 +26,7 @@ type Server struct {
 	orchestrator *orchestrator.Service
 	now          func() time.Time
 	limiter      *rateLimiter
+	writeLimiter *rateLimiter
 	startedAt    time.Time
 	access       *accessStats
 }
@@ -56,6 +57,7 @@ func New(options Options) *Server {
 		orchestrator: orchestrator.New(app, &http.Client{Timeout: 30 * time.Second}, "", ""),
 		now:          now,
 		limiter:      newRateLimiter(10, 20),
+		writeLimiter: newRateLimiter(1, 5),
 		startedAt:    now(),
 		access:       &accessStats{},
 	}
@@ -78,10 +80,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tickets/{ticketID}", s.handleTicket)
 	mux.HandleFunc("GET /api/messages/{resident}", s.handleMessages)
 	mux.HandleFunc("GET /api/messages/{resident}/thread", s.handleThread)
+	mux.HandleFunc("GET /api/threads", s.handleThreads)
 	mux.HandleFunc("GET /api/system/inspect-summary", s.handleInspectSummary)
 	mux.HandleFunc("GET /api/acceptance", s.handleAcceptance)
 	mux.HandleFunc("GET /api/acceptance/evidence", s.handleAcceptanceEvidence)
 	mux.HandleFunc("POST /api/reply", s.handleReply)
+	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/ticket-reply", s.handleTicketReply)
 	return s.withAccessLog(withJSONHeaders(s.withRateLimit(s.withAuth(mux))))
 }
@@ -646,12 +650,40 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
-	out, err := s.world.ReadRecentForResident(r.PathValue("resident"), queryInt(r, "limit", 100))
+	residents, err := s.allowedResidents([]string{r.PathValue("resident")})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "thread_unavailable", err)
+		writeError(w, http.StatusBadRequest, "invalid_resident", err)
+		return
+	}
+	if len(residents) != 1 {
+		writeError(w, http.StatusBadRequest, "invalid_resident", errors.New("resident is required"))
+		return
+	}
+	out, err := s.world.ReadThreadPage(residents[0], r.URL.Query().Get("before"), queryInt(r, "limit", 50))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "thread_unavailable", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleThreads(w http.ResponseWriter, r *http.Request) {
+	summaries, err := s.world.ReadAllThreadSummaries()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "threads_unavailable", err)
+		return
+	}
+	byResident := make(map[string]worldstate.ResidentThreadSummary, len(summaries))
+	for _, summary := range summaries {
+		byResident[summary.Resident] = summary
+	}
+	stable := make([]worldstate.ResidentThreadSummary, 0, 3)
+	for _, resident := range []string{"jade", "amber", "onyx"} {
+		summary := byResident[resident]
+		summary.Resident = resident
+		stable = append(stable, summary)
+	}
+	writeJSON(w, http.StatusOK, stable)
 }
 
 func (s *Server) handleInspectSummary(w http.ResponseWriter, r *http.Request) {
@@ -707,6 +739,38 @@ func (s *Server) handleReply(w http.ResponseWriter, r *http.Request) {
 	out, err := s.actions.Reply(input.MessageID, input.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "reply_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
+	if !s.writeLimiter.allow(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "chat_rate_limited", errors.New("chat rate limited"))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	var input ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_json", err)
+		return
+	}
+	residents, err := s.allowedResidents([]string{input.Resident})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_resident", err)
+		return
+	}
+	if len(residents) != 1 {
+		writeError(w, http.StatusBadRequest, "invalid_resident", errors.New("resident is required"))
+		return
+	}
+	if err := validateWorldReply(input.Body, input.BoundaryAck); err != nil {
+		writeError(w, http.StatusBadRequest, "reply_boundary_violation", err)
+		return
+	}
+	out, err := s.actions.Chat(residents[0], input.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "chat_failed", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)

@@ -4,7 +4,7 @@ export function draftFromThread(thread: WorldVisibleThread): ReplyDraft {
   return {
     residentId: thread.resident,
     threadId: thread.threadId,
-    targetId: thread.targetId,
+    targetId: thread.targetId ?? "",
     kind: thread.kind === "ticket" ? "ticket_reply" : "chat_reply",
     body: "",
     boundaryAck: false,

@@ -2,6 +2,7 @@ package worldstate
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -663,5 +664,37 @@ func TestMessagesAndTicketsStayConsistentAcrossMixedOperations(t *testing.T) {
 	}
 	if inbox.ResidentsWithOpenTickets != 0 {
 		t.Fatalf("expected no open tickets after ticket reply, got %#v", inbox)
+	}
+}
+
+func TestReadThreadPageWalksCompleteHistoryWithoutOverlap(t *testing.T) {
+	store := New(t.TempDir())
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 7; i++ {
+		if _, err := store.AppendResidentToChenglin("jade", fmt.Sprintf("message-%d", i), now.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatalf("append message %d: %v", i, err)
+		}
+	}
+
+	latest, err := store.ReadThreadPage("jade", "", 3)
+	if err != nil {
+		t.Fatalf("read latest page: %v", err)
+	}
+	if latest.Total != 7 || !latest.HasMore || len(latest.Messages) != 3 || latest.Messages[0].Body != "message-4" {
+		t.Fatalf("unexpected latest page: %#v", latest)
+	}
+	middle, err := store.ReadThreadPage("jade", latest.NextBefore, 3)
+	if err != nil {
+		t.Fatalf("read middle page: %v", err)
+	}
+	if !middle.HasMore || len(middle.Messages) != 3 || middle.Messages[0].Body != "message-1" || middle.Messages[2].Body != "message-3" {
+		t.Fatalf("unexpected middle page: %#v", middle)
+	}
+	oldest, err := store.ReadThreadPage("jade", middle.NextBefore, 3)
+	if err != nil {
+		t.Fatalf("read oldest page: %v", err)
+	}
+	if oldest.HasMore || len(oldest.Messages) != 1 || oldest.Messages[0].Body != "message-0" {
+		t.Fatalf("unexpected oldest page: %#v", oldest)
 	}
 }

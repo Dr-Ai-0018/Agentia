@@ -58,6 +58,12 @@ type TicketReplyRequest struct {
 	BoundaryAck bool   `json:"boundary_ack"`
 }
 
+type ChatRequest struct {
+	Resident    string `json:"resident"`
+	Body        string `json:"body"`
+	BoundaryAck bool   `json:"boundary_ack"`
+}
+
 type ErrorEnvelope struct {
 	Error APIError `json:"error"`
 }

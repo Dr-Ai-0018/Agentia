@@ -74,6 +74,14 @@ type ResidentThreadSummary struct {
 	NeedsHostAttention bool   `json:"needs_host_attention"`
 }
 
+type ThreadPage struct {
+	Resident   string          `json:"resident"`
+	Messages   []ThreadMessage `json:"messages"`
+	Total      int             `json:"total"`
+	HasMore    bool            `json:"has_more"`
+	NextBefore string          `json:"next_before,omitempty"`
+}
+
 type HostInboxSummary struct {
 	ResidentsNeedingChatReply int                     `json:"residents_needing_chat_reply"`
 	ResidentsWithOpenTickets  int                     `json:"residents_with_open_tickets"`
@@ -343,6 +351,49 @@ func (s *Store) ReadThreadForResident(resident string) ([]ThreadMessage, error) 
 		return nil, err
 	}
 	return deriveThread(all, resident), nil
+}
+
+func (s *Store) ReadThreadPage(resident, before string, limit int) (ThreadPage, error) {
+	thread, err := s.ReadThreadForResident(resident)
+	if err != nil {
+		return ThreadPage{}, err
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	end := len(thread)
+	before = strings.TrimSpace(before)
+	if before != "" {
+		end = -1
+		for i := range thread {
+			if thread[i].ID == before {
+				end = i
+				break
+			}
+		}
+		if end < 0 {
+			return ThreadPage{}, fmt.Errorf("before message %s not found in %s thread", before, resident)
+		}
+	}
+	start := end - limit
+	if start < 0 {
+		start = 0
+	}
+	messages := append([]ThreadMessage(nil), thread[start:end]...)
+	page := ThreadPage{
+		Resident: resident,
+		Messages: messages,
+		Total:    len(thread),
+		HasMore:  start > 0,
+	}
+	if page.HasMore && len(messages) > 0 {
+		page.NextBefore = messages[0].ID
+	}
+	return page, nil
 }
 
 func (s *Store) ReadPendingResidentMessages(limit int) ([]ThreadMessage, error) {
