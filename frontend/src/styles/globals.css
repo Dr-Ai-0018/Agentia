@@ -88,6 +88,10 @@ button {
   font-weight: 600;
 }
 
+.app-rail__nav {
+  display: contents;
+}
+
 .app-rail__nav-item {
   display: flex;
   align-items: center;
@@ -2146,8 +2150,60 @@ button {
     grid-template-columns: 1fr;
   }
   .app-rail {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
     border-right: 0;
     border-bottom: 1px solid var(--border-default);
+  }
+  .app-rail__brand {
+    padding: 0;
+    margin: 0;
+    border-bottom: 0;
+    min-width: 0;
+  }
+  .app-rail__brand-mark {
+    width: 28px;
+    height: 28px;
+  }
+  .app-rail__brand-name,
+  .app-rail__brand-sub,
+  .app-rail__section-label,
+  .app-rail__spacer,
+  .app-rail__footer {
+    display: none;
+  }
+  .app-rail__nav {
+    display: flex;
+    min-width: 0;
+    overflow-x: auto;
+    gap: 6px;
+    scrollbar-width: thin;
+  }
+  .app-rail__nav-item {
+    width: auto;
+    min-width: 70px;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 10px;
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: var(--radius-control);
+    white-space: nowrap;
+  }
+  .app-rail__nav-item.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--text-primary);
+    background: var(--bg-app);
+  }
+  .app-rail__nav-badge {
+    margin-left: 0;
+    padding: 0 6px;
   }
   .overview-layout {
     grid-template-columns: 1fr;
@@ -2471,12 +2527,14 @@ button {
   border-radius: var(--radius-panel);
   background: var(--bg-panel);
   overflow-x: auto;
+  position: relative;
 }
 
 .diagnostics-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  min-width: 760px;
 }
 
 .diagnostics-table thead th {
@@ -2508,6 +2566,37 @@ button {
 .diagnostics-table__nums {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   white-space: nowrap;
+}
+
+.diagnostics-table__sticky {
+  position: sticky;
+  z-index: 2;
+  background: var(--bg-panel);
+}
+
+.diagnostics-table thead .diagnostics-table__sticky {
+  z-index: 4;
+}
+
+.diagnostics-table-row--warn .diagnostics-table__sticky {
+  background: #fff9ee;
+}
+
+.diagnostics-table__sticky--time {
+  left: 0;
+  min-width: 74px;
+}
+
+.diagnostics-table__sticky--resident {
+  left: 74px;
+  min-width: 88px;
+  box-shadow: 1px 0 0 var(--border-subtle);
+}
+
+.diagnostics-scroll-hint {
+  display: none;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .diagnostics-table__delta {

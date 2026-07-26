@@ -31,6 +31,9 @@ const OUTCOME_TONE: Record<CompactionOutcome, string> = {
   failed: "warn",
 };
 
+const RUN_DISPLAY_LIMIT = 6;
+const EVENT_DISPLAY_LIMIT = 25;
+
 export function CompactionDiagnosticsPage() {
   const [diagnostics, setDiagnostics] = useState<CompactionDiagnostics | null>(null);
   const [error, setError] = useState<string>("");
@@ -100,11 +103,13 @@ export function CompactionDiagnosticsPage() {
           <section className="diagnostics-section">
             <div className="section-title">
               <h3>各住户的梳理情况</h3>
-              <span className="section-title__hint">按 run 分组</span>
+              <span className="section-title__hint">{runCountHint(diagnostics.runs.length)}</span>
             </div>
             <div className="diagnostics-run-grid">
               {diagnostics.runs.length > 0 ? (
-                diagnostics.runs.map((run) => <RunSummaryCard key={`${run.runId}-${run.resident}`} run={run} />)
+                diagnostics.runs
+                  .slice(0, RUN_DISPLAY_LIMIT)
+                  .map((run) => <RunSummaryCard key={`${run.runId}-${run.resident}`} run={run} />)
               ) : (
                 <div className="diagnostics-empty">还没有长跑梳理记录</div>
               )}
@@ -114,7 +119,7 @@ export function CompactionDiagnosticsPage() {
           <section className="diagnostics-section">
             <div className="section-title">
               <h3>最近发生的</h3>
-              <span className="section-title__hint">新的在前</span>
+              <span className="section-title__hint">{eventCountHint(diagnostics.recentEvents.length)}</span>
             </div>
             <RecentEventsTable events={diagnostics.recentEvents} />
           </section>
@@ -230,29 +235,33 @@ function RecentEventsTable({ events }: { events: CompactionEvent[] }) {
   if (events.length === 0) {
     return <div className="diagnostics-empty">这轮还没发生过压缩</div>;
   }
+  const visibleEvents = events.slice(0, EVENT_DISPLAY_LIMIT);
   return (
-    <div className="diagnostics-table-wrap">
-      <table className="diagnostics-table">
-        <thead>
-          <tr>
-            <th>时间</th>
-            <th>住户</th>
-            <th>触发</th>
-            <th>结果</th>
-            <th>上下文前 → 后</th>
-            <th>系统成本</th>
-            <th>吞掉的轮数</th>
-            <th>用时</th>
-            <th>缓存</th>
-          </tr>
-        </thead>
-        <tbody>
-          {events.map((event) => (
-            <EventRow key={event.compactionId} event={event} />
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <>
+      <div className="diagnostics-scroll-hint">表格可横向滑动；时间和住户会固定在左侧。</div>
+      <div className="diagnostics-table-wrap">
+        <table className="diagnostics-table">
+          <thead>
+            <tr>
+              <th className="diagnostics-table__sticky diagnostics-table__sticky--time">时间</th>
+              <th className="diagnostics-table__sticky diagnostics-table__sticky--resident">住户</th>
+              <th>触发</th>
+              <th>结果</th>
+              <th>上下文前 → 后</th>
+              <th>系统成本</th>
+              <th>吞掉的轮数</th>
+              <th>用时</th>
+              <th>缓存</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleEvents.map((event) => (
+              <EventRow key={event.compactionId} event={event} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -265,8 +274,8 @@ function EventRow({ event }: { event: CompactionEvent }) {
   return (
     <>
       <tr className={`diagnostics-table-row diagnostics-table-row--${OUTCOME_TONE[event.outcome]}`}>
-        <td className="diagnostics-table__time">{formatTime(event.occurredAt)}</td>
-        <td>
+        <td className="diagnostics-table__time diagnostics-table__sticky diagnostics-table__sticky--time">{formatTime(event.occurredAt)}</td>
+        <td className="diagnostics-table__sticky diagnostics-table__sticky--resident">
           <span className="diagnostics-resident-cell">
             <span className="diagnostics-run-card__dot" style={{ background: accent.color }} />
             {accent.label}
@@ -357,9 +366,26 @@ function formatTime(iso: string): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+function runCountHint(count: number): string {
+  if (count <= RUN_DISPLAY_LIMIT) return "按 run 分组";
+  return `显示最近 ${RUN_DISPLAY_LIMIT} / ${count} 组`;
+}
+
+function eventCountHint(count: number): string {
+  if (count <= EVENT_DISPLAY_LIMIT) return "新的在前";
+  return `显示最近 ${EVENT_DISPLAY_LIMIT} / ${count} 条`;
+}
+
 function backendGap(message: string): string {
-  if (message.includes("404") || message.toLowerCase().includes("not found")) {
-    return "接口暂时不可用。可以先切到 mock 模式看演示数据，或者检查 console-server 日志。";
+  const lower = message.toLowerCase();
+  if (message.includes("404") || lower.includes("not found")) {
+    return "接口暂时不可用。请检查 console-server 是否已经部署对应版本。";
   }
-  return message;
+  if (lower.includes("failed to fetch") || lower.includes("network")) {
+    return "浏览器连不上 console API。请检查网络、认证和反代状态。";
+  }
+  if (message.includes("500") || lower.includes("internal")) {
+    return "console API 返回异常。请查看服务日志里的对应请求。";
+  }
+  return "暂时没拿到可用数据。请稍后刷新，或查看服务日志。";
 }

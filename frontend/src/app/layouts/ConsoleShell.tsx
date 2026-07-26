@@ -64,22 +64,24 @@ export function ConsoleShell({ activePage, onNavigate, children, lastFetchedAt, 
           </div>
         </div>
         <div className="app-rail__section-label">观察</div>
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activePage === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={`app-rail__nav-item ${isActive ? "active" : ""}`}
-              onClick={() => onNavigate(item.id)}
-            >
-              <Icon size={16} strokeWidth={1.5} />
-              <span>{item.label}</span>
-              {item.badge ? <span className="app-rail__nav-badge">{item.badge}</span> : null}
-            </button>
-          );
-        })}
+        <nav className="app-rail__nav" aria-label="Console sections">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activePage === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`app-rail__nav-item ${isActive ? "active" : ""}`}
+                onClick={() => onNavigate(item.id)}
+              >
+                <Icon size={16} strokeWidth={1.5} />
+                <span>{item.label}</span>
+                {item.badge ? <span className="app-rail__nav-badge">{item.badge}</span> : null}
+              </button>
+            );
+          })}
+        </nav>
         <div className="app-rail__spacer" />
         <div className="app-rail__footer">
           <div className="app-rail__who">
