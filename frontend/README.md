@@ -25,10 +25,10 @@ By default the app uses the mock adapter:
 VITE_CONSOLE_DATA_MODE=mock corepack pnpm run dev
 ```
 
-Future HTTP mode:
+HTTP mode against the current root-path API:
 
 ```bash
-VITE_CONSOLE_DATA_MODE=http VITE_API_BASE_PATH=/arena/api corepack pnpm run dev
+VITE_CONSOLE_DATA_MODE=http VITE_API_BASE_PATH=/api corepack pnpm run dev
 ```
 
 ## Pages
