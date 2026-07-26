@@ -365,18 +365,13 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	acceptance, _ := s.broker.RunV0Acceptance(limit)
 	var latest *orchestrator.RunRecord
 	var active *orchestrator.RunStatus
+	var staleRunAlerts []OperatorAlert
 	if len(runs) > 0 {
 		latest = &runs[0]
-		for _, run := range runs {
-			if run.Status == "running" || run.Status == "paused" {
-				status, err := s.orchestrator.ReadRunStatus(run.RunID)
-				if err == nil {
-					active = &status
-					break
-				}
-			}
-		}
+		active, staleRunAlerts = s.selectActiveRun(runs)
 	}
+	alerts := append([]OperatorAlert{}, staleRunAlerts...)
+	alerts = append(alerts, buildAlerts(active, budget, inbox)...)
 	out := DashboardSummary{
 		GeneratedAt: s.now().Format(time.RFC3339),
 		ActiveRun:   active,
@@ -385,7 +380,7 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		Budget:      budget,
 		Inbox:       inbox,
 		Followups:   followups,
-		Alerts:      buildAlerts(active, budget, inbox),
+		Alerts:      alerts,
 	}
 	if inspect.CollectedAt != "" {
 		out.Inspect = &inspect
@@ -394,6 +389,43 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		out.Acceptance = &acceptance
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+const activeRunFreshnessLimit = 30 * time.Minute
+
+func (s *Server) selectActiveRun(runs []orchestrator.RunRecord) (*orchestrator.RunStatus, []OperatorAlert) {
+	alerts := make([]OperatorAlert, 0)
+	for _, run := range runs {
+		if run.Status != "running" && run.Status != "paused" {
+			continue
+		}
+		status, err := s.orchestrator.ReadRunStatus(run.RunID)
+		if err != nil {
+			continue
+		}
+		if isActiveRunFresh(status, s.now(), activeRunFreshnessLimit) {
+			return &status, alerts
+		}
+		if alert := runFreshnessAlertAt(status, s.now(), 3*time.Minute); alert != nil {
+			alerts = append(alerts, *alert)
+		}
+	}
+	return nil, alerts
+}
+
+func isActiveRunFresh(status orchestrator.RunStatus, now time.Time, limit time.Duration) bool {
+	timestamp := strings.TrimSpace(status.UpdatedAt)
+	if timestamp == "" {
+		timestamp = strings.TrimSpace(status.StartedAt)
+	}
+	if timestamp == "" {
+		return true
+	}
+	updatedAt, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return true
+	}
+	return now.Sub(updatedAt) <= limit
 }
 
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {

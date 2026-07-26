@@ -171,6 +171,108 @@ func TestPreflightReportsAccessWarnings(t *testing.T) {
 	}
 }
 
+func TestSummaryDoesNotExposeStaleRunAsActive(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 26, 1, 0, 0, 0, time.UTC)
+	server := New(Options{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	server.orchestrator = orchestrator.New(server.broker, &http.Client{}, "", "")
+	server.orchestrator.SetStateRootForTest(filepath.Join(root, "orchestrator-runs"))
+
+	runID := "orchestrator-20260713T052805.776535403Z"
+	runDir := filepath.Join(root, "orchestrator-runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	status := orchestrator.RunStatus{
+		RunID:     runID,
+		Status:    "running",
+		Mode:      orchestrator.RunModeParallel,
+		StartedAt: "2026-07-13T05:28:05Z",
+		UpdatedAt: "2026-07-13T05:33:05Z",
+		Residents: []orchestrator.ResidentRunStatus{{
+			Resident:  "jade",
+			Status:    "running",
+			UpdatedAt: "2026-07-13T05:33:05Z",
+		}},
+	}
+	writeTestJSON(t, filepath.Join(runDir, "run-status.json"), status)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var out DashboardSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if out.ActiveRun != nil {
+		t.Fatalf("stale run must not be active: %#v", out.ActiveRun)
+	}
+	if out.LatestRun == nil || out.LatestRun.RunID != runID {
+		t.Fatalf("latest run evidence should remain visible, got %#v", out.LatestRun)
+	}
+	foundStaleAlert := false
+	for _, alert := range out.Alerts {
+		if alert.Kind == "run_stale" && alert.RunID == runID {
+			foundStaleAlert = true
+		}
+	}
+	if !foundStaleAlert {
+		t.Fatalf("expected stale run alert in %#v", out.Alerts)
+	}
+}
+
+func TestSummaryKeepsFreshRunActive(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 26, 1, 0, 0, 0, time.UTC)
+	server := New(Options{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	server.orchestrator = orchestrator.New(server.broker, &http.Client{}, "", "")
+	server.orchestrator.SetStateRootForTest(filepath.Join(root, "orchestrator-runs"))
+
+	runID := "orchestrator-20260726T005500.000000000Z"
+	runDir := filepath.Join(root, "orchestrator-runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	status := orchestrator.RunStatus{
+		RunID:     runID,
+		Status:    "running",
+		Mode:      orchestrator.RunModeParallel,
+		StartedAt: now.Add(-10 * time.Minute).Format(time.RFC3339),
+		UpdatedAt: now.Add(-2 * time.Minute).Format(time.RFC3339),
+		Residents: []orchestrator.ResidentRunStatus{{
+			Resident:  "jade",
+			Status:    "running",
+			UpdatedAt: now.Add(-2 * time.Minute).Format(time.RFC3339),
+		}},
+	}
+	writeTestJSON(t, filepath.Join(runDir, "run-status.json"), status)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var out DashboardSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if out.ActiveRun == nil || out.ActiveRun.RunID != runID {
+		t.Fatalf("fresh run should remain active, got %#v", out.ActiveRun)
+	}
+}
+
 func TestCompactionDiagnosticsRouteAggregatesRunReports(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)

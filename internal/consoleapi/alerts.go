@@ -61,6 +61,10 @@ func buildAlerts(active *orchestrator.RunStatus, budget broker.BudgetStatusOutpu
 }
 
 func runFreshnessAlert(status orchestrator.RunStatus, threshold time.Duration) *OperatorAlert {
+	return runFreshnessAlertAt(status, time.Now(), threshold)
+}
+
+func runFreshnessAlertAt(status orchestrator.RunStatus, now time.Time, threshold time.Duration) *OperatorAlert {
 	if status.UpdatedAt == "" {
 		return nil
 	}
@@ -68,14 +72,15 @@ func runFreshnessAlert(status orchestrator.RunStatus, threshold time.Duration) *
 	if err != nil {
 		return nil
 	}
-	if time.Since(updatedAt) < threshold {
+	age := now.Sub(updatedAt)
+	if age < threshold {
 		return nil
 	}
 	return &OperatorAlert{
 		Severity: "P1",
 		Kind:     "run_stale",
 		RunID:    status.RunID,
-		Message:  fmt.Sprintf("这次观察已经 %s 没有新动静。", humanDuration(time.Since(updatedAt).Round(time.Second))),
+		Message:  fmt.Sprintf("这次观察已经 %s 没有新动静。", humanDuration(age.Round(time.Second))),
 		Since:    status.UpdatedAt,
 	}
 }

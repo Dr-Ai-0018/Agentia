@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestReplyLifecycle(t *testing.T) {
@@ -387,6 +388,19 @@ func TestReadHostFollowups(t *testing.T) {
 	}
 	if items[0].Preview != previewText("pending jade again", 160) {
 		t.Fatalf("expected latest jade followup preview, got %#v", items[0])
+	}
+}
+
+func TestPreviewTextTruncatesByRunes(t *testing.T) {
+	got := previewText("你好世界🙂abc", 5)
+	if got != "你好世界🙂..." {
+		t.Fatalf("previewText truncated incorrectly: %q", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("previewText produced invalid UTF-8: %q", got)
+	}
+	if strings.ContainsRune(got, '\uFFFD') {
+		t.Fatalf("previewText produced replacement character: %q", got)
 	}
 }
 

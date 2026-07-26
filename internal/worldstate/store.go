@@ -1333,8 +1333,12 @@ func previewText(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
-	if limit > 0 && len(s) > limit {
-		return s[:limit] + "..."
+	if limit <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "..."
 	}
 	return s
 }
