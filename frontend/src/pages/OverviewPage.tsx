@@ -27,8 +27,8 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
     telemetry.activeRun.transientBlocked === 0;
   const houseLabel = telemetry.activeRun.isLive ? (houseOk ? "全好" : "有事") : "空着";
   const heroSub = telemetry.activeRun.isLive
-    ? `程林陪着住的这座 24 小时，已经过了 ${elapsedShort}。她们在做各自的事，你在这里看着就好。`
-    : "现在没有正在进行的 24 小时观察。这里显示最近一次记录、她们留下的消息和房子的状态，别把它当成 live run。";
+    ? `程林陪着住的这次观察，已经过了 ${elapsedShort}。她们在做各自的事，你在这里看着就好。`
+    : "现在没有正在进行的观察。这里显示最近一次记录、她们留下的消息和房子的状态，别把它当成 live run。";
   const residentTitle = telemetry.activeRun.isLive ? "三个人现在的样子" : "三个人最近的状态";
 
   return (
@@ -163,7 +163,7 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
           <div className="session-panel__val">{elapsedShort}</div>
           <div className="session-panel__sub">
             {telemetry.activeRun.isLive
-              ? `目标 ${telemetry.activeRun.targetDuration} · 至 ${isoTimeToHm(telemetry.activeRun.expectedEndAt)}`
+              ? liveTargetText(telemetry.activeRun)
               : `${runStatusText(telemetry.activeRun.status)} · 更新 ${isoTimeToHm(telemetry.activeRun.updatedAt)}`}
           </div>
         </div>
@@ -176,7 +176,14 @@ function runStatusText(status: OperatorTelemetry["activeRun"]["status"]): string
   if (status === "finished") return "已结束";
   if (status === "failed") return "失败";
   if (status === "paused") return "暂停";
+  if (status === "abandoned") return "旧记录";
   return "记录";
+}
+
+function liveTargetText(run: OperatorTelemetry["activeRun"]): string {
+  const target = run.targetDuration === "未标明" ? "目标未标明" : `目标 ${run.targetDuration}`;
+  const end = isoTimeToHm(run.expectedEndAt);
+  return end ? `${target} · 至 ${end}` : target;
 }
 
 function WatchItem({ alert }: { alert: AlertItem }) {

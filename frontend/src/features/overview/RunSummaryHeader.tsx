@@ -7,7 +7,7 @@ export function RunSummaryHeader({ run }: { run: ActiveRun }) {
     <section className="run-hero">
       <div>
         <p className="eyebrow">Private Operator Console</p>
-        <h1>24h No-Admin Autonomy Soak</h1>
+        <h1>Autonomy Observation</h1>
         <p className="hero-copy">
           Live surface for resident autonomy, quota recovery, world-safe inbox, and pre-release evidence.
         </p>
@@ -37,7 +37,7 @@ export function RunSummaryHeader({ run }: { run: ActiveRun }) {
       <div className="run-hero__footer">
         <Badge tone="info">{run.runId}</Badge>
         <span>Duration {run.targetDuration}</span>
-        <span>Expected end {new Date(run.expectedEndAt).toISOString().slice(0, 16)}Z</span>
+        {run.expectedEndAt ? <span>Expected end {new Date(run.expectedEndAt).toISOString().slice(0, 16)}Z</span> : null}
       </div>
     </section>
   );

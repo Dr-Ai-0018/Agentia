@@ -1728,6 +1728,12 @@ button {
   background: var(--accent-warning-soft);
 }
 
+.run-table__status--abandoned {
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+  background: rgba(87, 96, 106, 0.08);
+}
+
 /* Evidence checklist */
 
 .evidence-list {

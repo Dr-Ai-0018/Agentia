@@ -11,7 +11,7 @@ import (
 )
 
 func TestBuildAlertsUsesObservationLanguage(t *testing.T) {
-	stale := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
+	stale := time.Now().UTC().Add(-16 * time.Minute).Format(time.RFC3339)
 	alerts := buildAlerts(
 		&orchestrator.RunStatus{
 			RunID:     "orchestrator-test",

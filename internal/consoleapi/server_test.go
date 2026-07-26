@@ -268,6 +268,9 @@ func TestSummaryDoesNotExposeStaleRunAsActive(t *testing.T) {
 	if out.LatestRun == nil || out.LatestRun.RunID != runID {
 		t.Fatalf("latest run evidence should remain visible, got %#v", out.LatestRun)
 	}
+	if out.LatestRun.Status != "abandoned" {
+		t.Fatalf("stale latest run status = %q, want abandoned", out.LatestRun.Status)
+	}
 	foundStaleAlert := false
 	for _, alert := range out.Alerts {
 		if alert.Kind == "run_stale" && alert.RunID == runID {
@@ -321,6 +324,114 @@ func TestSummaryKeepsFreshRunActive(t *testing.T) {
 	}
 	if out.ActiveRun == nil || out.ActiveRun.RunID != runID {
 		t.Fatalf("fresh run should remain active, got %#v", out.ActiveRun)
+	}
+}
+
+func TestRunsMarksStalePersistedRunningAsAbandoned(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 26, 1, 0, 0, 0, time.UTC)
+	server := New(Options{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	server.orchestrator = orchestrator.New(server.broker, &http.Client{}, "", "")
+	server.orchestrator.SetStateRootForTest(filepath.Join(root, "orchestrator-runs"))
+
+	staleID := "orchestrator-20260713T052805.776535403Z"
+	staleDir := filepath.Join(root, "orchestrator-runs", staleID)
+	if err := os.MkdirAll(staleDir, 0o755); err != nil {
+		t.Fatalf("mkdir stale run dir: %v", err)
+	}
+	writeTestJSON(t, filepath.Join(staleDir, "run-status.json"), orchestrator.RunStatus{
+		RunID:     staleID,
+		Status:    "running",
+		Mode:      orchestrator.RunModeParallel,
+		StartedAt: "2026-07-13T05:28:05Z",
+		UpdatedAt: "2026-07-13T05:33:05Z",
+		Residents: []orchestrator.ResidentRunStatus{{
+			Resident:  "jade",
+			Status:    "running",
+			UpdatedAt: "2026-07-13T05:33:05Z",
+		}},
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var out []orchestrator.RunRecord
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode runs: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("runs len = %d, want 1: %#v", len(out), out)
+	}
+	if out[0].Status != "abandoned" {
+		t.Fatalf("stale persisted running status = %q, want abandoned", out[0].Status)
+	}
+}
+
+func TestSummarySuppressesHistoricalStaleAlertsAfterNewerFinishedRun(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 26, 1, 0, 0, 0, time.UTC)
+	server := New(Options{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	server.orchestrator = orchestrator.New(server.broker, &http.Client{}, "", "")
+	server.orchestrator.SetStateRootForTest(filepath.Join(root, "orchestrator-runs"))
+
+	finishedID := "orchestrator-20260726T000000.000000000Z"
+	finishedDir := filepath.Join(root, "orchestrator-runs", finishedID)
+	if err := os.MkdirAll(finishedDir, 0o755); err != nil {
+		t.Fatalf("mkdir finished run dir: %v", err)
+	}
+	writeTestJSON(t, filepath.Join(finishedDir, "run-status.json"), orchestrator.RunStatus{
+		RunID:      finishedID,
+		Status:     "finished",
+		Mode:       orchestrator.RunModeParallel,
+		StartedAt:  now.Add(-2 * time.Hour).Format(time.RFC3339),
+		UpdatedAt:  now.Add(-1 * time.Hour).Format(time.RFC3339),
+		FinishedAt: now.Add(-1 * time.Hour).Format(time.RFC3339),
+	})
+
+	staleID := "orchestrator-20260713T052805.776535403Z"
+	staleDir := filepath.Join(root, "orchestrator-runs", staleID)
+	if err := os.MkdirAll(staleDir, 0o755); err != nil {
+		t.Fatalf("mkdir stale run dir: %v", err)
+	}
+	writeTestJSON(t, filepath.Join(staleDir, "run-status.json"), orchestrator.RunStatus{
+		RunID:     staleID,
+		Status:    "running",
+		Mode:      orchestrator.RunModeParallel,
+		StartedAt: "2026-07-13T05:28:05Z",
+		UpdatedAt: "2026-07-13T05:33:05Z",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var out DashboardSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if out.ActiveRun != nil {
+		t.Fatalf("no run should be active, got %#v", out.ActiveRun)
+	}
+	for _, alert := range out.Alerts {
+		if alert.Kind == "run_stale" && alert.RunID == staleID {
+			t.Fatalf("older abandoned run should not pollute current alerts: %#v", out.Alerts)
+		}
+	}
+	if len(out.Runs) < 2 || out.Runs[1].Status != "abandoned" {
+		t.Fatalf("older stale run should stay visible as abandoned evidence: %#v", out.Runs)
 	}
 }
 

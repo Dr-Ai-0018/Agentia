@@ -142,29 +142,31 @@ type InspectionReport struct {
 }
 
 type RunStatus struct {
-	RunID      string              `json:"run_id"`
-	Status     string              `json:"status"`
-	Mode       RunMode             `json:"mode"`
-	Residents  []ResidentRunStatus `json:"residents"`
-	StartedAt  string              `json:"started_at"`
-	UpdatedAt  string              `json:"updated_at"`
-	PausedAt   string              `json:"paused_at,omitempty"`
-	ResumedAt  string              `json:"resumed_at,omitempty"`
-	FinishedAt string              `json:"finished_at,omitempty"`
-	Events     []RunEvent          `json:"events,omitempty"`
+	RunID                 string              `json:"run_id"`
+	Status                string              `json:"status"`
+	Mode                  RunMode             `json:"mode"`
+	Residents             []ResidentRunStatus `json:"residents"`
+	StartedAt             string              `json:"started_at"`
+	UpdatedAt             string              `json:"updated_at"`
+	PausedAt              string              `json:"paused_at,omitempty"`
+	ResumedAt             string              `json:"resumed_at,omitempty"`
+	FinishedAt            string              `json:"finished_at,omitempty"`
+	TargetDurationSeconds int                 `json:"target_duration_seconds,omitempty"`
+	Events                []RunEvent          `json:"events,omitempty"`
 }
 
 type RunRecord struct {
-	RunID      string   `json:"run_id"`
-	RetryOf    string   `json:"retry_of,omitempty"`
-	Status     string   `json:"status"`
-	Mode       RunMode  `json:"mode"`
-	Residents  []string `json:"residents"`
-	StartedAt  string   `json:"started_at"`
-	UpdatedAt  string   `json:"updated_at,omitempty"`
-	PausedAt   string   `json:"paused_at,omitempty"`
-	ResumedAt  string   `json:"resumed_at,omitempty"`
-	FinishedAt string   `json:"finished_at,omitempty"`
+	RunID                 string   `json:"run_id"`
+	RetryOf               string   `json:"retry_of,omitempty"`
+	Status                string   `json:"status"`
+	Mode                  RunMode  `json:"mode"`
+	Residents             []string `json:"residents"`
+	StartedAt             string   `json:"started_at"`
+	UpdatedAt             string   `json:"updated_at,omitempty"`
+	PausedAt              string   `json:"paused_at,omitempty"`
+	ResumedAt             string   `json:"resumed_at,omitempty"`
+	FinishedAt            string   `json:"finished_at,omitempty"`
+	TargetDurationSeconds int      `json:"target_duration_seconds,omitempty"`
 }
 
 type RunInput struct {
@@ -403,12 +405,13 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 		CompactionRecentRounds: input.CompactionRecentRounds,
 	}
 	runStatus := RunStatus{
-		RunID:     contract.RunID,
-		Status:    "running",
-		Mode:      input.Mode,
-		StartedAt: started.Format(time.RFC3339),
-		UpdatedAt: started.Format(time.RFC3339),
-		Residents: make([]ResidentRunStatus, 0, len(input.Residents)),
+		RunID:                 contract.RunID,
+		Status:                "running",
+		Mode:                  input.Mode,
+		StartedAt:             started.Format(time.RFC3339),
+		UpdatedAt:             started.Format(time.RFC3339),
+		TargetDurationSeconds: int(input.Duration.Seconds()),
+		Residents:             make([]ResidentRunStatus, 0, len(input.Residents)),
 		Events: []RunEvent{{
 			Type:    "started",
 			At:      started.Format(time.RFC3339),
@@ -895,18 +898,22 @@ func (s *Service) ListRuns(limit int) ([]RunRecord, error) {
 			continue
 		}
 		record := RunRecord{
-			RunID:      status.RunID,
-			Status:     status.Status,
-			Mode:       status.Mode,
-			StartedAt:  status.StartedAt,
-			UpdatedAt:  status.UpdatedAt,
-			PausedAt:   status.PausedAt,
-			ResumedAt:  status.ResumedAt,
-			FinishedAt: status.FinishedAt,
-			Residents:  make([]string, 0, len(status.Residents)),
+			RunID:                 status.RunID,
+			Status:                status.Status,
+			Mode:                  status.Mode,
+			StartedAt:             status.StartedAt,
+			UpdatedAt:             status.UpdatedAt,
+			PausedAt:              status.PausedAt,
+			ResumedAt:             status.ResumedAt,
+			FinishedAt:            status.FinishedAt,
+			TargetDurationSeconds: status.TargetDurationSeconds,
+			Residents:             make([]string, 0, len(status.Residents)),
 		}
 		if summary, err := s.ReadRunSummary(entry.Name()); err == nil {
 			record.RetryOf = summary.Contract.RetryOf
+			if record.TargetDurationSeconds == 0 {
+				record.TargetDurationSeconds = int(summary.Contract.Duration.Seconds())
+			}
 		}
 		for _, resident := range status.Residents {
 			record.Residents = append(record.Residents, resident.Resident)

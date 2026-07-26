@@ -13,7 +13,7 @@ import (
 func buildAlerts(active *orchestrator.RunStatus, budget broker.BudgetStatusOutput, inbox worldstate.HostInboxSummary) []OperatorAlert {
 	out := make([]OperatorAlert, 0)
 	if active != nil {
-		if staleAlert := runFreshnessAlert(*active, 3*time.Minute); staleAlert != nil {
+		if staleAlert := activeRunFreshnessAlert(*active, 15*time.Minute); staleAlert != nil {
 			out = append(out, *staleAlert)
 		}
 		for _, resident := range active.Residents {
@@ -60,11 +60,19 @@ func buildAlerts(active *orchestrator.RunStatus, budget broker.BudgetStatusOutpu
 	return out
 }
 
-func runFreshnessAlert(status orchestrator.RunStatus, threshold time.Duration) *OperatorAlert {
-	return runFreshnessAlertAt(status, time.Now(), threshold)
+func activeRunFreshnessAlert(status orchestrator.RunStatus, threshold time.Duration) *OperatorAlert {
+	return activeRunFreshnessAlertAt(status, time.Now(), threshold)
 }
 
-func runFreshnessAlertAt(status orchestrator.RunStatus, now time.Time, threshold time.Duration) *OperatorAlert {
+func activeRunFreshnessAlertAt(status orchestrator.RunStatus, now time.Time, threshold time.Duration) *OperatorAlert {
+	return runFreshnessAlertAt(status, now, threshold, "这次观察")
+}
+
+func historicalRunFreshnessAlertAt(status orchestrator.RunStatus, now time.Time, threshold time.Duration) *OperatorAlert {
+	return runFreshnessAlertAt(status, now, threshold, "历史观察")
+}
+
+func runFreshnessAlertAt(status orchestrator.RunStatus, now time.Time, threshold time.Duration, label string) *OperatorAlert {
 	if status.UpdatedAt == "" {
 		return nil
 	}
@@ -80,7 +88,7 @@ func runFreshnessAlertAt(status orchestrator.RunStatus, now time.Time, threshold
 		Severity: "P1",
 		Kind:     "run_stale",
 		RunID:    status.RunID,
-		Message:  fmt.Sprintf("历史观察已经 %s 没有新动静。", humanDuration(age.Round(time.Second))),
+		Message:  fmt.Sprintf("%s已经 %s 没有新动静。", label, humanDuration(age.Round(time.Second))),
 		Since:    status.UpdatedAt,
 	}
 }

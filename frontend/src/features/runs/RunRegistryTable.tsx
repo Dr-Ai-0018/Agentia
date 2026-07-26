@@ -5,6 +5,7 @@ const statusLabel: Record<RunStatus, string> = {
   paused: "暂停",
   finished: "结束",
   failed: "出错",
+  abandoned: "旧记录",
 };
 
 const modeLabel: Record<RunRecord["mode"], string> = {

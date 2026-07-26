@@ -341,11 +341,12 @@ func preflightOverall(checks []PreflightCheck) string {
 
 func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 20)
-	runs, err := s.orchestrator.ListRuns(limit)
+	rawRuns, err := s.orchestrator.ListRuns(limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "runs_unavailable", err)
 		return
 	}
+	runs := s.withConsoleRunSemantics(rawRuns)
 	budget, err := s.broker.RunBudgetStatus(nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "budget_unavailable", err)
@@ -368,7 +369,7 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 	var staleRunAlerts []OperatorAlert
 	if len(runs) > 0 {
 		latest = &runs[0]
-		active, staleRunAlerts = s.selectActiveRun(runs)
+		active, staleRunAlerts = s.selectActiveRun(rawRuns)
 	}
 	alerts := append([]OperatorAlert{}, staleRunAlerts...)
 	alerts = append(alerts, buildAlerts(active, budget, inbox)...)
@@ -395,7 +396,8 @@ const activeRunFreshnessLimit = 30 * time.Minute
 
 func (s *Server) selectActiveRun(runs []orchestrator.RunRecord) (*orchestrator.RunStatus, []OperatorAlert) {
 	alerts := make([]OperatorAlert, 0)
-	for _, run := range runs {
+	var latestStale *orchestrator.RunStatus
+	for index, run := range runs {
 		if run.Status != "running" && run.Status != "paused" {
 			continue
 		}
@@ -406,11 +408,31 @@ func (s *Server) selectActiveRun(runs []orchestrator.RunRecord) (*orchestrator.R
 		if isActiveRunFresh(status, s.now(), activeRunFreshnessLimit) {
 			return &status, alerts
 		}
-		if alert := runFreshnessAlertAt(status, s.now(), 3*time.Minute); alert != nil {
+		if index == 0 {
+			statusCopy := status
+			latestStale = &statusCopy
+		}
+	}
+	if latestStale != nil {
+		if alert := historicalRunFreshnessAlertAt(*latestStale, s.now(), 3*time.Minute); alert != nil {
 			alerts = append(alerts, *alert)
 		}
 	}
 	return nil, alerts
+}
+
+func (s *Server) withConsoleRunSemantics(runs []orchestrator.RunRecord) []orchestrator.RunRecord {
+	out := append([]orchestrator.RunRecord(nil), runs...)
+	for i := range out {
+		if out[i].Status != "running" && out[i].Status != "paused" {
+			continue
+		}
+		if isRunRecordFresh(out[i], s.now(), activeRunFreshnessLimit) {
+			continue
+		}
+		out[i].Status = "abandoned"
+	}
+	return out
 }
 
 func isActiveRunFresh(status orchestrator.RunStatus, now time.Time, limit time.Duration) bool {
@@ -428,13 +450,28 @@ func isActiveRunFresh(status orchestrator.RunStatus, now time.Time, limit time.D
 	return now.Sub(updatedAt) <= limit
 }
 
+func isRunRecordFresh(run orchestrator.RunRecord, now time.Time, limit time.Duration) bool {
+	timestamp := strings.TrimSpace(run.UpdatedAt)
+	if timestamp == "" {
+		timestamp = strings.TrimSpace(run.StartedAt)
+	}
+	if timestamp == "" {
+		return true
+	}
+	updatedAt, err := time.Parse(time.RFC3339, timestamp)
+	if err != nil {
+		return true
+	}
+	return now.Sub(updatedAt) <= limit
+}
+
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 	out, err := s.orchestrator.ListRuns(queryInt(r, "limit", 20))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "runs_unavailable", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, s.withConsoleRunSemantics(out))
 }
 
 func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {

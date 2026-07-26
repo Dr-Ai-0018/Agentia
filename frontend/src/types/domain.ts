@@ -8,7 +8,7 @@ export type FollowupKind = "chat" | "ticket";
 
 export type ReplyKind = "chat_reply" | "ticket_reply";
 
-export type RunStatus = "running" | "paused" | "finished" | "failed";
+export type RunStatus = "running" | "paused" | "finished" | "failed" | "abandoned";
 
 export type QuotaLayer = "6h" | "day" | "week";
 

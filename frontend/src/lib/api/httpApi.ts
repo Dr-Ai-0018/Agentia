@@ -54,6 +54,7 @@ type ApiRunStatus = {
   residents?: ApiResidentRunStatus[];
   started_at?: string;
   updated_at?: string;
+  target_duration_seconds?: number;
 };
 
 type ApiResidentRunStatus = {
@@ -94,6 +95,7 @@ type ApiRunRecord = {
   started_at?: string;
   updated_at?: string;
   finished_at?: string;
+  target_duration_seconds?: number;
 };
 
 type ApiBudgetStatus = {
@@ -318,6 +320,7 @@ function normalizeActiveRun(active: ApiRunStatus | undefined, latest: ApiRunReco
   const startedAt = source?.started_at ?? "";
   const updatedAt = source && "updated_at" in source ? source.updated_at ?? "" : "";
   const duration = active ? elapsedBetween(startedAt, updatedAt) : inspect?.latest_orchestrator?.duration ?? "";
+  const targetDurationSeconds = active?.target_duration_seconds ?? latest?.target_duration_seconds ?? 0;
   const residents = normalizeResidentList(
     active?.residents?.map((item) => item.resident) ?? latest?.residents ?? inspect?.latest_orchestrator?.residents_planned,
   );
@@ -330,8 +333,8 @@ function normalizeActiveRun(active: ApiRunStatus | undefined, latest: ApiRunReco
     startedAt,
     updatedAt,
     elapsed: compactDuration(duration),
-    targetDuration: active ? "24h" : "—",
-    expectedEndAt: "",
+    targetDuration: formatTargetDuration(targetDurationSeconds),
+    expectedEndAt: active ? expectedEnd(startedAt, targetDurationSeconds) : "",
     residents,
     residentsFinished: inspect?.latest_orchestrator?.residents_finished ?? (active ? 0 : residents.length),
     residentsErrored: inspect?.latest_orchestrator?.residents_errored ?? 0,
@@ -523,9 +526,6 @@ function normalizeAlert(input: ApiAlert): AlertItem {
 }
 
 function normalizeAlertMessage(input: ApiAlert): string {
-  if (input.kind === "run_stale") {
-    return input.message.replace(/^这次观察/, "历史观察");
-  }
   return input.message;
 }
 
@@ -647,8 +647,9 @@ function normalizeResidentStatus(status: string | undefined): ResidentRuntime["s
 function normalizeRunStatus(status: string | undefined): RunStatus {
   const normalized = status?.toLowerCase();
   if (normalized === "paused") return "paused";
-  if (normalized === "failed" || normalized === "error") return "failed";
-  if (normalized === "finished" || normalized === "ok") return "finished";
+  if (normalized === "abandoned" || normalized === "stale") return "abandoned";
+  if (normalized === "failed" || normalized === "error" || normalized === "finished_with_errors") return "failed";
+  if (normalized === "finished" || normalized === "ok" || normalized === "finished_with_transient_blocks") return "finished";
   return "running";
 }
 
@@ -691,6 +692,18 @@ function elapsedBetween(start: string | undefined, end: string | undefined): str
   const endMs = Date.parse(end);
   if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs < startMs) return "";
   return humanDuration(Math.round((endMs - startMs) / 1000));
+}
+
+function expectedEnd(start: string | undefined, targetDurationSeconds: number): string {
+  if (!start || targetDurationSeconds <= 0) return "";
+  const startMs = Date.parse(start);
+  if (Number.isNaN(startMs)) return "";
+  return new Date(startMs + targetDurationSeconds * 1000).toISOString();
+}
+
+function formatTargetDuration(targetDurationSeconds: number): string {
+  if (targetDurationSeconds <= 0) return "未标明";
+  return humanDuration(targetDurationSeconds);
 }
 
 function ageFromNow(iso: string): string {
