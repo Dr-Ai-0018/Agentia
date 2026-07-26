@@ -67,6 +67,11 @@ func TestCompactionEpistemicGuardRejectsMetaTermsWithRedactedSample(t *testing.T
 	if strings.Contains(strings.ToLower(violation.Sample), "context") || strings.Contains(violation.Sample, "压缩") {
 		t.Fatalf("guard sample must be redacted, got %q", violation.Sample)
 	}
+
+	violation = checkCompactionEpistemicGuard("外部上下文上，我前面已经给程林发过消息。")
+	if violation == nil || violation.Term != "上下文" {
+		t.Fatalf("expected generic Chinese context term to trip guard, got %#v", violation)
+	}
 }
 
 func TestCompactionEpistemicGuardUsesASCIIBoundaries(t *testing.T) {

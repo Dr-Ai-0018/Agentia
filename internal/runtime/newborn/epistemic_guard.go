@@ -29,6 +29,7 @@ var compactionReservedTerms = []string{
 	"admin gate",
 	"test allowance",
 	"calibration",
+	"上下文",
 	"上下文窗口",
 	"上下文长度",
 	"token",
