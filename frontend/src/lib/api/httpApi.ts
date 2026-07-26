@@ -20,6 +20,7 @@ import type {
   WorldVisibleThread,
 } from "../../types/domain";
 import { fatigueMoodFromLevel } from "../../features/residents/residentSpeak";
+import { compactDuration } from "../duration";
 import type { ArenaConsoleApi } from "./types";
 
 type HttpOptions = {
@@ -731,8 +732,4 @@ function humanDuration(totalSec: number): string {
   const days = Math.floor(hours / 24);
   const restHours = hours % 24;
   return restHours > 0 ? `${days}d${restHours}h` : `${days}d`;
-}
-
-function compactDuration(duration: string): string {
-  return duration.replace(/(\d+)h(\d+)m.*/, "$1h$2m").replace(/(\d+)m(\d+)s.*/, "$1m$2s");
 }

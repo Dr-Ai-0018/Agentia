@@ -2,6 +2,7 @@ import { Sparkline } from "../components/charts/Sparkline";
 import { ResidentCard } from "../features/residents/ResidentCard";
 import { residentLabel } from "../features/residents/residentTheme";
 import { sleepDebtHint } from "../features/residents/residentSpeak";
+import { compactElapsedLabel } from "../lib/duration";
 import type { AlertItem, FollowupItem, OperatorTelemetry, ResidentId } from "../types/domain";
 
 type OverviewPageProps = {
@@ -10,7 +11,7 @@ type OverviewPageProps = {
 };
 
 export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
-  const elapsedShort = compactElapsed(telemetry.activeRun.elapsed);
+  const elapsedShort = compactElapsedLabel(telemetry.activeRun.elapsed);
   const pendingCount = telemetry.followups.filter((f) => f.status !== "closed").length;
   const oldest = telemetry.followups.reduce<FollowupItem | null>((acc, f) => {
     if (f.status === "closed") return acc;
@@ -205,16 +206,6 @@ function severityToDot(severity: AlertItem["severity"]): "warn" | "info" | "good
   if (severity === "p0" || severity === "p1") return "warn";
   if (severity === "info") return "good";
   return "info";
-}
-
-function compactElapsed(elapsed: string): string {
-  // "6h12m18s" → "6h 12m"
-  const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(elapsed);
-  if (!match) return elapsed;
-  const parts: string[] = [];
-  if (match[1]) parts.push(`${match[1]}h`);
-  if (match[2]) parts.push(`${match[2]}m`);
-  return parts.join(" ") || elapsed;
 }
 
 function ageToMinutes(age: string): number {

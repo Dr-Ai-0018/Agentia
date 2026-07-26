@@ -2,6 +2,7 @@ import { Sparkline } from "../../components/charts/Sparkline";
 import type { ResidentBudget, ResidentRuntime } from "../../types/domain";
 import {
   describeDoing,
+  doingPrefix,
   fatigueMoodFromLevel,
   fatigueMoodLabel,
   pressureToQuotaTone,
@@ -44,7 +45,7 @@ export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
       <p className="resident-card__doing">
         {doing.verb ? (
           <>
-            {runtime.status === "sleeping" || runtime.status === "idle" ? "" : "正在"}
+            {doingPrefix(runtime.status, "正在", doing.verb)}
             <span className="resident-card__doing-verb">{doing.verb}</span>
             {doing.suffix ? ` ${doing.suffix}` : ""}
           </>

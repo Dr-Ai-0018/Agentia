@@ -5,6 +5,7 @@ import { useDevMode } from "../lib/devMode";
 import { eventStream } from "../data/mockConsole";
 import {
   describeDoing,
+  doingPrefix,
   fatigueMoodFromLevel,
   fatigueMoodLabel,
   forecastFromRemainingPct,
@@ -86,7 +87,7 @@ function ResidentDetail({ runtime, budget }: { runtime: ResidentRuntime; budget:
           <p className="resident-detail__doing">
             {doing.verb ? (
               <>
-                {runtime.status === "sleeping" ? "" : "她正在"}
+                {doingPrefix(runtime.status, "她正在", doing.verb)}
                 <span className="resident-detail__doing-verb">{doing.verb}</span>
                 {doing.suffix ? ` ${doing.suffix}` : ""}
               </>

@@ -17,6 +17,15 @@ export function verbLabel(action: string): string {
 
 export type DoingLine = { verb: string; suffix: string };
 
+export function doingPrefix(status: ResidentStatus, prefix: string, verb: string): string {
+  if (status !== "running") return "";
+  if (verb.startsWith("在")) {
+    if (prefix === "正在") return "";
+    if (prefix.endsWith("正在")) return prefix.slice(0, -2);
+  }
+  return prefix;
+}
+
 export function describeDoing(runtime: ResidentRuntime): DoingLine {
   if (runtime.status === "idle") {
     return { verb: "没在长测里", suffix: "" };
