@@ -478,7 +478,7 @@ Validation:
 
 ## Quota Model Decision (2026-07-07 pm)
 
-Discovered during codex S3 calibration (10min + 20min short soaks, report at `docs/development/12_QUOTA_CALIBRATION_REPORT.md`): current `StrainRecoveryPerHour=100` cannot behave like the "6h quota" host intuition, and day/week caps are only observation, not real gates. Host chose neither of codex's two mechanical fixes (linear rate bump, or rolling/discrete window). Host wants a **real-person continuous fatigue model** instead of "midnight reset" semantics.
+Discovered during S3 calibration (10min + 20min short soaks, report at `docs/development/12_QUOTA_CALIBRATION_REPORT.md`): current `StrainRecoveryPerHour=100` cannot behave like the "6h quota" host intuition, and day/week caps are only observation, not real gates. Host chose neither of the two mechanical fixes (linear rate bump, or rolling/discrete window). Host wants a **real-person continuous fatigue model** instead of "midnight reset" semantics.
 
 Implementation design is now tracked in `docs/development/13_QUOTA_MODEL_V0_DESIGN.md`. That file is the current backend design authority for the S3 quota-model rewrite.
 
@@ -493,11 +493,11 @@ Decisions:
   - `deep_sleep` (continuous 4h+, gated by 24h cumulative sleep ≥ 6-8h): recovery × 4
 - **Sleep debt** —— a third ledger. Under-slept in last 24h → sleep debt accumulates → all recovery rates discounted. Cannot be paid off in one session; needs consecutive nights of proper sleep. This is what gives the model its real-person trailing behavior — impossible with reset semantics.
 
-Owners:
+Owners by workstream:
 
-- Broker changes (retire 6h gate, add rolling day/week, fatigue accumulator, sleep depth tiers, sleep debt ledger, retune calibration): codex.
-- UI changes (Residents quota row split into day-gate + week-gate + 6h observation sparkline; fatigue rendered as feel-words rather than numbers; sleep debt surfaces on Overview when high; sleep depth tiers on Residents page): claude.
-- Post-model recalibration 20min short soak → 建议值 to host for review: codex, then host.
+- Broker/runtime: retire 6h gate, add rolling day/week, fatigue accumulator, sleep depth tiers, sleep debt ledger, retune calibration.
+- UI console: split Residents quota row into day-gate + week-gate + 6h observation sparkline; render fatigue as feel-words rather than numbers; surface sleep debt on Overview when high; show sleep depth tiers on Residents page.
+- Post-model recalibration: run a 20min short soak and bring recommended values back to host for review.
 
 ## V0 Stage Conclusion (2026-07-07)
 
@@ -508,7 +508,7 @@ Owners:
 - Http adapter：raw `/api/summary` → `OperatorTelemetry` 规范化，认识论隔离守卫（`host_intervention` 不能伪装成 chat）在 backend / frontend / mock 三处一致
 - Polling loop `8s` + `document.hidden` 暂停 + syncError warn tone
 - Draft 持久化（per-thread localStorage，boundaryAck 不 persist）
-- codex S6 regression pass
+- S6 regression pass
 
 仍开的门：
 
@@ -519,8 +519,8 @@ Owners:
 
 **这次的分工**：
 
-- claude（前端 + 调度）own 六页 web console + polling + draft 持久化 + Overview memory review hint + 相关 docs 回填
-- codex（后端 + 对接）own `/api/preflight` + `/api/summary` alerts 中文化 + http adapter 认识论守卫 + S6 regression + 后续 spark cap 实测
+- frontend/workflow own 六页 web console + polling + draft 持久化 + Overview memory review hint + 相关 docs 回填
+- backend/integration own `/api/preflight` + `/api/summary` alerts 中文化 + http adapter 认识论守卫 + S6 regression + 后续 spark cap 实测
 - host own 拍板 + 24h soak 启动决定
 
 **这次 by-design 不做（延后到 v0 之后 iteration）**：resource / environment 自动执行闭环、网络白名单 / 出站控制、放宽 memory / cache / 额度自动动作。

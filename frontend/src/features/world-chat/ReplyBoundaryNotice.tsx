@@ -11,7 +11,7 @@ export function ReplyBoundaryNotice() {
         <strong>给程林的一张小便签</strong>
         <p>
           这里说的话会进世界。用你自然能说出的那种就好——
-          dashboard、run id、token、缓存、预算、审计这些屋外口径不是你会用的，别写。
+          屋外页面、记录编号、通行口令、系统缓存、额度账本、检查记录这些口径不是你会用的，别写。
         </p>
       </div>
     </div>

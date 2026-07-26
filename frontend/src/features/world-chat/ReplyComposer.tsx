@@ -100,8 +100,8 @@ export function ReplyComposer({ draft, onDraftChange, onSubmit, isSending = fals
           aria-expanded={showPayload}
         >
           <span>{showPayload ? "▾" : "▸"}</span>
-          <span>调试用：payload preview</span>
-          <span className="reply-debug__hint">给 operator 看的，不进世界</span>
+          <span>发送内容预览</span>
+          <span className="reply-debug__hint">只给屋外检查，不进世界</span>
         </button>
         {showPayload ? (
           <pre className="reply-debug__body">{payloadPreview ? JSON.stringify(payloadPreview, null, 2) : "—"}</pre>

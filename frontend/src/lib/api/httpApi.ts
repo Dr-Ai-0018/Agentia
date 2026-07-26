@@ -269,10 +269,8 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
   }
 
   async getCompactionDiagnostics() {
-    // Backend ships this at /api/diagnostics/compaction (codex 6e3c9da,
-    // handler in internal/consoleapi/compaction_diagnostics.go). JSON tags
-    // are camelCase already — shape is a 1:1 match with the frontend
-    // CompactionDiagnostics type, no normalize needed.
+    // This endpoint already returns camelCase JSON matching the frontend
+    // CompactionDiagnostics type, so no normalization layer is needed.
     return parseJson(await fetch(this.url("/diagnostics/compaction")));
   }
 }
