@@ -777,6 +777,65 @@ func TestRunHistorySummaryPaneSnapshotIsDeepCopy(t *testing.T) {
 	}
 }
 
+func TestRunHistoryInstallSummaryPaneDeduplicatesRepeatedParagraphs(t *testing.T) {
+	history := newRunHistoryForPurpose("", 0)
+	history.summaryPane = &SummaryPane{
+		Text:           "我已经确认了机器状态。\n\n接下来要继续看日志。",
+		RoundsAbsorbed: 2,
+		EvidenceRefs: []SummaryPaneEvidenceRef{{
+			Kind:   "round",
+			Ref:    "rounds_1_2",
+			Rounds: []int{1, 2},
+		}},
+	}
+
+	history.installSummaryPane("我已经确认了机器状态。\n\n接下来要继续看日志。\n\n新增发现是最近没有失败服务。", time.Now().UTC(), 1, 3, 3)
+
+	if strings.Count(history.summaryPane.Text, "我已经确认了机器状态。") != 1 {
+		t.Fatalf("expected repeated paragraph to be deduplicated, got %q", history.summaryPane.Text)
+	}
+	if strings.Count(history.summaryPane.Text, "接下来要继续看日志。") != 1 {
+		t.Fatalf("expected repeated todo paragraph to be deduplicated, got %q", history.summaryPane.Text)
+	}
+	if !strings.Contains(history.summaryPane.Text, "新增发现是最近没有失败服务。") {
+		t.Fatalf("expected new paragraph to be appended, got %q", history.summaryPane.Text)
+	}
+	if history.summaryPane.RoundsAbsorbed != 3 {
+		t.Fatalf("expected absorbed round total to advance, got %#v", history.summaryPane)
+	}
+}
+
+func TestRunHistoryInstallSummaryPaneCapsGrowthAndEvidenceRefs(t *testing.T) {
+	history := newRunHistoryForPurpose("", 0)
+	evidence := make([]SummaryPaneEvidenceRef, 0, summaryPaneMaxEvidenceRefs+8)
+	for i := 0; i < summaryPaneMaxEvidenceRefs+8; i++ {
+		evidence = append(evidence, SummaryPaneEvidenceRef{
+			Kind:   "round",
+			Ref:    fmt.Sprintf("rounds_%d_%d", i+1, i+1),
+			Rounds: []int{i + 1},
+		})
+	}
+	history.summaryPane = &SummaryPane{
+		Text:           strings.Repeat("我一直在做稳定路线确认，保留关键入口和下一步计划。\n\n", 180),
+		RoundsAbsorbed: len(evidence),
+		EvidenceRefs:   evidence,
+	}
+
+	history.installSummaryPane(strings.Repeat("新的片段继续说明同一条路线，但只需要留下能接上手的线索。\n\n", 120), time.Now().UTC(), 1, 49, 49)
+
+	if history.summaryPane.ApproxTokens > summaryPaneSoftMaxApproxTokens {
+		t.Fatalf("expected pane to stay under soft cap, got %d tokens", history.summaryPane.ApproxTokens)
+	}
+	if len(history.summaryPane.EvidenceRefs) > summaryPaneMaxEvidenceRefs {
+		t.Fatalf("expected evidence refs to be capped, got %d", len(history.summaryPane.EvidenceRefs))
+	}
+	for _, banned := range []string{"summary", "summary_pane", "compaction", "context", "token", "evidence_refs", "摘要", "压缩", "上下文"} {
+		if strings.Contains(strings.ToLower(history.summaryPane.Text), banned) {
+			t.Fatalf("resident-facing pane leaked backend term %q in %q", banned, history.summaryPane.Text)
+		}
+	}
+}
+
 func TestRunnerDecisionRequestPlacesStablePrefixBeforeHistory(t *testing.T) {
 	dir := t.TempDir()
 	var decisionPayloads []openai.RequestPayload

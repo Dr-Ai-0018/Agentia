@@ -10,6 +10,8 @@ import (
 )
 
 const defaultCompactionRecentRounds = 60
+const summaryPaneSoftMaxApproxTokens = 2800
+const summaryPaneMaxEvidenceRefs = 40
 
 type runHistory struct {
 	preamble         []openai.Message
@@ -134,16 +136,16 @@ func (h *runHistory) installSummaryPane(text string, now time.Time, absorbedRoun
 		previousRounds = h.summaryPane.RoundsAbsorbed
 		evidence = append(evidence, h.summaryPane.EvidenceRefs...)
 	}
-	text = strings.TrimSpace(text)
-	if previousText != "" {
-		text = strings.TrimSpace(previousText + "\n\n" + text)
-	}
+	text = limitSummaryPaneText(mergeSummaryPaneText(previousText, text), summaryPaneSoftMaxApproxTokens)
 	if absorbedStart > 0 && absorbedEnd >= absorbedStart {
 		evidence = append(evidence, SummaryPaneEvidenceRef{
 			Kind:   "round",
 			Ref:    fmt.Sprintf("rounds_%d_%d", absorbedStart, absorbedEnd),
 			Rounds: intRange(absorbedStart, absorbedEnd),
 		})
+	}
+	if len(evidence) > summaryPaneMaxEvidenceRefs {
+		evidence = append([]SummaryPaneEvidenceRef(nil), evidence[len(evidence)-summaryPaneMaxEvidenceRefs:]...)
 	}
 	h.summaryPane = &SummaryPane{
 		Text:           text,
@@ -161,6 +163,99 @@ func (h *runHistory) installSummaryPane(text string, now time.Time, absorbedRoun
 	if h.recentRounds < 0 {
 		h.recentRounds = 0
 	}
+}
+
+func mergeSummaryPaneText(previousText, nextText string) string {
+	previousParagraphs := splitSummaryPaneParagraphs(previousText)
+	nextParagraphs := splitSummaryPaneParagraphs(nextText)
+	if len(previousParagraphs) == 0 {
+		return strings.Join(nextParagraphs, "\n\n")
+	}
+	if len(nextParagraphs) == 0 {
+		return strings.Join(previousParagraphs, "\n\n")
+	}
+
+	out := append([]string(nil), previousParagraphs...)
+	seen := map[string]struct{}{}
+	for _, paragraph := range previousParagraphs {
+		seen[normalizeSummaryPaneParagraph(paragraph)] = struct{}{}
+	}
+	for _, paragraph := range nextParagraphs {
+		key := normalizeSummaryPaneParagraph(paragraph)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, paragraph)
+	}
+	return strings.Join(out, "\n\n")
+}
+
+func limitSummaryPaneText(text string, maxApproxTokens int) string {
+	text = strings.TrimSpace(text)
+	if text == "" || maxApproxTokens <= 0 || estimateTextTokens(text) <= maxApproxTokens {
+		return text
+	}
+	paragraphs := splitSummaryPaneParagraphs(text)
+	if len(paragraphs) <= 2 {
+		return trimTextToApproxTokens(text, maxApproxTokens)
+	}
+
+	bridge := "更早的细节先收拢在这里；后面保留最能接上手的线索。"
+	tail := []string{}
+	for i := len(paragraphs) - 1; i >= 1; i-- {
+		candidateTail := append([]string{paragraphs[i]}, tail...)
+		candidate := strings.Join(append([]string{paragraphs[0], bridge}, candidateTail...), "\n\n")
+		if estimateTextTokens(candidate) > maxApproxTokens {
+			continue
+		}
+		tail = candidateTail
+	}
+	if len(tail) == 0 {
+		return trimTextToApproxTokens(strings.Join([]string{paragraphs[0], bridge, paragraphs[len(paragraphs)-1]}, "\n\n"), maxApproxTokens)
+	}
+	return strings.Join(append([]string{paragraphs[0], bridge}, tail...), "\n\n")
+}
+
+func trimTextToApproxTokens(text string, maxApproxTokens int) string {
+	text = strings.TrimSpace(text)
+	if text == "" || maxApproxTokens <= 0 || estimateTextTokens(text) <= maxApproxTokens {
+		return text
+	}
+	runes := []rune(text)
+	for len(runes) > 0 && estimateTextTokens(string(runes)) > maxApproxTokens {
+		keep := len(runes) * maxApproxTokens / maxInt(estimateTextTokens(string(runes)), 1)
+		if keep >= len(runes) {
+			keep = len(runes) - 1
+		}
+		if keep < 1 {
+			keep = 1
+		}
+		runes = runes[:keep]
+	}
+	return strings.TrimSpace(string(runes))
+}
+
+func splitSummaryPaneParagraphs(text string) []string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	blocks := strings.Split(text, "\n\n")
+	out := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+		out = append(out, strings.Join(strings.Fields(block), " "))
+	}
+	return out
+}
+
+func normalizeSummaryPaneParagraph(text string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 }
 
 func estimatePromptTokens(input []openai.Message) int {
