@@ -21,9 +21,15 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
     telemetry.budgets.reduce((sum, b) => sum + b.sparkBalance, 0),
   );
   const houseOk =
+    telemetry.activeRun.isLive &&
     telemetry.activeRun.budgetBlockedRuns === 0 &&
     telemetry.activeRun.residentsErrored === 0 &&
     telemetry.activeRun.transientBlocked === 0;
+  const houseLabel = telemetry.activeRun.isLive ? (houseOk ? "全好" : "有事") : "空着";
+  const heroSub = telemetry.activeRun.isLive
+    ? `程林陪着住的这座 24 小时，已经过了 ${elapsedShort}。她们在做各自的事，你在这里看着就好。`
+    : "现在没有正在进行的 24 小时观察。这里显示最近一次记录、她们留下的消息和房子的状态，别把它当成 live run。";
+  const residentTitle = telemetry.activeRun.isLive ? "三个人现在的样子" : "三个人最近的状态";
 
   return (
     <div className="overview-layout">
@@ -31,14 +37,12 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
         <section className="hero">
           <p className="hero__kicker">观察窗</p>
           <h1 className="hero__title">Jade · Amber · Onyx</h1>
-          <p className="hero__sub">
-            程林陪着住的这座 24 小时，已经过了 {elapsedShort}。她们在做各自的事，你在这里看着就好。
-          </p>
+          <p className="hero__sub">{heroSub}</p>
         </section>
 
         <div className="section-title">
-          <h3>三个人现在的样子</h3>
-          <span className="section-title__hint">rolling 12s</span>
+          <h3>{residentTitle}</h3>
+          <span className="section-title__hint">{telemetry.activeRun.isLive ? "rolling 12s" : "没有 live run"}</span>
         </div>
         <div className="resident-grid">
           {telemetry.residents.map((runtime) => {
@@ -136,10 +140,10 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
             <span className="kpi-card__unit">3 项</span>
           </div>
           <div className={`kpi-card__number ${houseOk ? "kpi-card__number--good" : ""}`}>
-            {houseOk ? "全好" : "有事"}
+            {houseLabel}
           </div>
           <div className="kpi-card__delta">
-            block 0 · 错 0 · transient 0
+            {telemetry.activeRun.isLive ? "block 0 · 错 0 · transient 0" : "当前没有 live 观察"}
           </div>
         </div>
 
@@ -155,15 +159,24 @@ export function OverviewPage({ telemetry, onOpenThread }: OverviewPageProps) {
         </div>
 
         <div className="session-panel">
-          <div className="session-panel__label">这次观察</div>
+          <div className="session-panel__label">{telemetry.activeRun.isLive ? "这次观察" : "最近一次观察"}</div>
           <div className="session-panel__val">{elapsedShort}</div>
           <div className="session-panel__sub">
-            目标 {telemetry.activeRun.targetDuration} · 至 {isoTimeToHm(telemetry.activeRun.expectedEndAt)}
+            {telemetry.activeRun.isLive
+              ? `目标 ${telemetry.activeRun.targetDuration} · 至 ${isoTimeToHm(telemetry.activeRun.expectedEndAt)}`
+              : `${runStatusText(telemetry.activeRun.status)} · 更新 ${isoTimeToHm(telemetry.activeRun.updatedAt)}`}
           </div>
         </div>
       </aside>
     </div>
   );
+}
+
+function runStatusText(status: OperatorTelemetry["activeRun"]["status"]): string {
+  if (status === "finished") return "已结束";
+  if (status === "failed") return "失败";
+  if (status === "paused") return "暂停";
+  return "记录";
 }
 
 function WatchItem({ alert }: { alert: AlertItem }) {

@@ -45,6 +45,7 @@ export const eventStream = [
 
 export const telemetry: OperatorTelemetry = {
   activeRun: {
+    isLive: true,
     runId: "orchestrator-20260630T083000.123456789Z",
     purpose: "24h no-admin autonomy soak",
     status: "running",
@@ -205,9 +206,8 @@ export const telemetry: OperatorTelemetry = {
       priority: "urgent",
       preview: "请求确认：spark 后续是否可以兑换长期存储空间或网络实验额度？",
     },
-    // 特意留一条没有 threadId 的：pending row 会 disabled，
-    // 不会 fallback 到"第一条 thread"让程林回错人。http 模式下这类
-    // 通常是过滤前的孤立 followup；mock 侧留一条，方便看到守卫真在起作用。
+    // Keep one item without a threadId so the pending row stays disabled
+    // instead of falling back to an unrelated world thread.
     {
       kind: "chat",
       resident: "jade",

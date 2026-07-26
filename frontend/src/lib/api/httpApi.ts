@@ -278,7 +278,7 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
 function normalizeSummary(input: ApiSummary): OperatorTelemetry {
   const activeRun = normalizeActiveRun(input.active_run, input.latest_run, input.inspect);
   const budgets = (input.budget?.residents ?? []).map(normalizeBudget).filter(Boolean) as ResidentBudget[];
-  const residents = normalizeResidents(input.active_run?.residents, budgets, input.inspect);
+  const residents = normalizeResidents(input.active_run?.residents, budgets, input.inspect, Boolean(input.active_run));
   const residentBudgets = ensureResidentBudgets(budgets, residents.map((resident) => resident.resident));
   const followups = normalizeFollowups(input.followups, input.inbox);
   const runs = (input.runs ?? []).map((run) => normalizeRunRecord(run, input.inspect));
@@ -322,6 +322,7 @@ function normalizeActiveRun(active: ApiRunStatus | undefined, latest: ApiRunReco
     active?.residents?.map((item) => item.resident) ?? latest?.residents ?? inspect?.latest_orchestrator?.residents_planned,
   );
   return {
+    isLive: Boolean(active),
     runId: source?.run_id ?? "no-active-run",
     purpose: active ? "观察中" : "最近一次观察",
     status: normalizeRunStatus(source?.status),
@@ -343,6 +344,7 @@ function normalizeResidents(
   activeResidents: ApiResidentRunStatus[] | undefined,
   budgets: ResidentBudget[],
   inspect: ApiInspect | undefined,
+  hasLiveRun: boolean,
 ): ResidentRuntime[] {
   const activeByID = new Map((activeResidents ?? []).map((item) => [item.resident, item]));
   const riskByID = new Map((inspect?.resident_risk ?? []).map((item) => [item.resident_id, item]));
@@ -359,7 +361,7 @@ function normalizeResidents(
     const risk = riskByID.get(resident);
     return {
       resident,
-      status: normalizeResidentStatus(active?.status ?? risk?.status),
+      status: hasLiveRun ? normalizeResidentStatus(active?.status ?? risk?.status) : "idle",
       phase: active?.current_phase ?? "",
       round: active?.current_round ?? 0,
       lastAction: active?.last_action ?? "",
@@ -516,8 +518,15 @@ function normalizeAlert(input: ApiAlert): AlertItem {
     severity: severity === "p0" ? "p0" : severity === "p1" ? "p1" : severity === "p2" ? "p2" : "info",
     kind: input.kind,
     resident: asResident(input.resident),
-    message: input.message,
+    message: normalizeAlertMessage(input),
   };
+}
+
+function normalizeAlertMessage(input: ApiAlert): string {
+  if (input.kind === "run_stale") {
+    return input.message.replace(/^这次观察/, "历史观察");
+  }
+  return input.message;
 }
 
 function normalizeFollowupKind(kind: string): FollowupItem["kind"] | null {

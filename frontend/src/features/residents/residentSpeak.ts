@@ -18,6 +18,9 @@ export function verbLabel(action: string): string {
 export type DoingLine = { verb: string; suffix: string };
 
 export function describeDoing(runtime: ResidentRuntime): DoingLine {
+  if (runtime.status === "idle") {
+    return { verb: "没在长测里", suffix: "" };
+  }
   if (runtime.status === "sleeping") {
     if (runtime.sleepUntil) {
       return { verb: `睡到 ${formatClock(runtime.sleepUntil)}`, suffix: "" };
@@ -51,6 +54,8 @@ export function residentStateLabel(status: ResidentStatus): {
 
 function statusToText(status: ResidentStatus): string {
   switch (status) {
+    case "idle":
+      return "待着";
     case "blocked":
       return "挡住";
     case "error":

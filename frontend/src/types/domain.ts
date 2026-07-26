@@ -1,6 +1,6 @@
 export type ResidentId = "jade" | "amber" | "onyx";
 
-export type ResidentStatus = "running" | "sleeping" | "finished" | "error" | "blocked";
+export type ResidentStatus = "running" | "sleeping" | "finished" | "error" | "blocked" | "idle";
 
 export type Severity = "p0" | "p1" | "p2" | "info";
 
@@ -38,6 +38,7 @@ export interface SleepState {
 }
 
 export interface ActiveRun {
+  isLive: boolean;
   runId: string;
   purpose: string;
   status: RunStatus;

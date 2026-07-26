@@ -80,7 +80,7 @@ func runFreshnessAlertAt(status orchestrator.RunStatus, now time.Time, threshold
 		Severity: "P1",
 		Kind:     "run_stale",
 		RunID:    status.RunID,
-		Message:  fmt.Sprintf("这次观察已经 %s 没有新动静。", humanDuration(age.Round(time.Second))),
+		Message:  fmt.Sprintf("历史观察已经 %s 没有新动静。", humanDuration(age.Round(time.Second))),
 		Since:    status.UpdatedAt,
 	}
 }

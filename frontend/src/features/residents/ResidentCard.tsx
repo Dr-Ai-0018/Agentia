@@ -44,7 +44,7 @@ export function ResidentCard({ runtime, budget, spark }: ResidentCardProps) {
       <p className="resident-card__doing">
         {doing.verb ? (
           <>
-            {runtime.status === "sleeping" ? "" : "正在"}
+            {runtime.status === "sleeping" || runtime.status === "idle" ? "" : "正在"}
             <span className="resident-card__doing-verb">{doing.verb}</span>
             {doing.suffix ? ` ${doing.suffix}` : ""}
           </>
