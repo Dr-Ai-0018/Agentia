@@ -2,6 +2,7 @@ import { MessageCircleMore } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { residentLabel } from "../features/residents/residentTheme";
 import { ReplyComposer } from "../features/world-chat/ReplyComposer";
+import { TicketWorkspace } from "../features/world-chat/TicketWorkspace";
 import { WorldChatThread } from "../features/world-chat/WorldChatThread";
 import { loadPersistedDrafts, persistDrafts } from "../features/world-chat/draftPersistence";
 import { draftFromThread } from "../features/world-chat/worldSafeMappers";
@@ -23,6 +24,7 @@ type WorldChatPageProps = AssertWorldSurfaceIsolated<{
 type SendState = { status: "idle" | "sending" | "error"; error?: string };
 
 export function WorldChatPage({ threads, activeThreadId, onSelectThread }: WorldChatPageProps) {
+  const [view, setView] = useState<"chat" | "tickets">("chat");
   const [localThreads, setLocalThreads] = useState<WorldVisibleThread[]>(threads);
   const [drafts, setDrafts] = useState<Record<string, ReplyDraft>>(() => loadPersistedDrafts());
   const [sendByThread, setSendByThread] = useState<Record<string, SendState>>({});
@@ -98,7 +100,12 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
   }
 
   return (
-    <div className="world-chat-page">
+    <div className="world-communication">
+      <div className="world-communication__tabs" role="tablist" aria-label="对话与单据">
+        <button type="button" role="tab" aria-selected={view === "chat"} className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>对话</button>
+        <button type="button" role="tab" aria-selected={view === "tickets"} className={view === "tickets" ? "active" : ""} onClick={() => setView("tickets")}>单据</button>
+      </div>
+      {view === "tickets" ? <TicketWorkspace /> : <div className="world-chat-page">
       <aside className="thread-list" aria-label="住户会话">
         <div className="thread-list__title">
           <span className="thread-list__title-h">对话</span>
@@ -151,6 +158,7 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
           onSubmit={submitDraft}
         />
       </div>
+      </div>}
     </div>
   );
 }

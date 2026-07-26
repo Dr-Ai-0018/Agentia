@@ -265,6 +265,43 @@ export interface WorldTicketReplyRequest {
   boundary_ack: true;
 }
 
+export type TicketStatus = "open" | "answered" | "closed";
+export type TicketPriority = "low" | "medium" | "high" | "urgent";
+
+export interface WorldTicketSummary {
+  id: string;
+  resident: ResidentId;
+  title: string;
+  priority: TicketPriority;
+  status: TicketStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastReplyAt?: string;
+  lastPreview: string;
+  replyCount: number;
+  needsReply: boolean;
+}
+
+export interface WorldTicketReply {
+  id: string;
+  from: "chenglin" | ResidentId;
+  body: string;
+  createdAt: string;
+}
+
+export interface WorldTicket {
+  id: string;
+  resident: ResidentId;
+  title: string;
+  body: string;
+  priority: TicketPriority;
+  status: TicketStatus;
+  createdAt: string;
+  updatedAt: string;
+  openedBy: string;
+  replies: WorldTicketReply[];
+}
+
 // Compaction diagnostics types are operator-only long-run continuity data.
 // Residents never see any of this; the console panel reads these fields.
 export type CompactionTriggerReason =

@@ -72,6 +72,50 @@ globalThis.fetch = async (url, init = {}) => {
       status: "delivered",
     });
   }
+  if (url === "/api/tickets?limit=100") {
+    return jsonResponse([{
+      id: "ticket-jade-1",
+      resident: "jade",
+      title: "Need guidance",
+      priority: "high",
+      status: "answered",
+      created_at: "2026-07-25T10:00:00Z",
+      updated_at: "2026-07-26T10:00:00Z",
+      last_reply_at: "2026-07-26T10:00:00Z",
+      last_preview: "完整回复预览",
+      reply_count: 2,
+      needs_reply: false,
+    }]);
+  }
+  if (url === "/api/tickets/ticket-jade-1") {
+    return jsonResponse({
+      id: "ticket-jade-1",
+      resident: "jade",
+      title: "Need guidance",
+      body: "完整的原始单据正文",
+      priority: "high",
+      status: "answered",
+      created_at: "2026-07-25T10:00:00Z",
+      updated_at: "2026-07-26T10:00:00Z",
+      opened_by: "jade",
+      replies: [{ id: "reply-1", from: "chenglin", body: "第一条回复", created_at: "2026-07-26T09:00:00Z" }],
+    });
+  }
+  if (url === "/api/ticket-reply") {
+    const input = JSON.parse(init.body);
+    return jsonResponse({
+      id: input.ticket_id,
+      resident: "jade",
+      title: "Need guidance",
+      body: "完整的原始单据正文",
+      priority: "high",
+      status: input.close ? "closed" : "answered",
+      created_at: "2026-07-25T10:00:00Z",
+      updated_at: "2026-07-26T11:00:00Z",
+      opened_by: "jade",
+      replies: [{ id: "reply-new", from: "chenglin", body: input.body, created_at: "2026-07-26T11:00:00Z" }],
+    });
+  }
   throw new Error(`unexpected request ${url}`);
 };
 
@@ -95,3 +139,14 @@ assert.deepEqual(JSON.parse(requests.at(-1).init.body), {
   body: "连续主动消息",
   boundary_ack: true,
 });
+
+const tickets = await api.listTickets();
+assert.equal(tickets[0].status, "answered");
+assert.equal(tickets[0].replyCount, 2);
+assert.equal(tickets[0].needsReply, false);
+const ticket = await api.getTicket("ticket-jade-1");
+assert.equal(ticket.body, "完整的原始单据正文");
+assert.equal(ticket.replies[0].body, "第一条回复");
+const closed = await api.sendWorldTicketReply({ ticket_id: "ticket-jade-1", body: "处理完了", close: true, boundary_ack: true });
+assert.equal(closed.status, "closed");
+assert.equal(closed.replies[0].body, "处理完了");

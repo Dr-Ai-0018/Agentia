@@ -18,6 +18,8 @@ import type {
   WorldChatRequest,
   WorldMessage,
   WorldThreadPage,
+  WorldTicket,
+  WorldTicketSummary,
   WorldTicketReplyRequest,
   WorldVisibleThread,
 } from "../../types/domain";
@@ -182,6 +184,22 @@ type ApiTicketSummary = {
   created_at?: string;
   updated_at?: string;
   last_preview?: string;
+  last_reply_at?: string;
+  reply_count?: number;
+  needs_reply?: boolean;
+};
+
+type ApiTicket = {
+  id: string;
+  resident: string;
+  title?: string;
+  body?: string;
+  priority?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  opened_by?: string;
+  replies?: Array<{ id: string; from?: string; body?: string; created_at?: string }>;
 };
 
 type ApiFollowup = {
@@ -306,13 +324,29 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
   }
 
   async sendWorldTicketReply(input: WorldTicketReplyRequest) {
-    return parseJson(
+    return normalizeTicket(await parseJson<ApiTicket>(
       await fetch(this.url("/ticket-reply"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       }),
-    );
+    ));
+  }
+
+  async listTickets(filters: { resident?: ResidentId; status?: string; priority?: string; limit?: number } = {}) {
+    const query = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+    if (filters.resident) query.set("resident", filters.resident);
+    if (filters.status) query.set("status", filters.status);
+    if (filters.priority) query.set("priority", filters.priority);
+    const tickets = await parseJson<ApiTicketSummary[]>(await fetch(this.url(`/tickets?${query.toString()}`)));
+    return tickets.flatMap((ticket) => {
+      const normalized = normalizeTicketSummary(ticket);
+      return normalized ? [normalized] : [];
+    });
+  }
+
+  async getTicket(ticketId: string) {
+    return normalizeTicket(await parseJson<ApiTicket>(await fetch(this.url(`/tickets/${encodeURIComponent(ticketId)}`))));
   }
 
   async getPreflight() {
@@ -324,6 +358,56 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
     // CompactionDiagnostics type, so no normalization layer is needed.
     return parseJson(await fetch(this.url("/diagnostics/compaction")));
   }
+}
+
+function normalizeTicketSummary(input: ApiTicketSummary): WorldTicketSummary | null {
+  const resident = asResident(input.resident);
+  if (!resident) return null;
+  return {
+    id: input.id,
+    resident,
+    title: input.title ?? "未命名单据",
+    priority: normalizeTicketPriority(input.priority),
+    status: normalizeTicketStatus(input.status),
+    createdAt: input.created_at ?? "",
+    updatedAt: input.updated_at ?? input.created_at ?? "",
+    lastReplyAt: input.last_reply_at || undefined,
+    lastPreview: input.last_preview ?? "",
+    replyCount: input.reply_count ?? 0,
+    needsReply: input.needs_reply ?? input.status === "open",
+  };
+}
+
+function normalizeTicket(input: ApiTicket): WorldTicket {
+  const resident = asResident(input.resident);
+  if (!resident) throw new Error(`Unknown resident in ticket: ${input.resident}`);
+  return {
+    id: input.id,
+    resident,
+    title: input.title ?? "未命名单据",
+    body: input.body ?? "",
+    priority: normalizeTicketPriority(input.priority),
+    status: normalizeTicketStatus(input.status),
+    createdAt: input.created_at ?? "",
+    updatedAt: input.updated_at ?? input.created_at ?? "",
+    openedBy: input.opened_by ?? resident,
+    replies: (input.replies ?? []).map((reply) => ({
+      id: reply.id,
+      from: reply.from === "chenglin" ? "chenglin" : resident,
+      body: reply.body ?? "",
+      createdAt: reply.created_at ?? "",
+    })),
+  };
+}
+
+function normalizeTicketStatus(value: string | undefined): WorldTicket["status"] {
+  if (value === "answered" || value === "closed") return value;
+  return "open";
+}
+
+function normalizeTicketPriority(value: string | undefined): WorldTicket["priority"] {
+  if (value === "low" || value === "high" || value === "urgent") return value;
+  return "medium";
 }
 
 function normalizeSummary(input: ApiSummary): OperatorTelemetry {

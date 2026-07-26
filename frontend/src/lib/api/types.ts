@@ -10,6 +10,8 @@ import type {
   WorldChatRequest,
   WorldMessage,
   WorldThreadPage,
+  WorldTicket,
+  WorldTicketSummary,
   WorldTicketReplyRequest,
   WorldVisibleThread,
 } from "../../types/domain";
@@ -25,7 +27,9 @@ export interface ArenaConsoleApi {
   getResidentThreads(resident: ResidentId): Promise<WorldVisibleThread[]>;
   sendWorldChatReply(input: WorldChatReplyRequest): Promise<WorldMessage>;
   sendWorldChat(input: WorldChatRequest): Promise<WorldMessage>;
-  sendWorldTicketReply(input: WorldTicketReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
+  sendWorldTicketReply(input: WorldTicketReplyRequest): Promise<WorldTicket>;
+  listTickets(filters?: { resident?: ResidentId; status?: string; priority?: string; limit?: number }): Promise<WorldTicketSummary[]>;
+  getTicket(ticketId: string): Promise<WorldTicket>;
   getPreflight(): Promise<PreflightResponse>;
   getCompactionDiagnostics(): Promise<CompactionDiagnostics>;
 }

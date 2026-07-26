@@ -81,9 +81,30 @@ export class MockArenaConsoleApi implements ArenaConsoleApi {
     };
   }
 
-  async sendWorldTicketReply() {
+  async sendWorldTicketReply(input: import("../../types/domain").WorldTicketReplyRequest): Promise<import("../../types/domain").WorldTicket> {
     await wait(140);
-    return { ok: true as const, acceptedAt: new Date().toISOString() };
+    return {
+      id: input.ticket_id,
+      resident: "jade",
+      title: "Mock ticket",
+      body: "Mock ticket body",
+      priority: "medium",
+      status: input.close ? "closed" : "answered",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      openedBy: "jade",
+      replies: [{ id: `reply-${Date.now()}`, from: "chenglin", body: input.body, createdAt: new Date().toISOString() }],
+    };
+  }
+
+  async listTickets() {
+    await wait();
+    return [];
+  }
+
+  async getTicket(ticketId: string): Promise<import("../../types/domain").WorldTicket> {
+    await wait();
+    throw new Error(`World ticket not found: ${ticketId}`);
   }
 
   async getPreflight() {
