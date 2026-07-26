@@ -361,8 +361,8 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "followups_unavailable", err)
 		return
 	}
-	inspect, _ := s.broker.RunHostInspectSummary(limit)
-	acceptance, _ := s.broker.RunV0Acceptance(limit)
+	inspect, _ := s.runHostInspectSummary(limit)
+	acceptance, _ := s.runV0Acceptance(limit)
 	var latest *orchestrator.RunRecord
 	var active *orchestrator.RunStatus
 	var staleRunAlerts []OperatorAlert
@@ -618,7 +618,7 @@ func (s *Server) handleThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleInspectSummary(w http.ResponseWriter, r *http.Request) {
-	out, err := s.broker.RunHostInspectSummary(queryInt(r, "limit", 20))
+	out, err := s.runHostInspectSummary(queryInt(r, "limit", 20))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "inspect_unavailable", err)
 		return
@@ -627,12 +627,20 @@ func (s *Server) handleInspectSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAcceptance(w http.ResponseWriter, r *http.Request) {
-	out, err := s.broker.RunV0Acceptance(queryInt(r, "limit", 20))
+	out, err := s.runV0Acceptance(queryInt(r, "limit", 20))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "acceptance_unavailable", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) runHostInspectSummary(limit int) (broker.HostInspectSummary, error) {
+	return s.broker.RunHostInspectSummaryFromSnapshot(limit)
+}
+
+func (s *Server) runV0Acceptance(limit int) (broker.V0AcceptanceOutput, error) {
+	return s.broker.RunV0AcceptanceFromSnapshot(limit)
 }
 
 func (s *Server) handleAcceptanceEvidence(w http.ResponseWriter, r *http.Request) {

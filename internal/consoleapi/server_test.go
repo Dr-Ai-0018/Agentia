@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"ai-arena/internal/broker"
 	"ai-arena/internal/orchestrator"
 	"ai-arena/internal/runtime/newborn"
 	"ai-arena/internal/worldstate"
@@ -168,6 +169,56 @@ func TestPreflightReportsAccessWarnings(t *testing.T) {
 	}
 	if out.Overall != "watch" {
 		t.Fatalf("overall = %q, want watch", out.Overall)
+	}
+}
+
+func TestInspectSummaryRouteUsesCachedSnapshot(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 26, 3, 0, 0, 0, time.UTC)
+	server := New(Options{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	writeConsoleInventorySnapshot(t, root, now)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/system/inspect-summary", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var out broker.HostInspectSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode inspect summary: %v", err)
+	}
+	if out.ResidentCount != 3 {
+		t.Fatalf("resident count = %d, want 3", out.ResidentCount)
+	}
+}
+
+func TestAcceptanceRouteUsesCachedSnapshot(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 26, 3, 0, 0, 0, time.UTC)
+	server := New(Options{
+		Root: root,
+		Now:  func() time.Time { return now },
+	})
+	writeConsoleInventorySnapshot(t, root, now)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/acceptance", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var out broker.V0AcceptanceOutput
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode acceptance: %v", err)
+	}
+	if out.Source != "cached" {
+		t.Fatalf("source = %q, want cached", out.Source)
 	}
 }
 
@@ -384,6 +435,50 @@ func writeTestJSON(t *testing.T, path string, value any) {
 	}
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func writeConsoleInventorySnapshot(t *testing.T, root string, now time.Time) {
+	t.Helper()
+	if _, err := broker.SaveInventorySnapshot(root, broker.InventorySnapshot{
+		CollectedAt: now.Format(time.RFC3339),
+		Residents: []broker.ResidentInventoryFact{
+			{
+				ResidentID:     "amber",
+				InstanceName:   "amber",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           2,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        20,
+				IPv4:           "10.0.0.2",
+				UpdatedAt:      now.Format(time.RFC3339),
+			},
+			{
+				ResidentID:     "jade",
+				InstanceName:   "jade",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           2,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        20,
+				IPv4:           "10.0.0.3",
+				UpdatedAt:      now.Format(time.RFC3339),
+			},
+			{
+				ResidentID:     "onyx",
+				InstanceName:   "onyx",
+				Status:         "Running",
+				Type:           "virtual-machine",
+				VCPU:           2,
+				MemoryLimitMiB: 2048,
+				DiskGiB:        20,
+				IPv4:           "10.0.0.4",
+				UpdatedAt:      now.Format(time.RFC3339),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("save inventory snapshot: %v", err)
 	}
 }
 
