@@ -1,25 +1,18 @@
-// WorldChatPage is the entry to the world-visible surface. Its props are pinned
-// to a narrow shape so future outside-observation fields fail at type-check.
-// Do not weaken this boundary; the reply composer subtree depends on it.
-
+import { MessageCircleMore } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { arenaApi } from "../lib/api/client";
-import { buildChatReplyRequest, buildTicketReplyRequest } from "../lib/reply";
+import { residentLabel } from "../features/residents/residentTheme";
 import { ReplyComposer } from "../features/world-chat/ReplyComposer";
 import { WorldChatThread } from "../features/world-chat/WorldChatThread";
-import { draftFromThread } from "../features/world-chat/worldSafeMappers";
 import { loadPersistedDrafts, persistDrafts } from "../features/world-chat/draftPersistence";
+import { draftFromThread } from "../features/world-chat/worldSafeMappers";
+import { arenaApi } from "../lib/api/client";
+import { buildChatReplyRequest } from "../lib/reply";
 import type {
   AssertWorldSurfaceIsolated,
   ReplyDraft,
+  WorldMessage,
   WorldVisibleThread,
 } from "../types/domain";
-import { residentLabel } from "../features/residents/residentTheme";
-
-const kindLabel: Record<WorldVisibleThread["kind"], string> = {
-  chat: "对话",
-  ticket: "单据",
-};
 
 type WorldChatPageProps = AssertWorldSurfaceIsolated<{
   threads: WorldVisibleThread[];
@@ -27,10 +20,20 @@ type WorldChatPageProps = AssertWorldSurfaceIsolated<{
   onSelectThread: (threadId: string) => void;
 }>;
 
+type SendState = { status: "idle" | "sending" | "error"; error?: string };
+
 export function WorldChatPage({ threads, activeThreadId, onSelectThread }: WorldChatPageProps) {
-  const activeThread = threads.find((thread) => thread.threadId === activeThreadId) ?? threads[0];
+  const [localThreads, setLocalThreads] = useState<WorldVisibleThread[]>(threads);
   const [drafts, setDrafts] = useState<Record<string, ReplyDraft>>(() => loadPersistedDrafts());
-  const [sendState, setSendState] = useState<"idle" | "sending" | "sent">("idle");
+  const [sendByThread, setSendByThread] = useState<Record<string, SendState>>({});
+  const [replyTargetByThread, setReplyTargetByThread] = useState<Record<string, WorldMessage | undefined>>({});
+  const [loadingOlder, setLoadingOlder] = useState("");
+
+  useEffect(() => {
+    setLocalThreads((current) => mergeThreads(current, threads));
+  }, [threads]);
+
+  const activeThread = localThreads.find((thread) => thread.threadId === activeThreadId) ?? localThreads[0];
 
   useEffect(() => {
     if (!activeThread) return;
@@ -40,52 +43,68 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
     });
   }, [activeThread]);
 
-  useEffect(() => {
-    persistDrafts(drafts);
-  }, [drafts]);
+  useEffect(() => persistDrafts(drafts), [drafts]);
 
   const draft = activeThread ? drafts[activeThread.threadId] : undefined;
-  const selectedMessages = useMemo(() => activeThread?.messages ?? [], [activeThread]);
+  const sendState = activeThread ? sendByThread[activeThread.threadId] ?? { status: "idle" } : { status: "idle" as const };
+  const replyTarget = activeThread ? replyTargetByThread[activeThread.threadId] : undefined;
+  const contacts = useMemo(() => localThreads, [localThreads]);
 
   async function submitDraft(input: ReplyDraft) {
-    setSendState("sending");
+    const thread = localThreads.find((item) => item.threadId === input.threadId);
+    if (!thread) return;
+    setSendByThread((current) => ({ ...current, [input.threadId]: { status: "sending" } }));
     try {
-      if (input.kind === "ticket_reply") {
-        await arenaApi.sendWorldTicketReply(buildTicketReplyRequest(input));
-      } else {
-        await arenaApi.sendWorldChatReply(buildChatReplyRequest(input));
-      }
-      setSendState("sent");
-      setDrafts((current) => {
-        if (!(input.threadId in current)) return current;
-        const next = { ...current };
-        delete next[input.threadId];
-        return next;
-      });
-    } catch (submitError) {
-      setSendState("idle");
-      throw submitError;
+      const target = replyTargetByThread[input.threadId];
+      const sent = target
+        ? await arenaApi.sendWorldChatReply(buildChatReplyRequest({ ...input, targetId: target.id }))
+        : await arenaApi.sendWorldChat({ resident: input.residentId, body: input.body, boundary_ack: true });
+      setLocalThreads((current) => current.map((item) => item.threadId === input.threadId
+        ? appendMessage(item, sent)
+        : item));
+      setDrafts((current) => ({
+        ...current,
+        [input.threadId]: { ...input, body: "", boundaryAck: false, targetId: "", clientNonce: crypto.randomUUID() },
+      }));
+      setReplyTargetByThread((current) => ({ ...current, [input.threadId]: undefined }));
+      setSendByThread((current) => ({ ...current, [input.threadId]: { status: "idle" } }));
+    } catch (error) {
+      setSendByThread((current) => ({
+        ...current,
+        [input.threadId]: { status: "error", error: error instanceof Error ? error.message : String(error) },
+      }));
+    }
+  }
+
+  async function loadOlder() {
+    if (!activeThread?.nextBefore || loadingOlder) return;
+    setLoadingOlder(activeThread.threadId);
+    try {
+      const page = await arenaApi.getWorldThreadPage(activeThread.resident, activeThread.nextBefore);
+      setLocalThreads((current) => current.map((thread) => thread.threadId === activeThread.threadId ? {
+        ...thread,
+        messages: mergeMessages(page.messages, thread.messages),
+        total: page.total,
+        hasMore: page.hasMore,
+        nextBefore: page.nextBefore,
+      } : thread));
+    } finally {
+      setLoadingOlder("");
     }
   }
 
   if (!activeThread || !draft) {
-    return (
-      <div className="world-chat-empty">
-        <h2>暂时没有需要程林回话的线</h2>
-        <p>住户们说了话之后，会出现在这里等程林回。</p>
-      </div>
-    );
+    return <div className="world-chat-empty">会话正在连上。</div>;
   }
 
   return (
     <div className="world-chat-page">
-      <aside className="thread-list">
+      <aside className="thread-list" aria-label="住户会话">
         <div className="thread-list__title">
-          <span className="thread-list__title-h">程林还没回话的</span>
-          <span className="thread-list__title-n">{threads.length} 条</span>
+          <span className="thread-list__title-h">对话</span>
+          <span className="thread-list__title-n">3 位住户</span>
         </div>
-        {threads.map((thread) => {
-          const last = thread.messages[thread.messages.length - 1];
+        {contacts.map((thread) => {
           const isActive = thread.threadId === activeThread.threadId;
           const hasDraft = Boolean(drafts[thread.threadId]?.body.trim());
           return (
@@ -95,31 +114,88 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
               className={isActive ? "active" : ""}
               onClick={() => onSelectThread(thread.threadId)}
             >
-              <div className="thread-list__row-head">
-                <strong>
-                  {residentLabel(thread.resident)}
-                  {hasDraft ? <span className="thread-list__draft-dot" title="有未发出的草稿">·</span> : null}
-                </strong>
-                <span>{kindLabel[thread.kind]}</span>
-              </div>
-              <small>{last?.body}</small>
+              <span className="thread-list__avatar">{residentLabel(thread.resident).slice(0, 1)}</span>
+              <span className="thread-list__body">
+                <span className="thread-list__row-head">
+                  <strong>{residentLabel(thread.resident)}{hasDraft ? <i>草稿</i> : null}</strong>
+                  <time>{formatContactTime(thread.lastMessageAt)}</time>
+                </span>
+                <small>{thread.lastPreview || thread.messages.at(-1)?.body || "还没有说过话"}</small>
+              </span>
+              {thread.pendingCount > 0 ? <span className="thread-list__unread">{thread.pendingCount > 99 ? "99+" : thread.pendingCount}</span> : null}
             </button>
           );
         })}
       </aside>
       <div className="world-chat-main">
-        <WorldChatThread thread={{ ...activeThread, messages: selectedMessages }} />
+        <div className="world-chat-main__head">
+          <MessageCircleMore size={18} />
+          <div><strong>{residentLabel(activeThread.resident)}</strong><span>{activeThread.total} 条消息</span></div>
+        </div>
+        <WorldChatThread
+          thread={activeThread}
+          onLoadOlder={loadOlder}
+          onReply={(message) => setReplyTargetByThread((current) => ({ ...current, [activeThread.threadId]: message }))}
+          isLoadingOlder={loadingOlder === activeThread.threadId}
+        />
         <ReplyComposer
           draft={draft}
-          isSending={sendState === "sending"}
-          onDraftChange={(nextDraft) => {
-            setSendState("idle");
-            setDrafts((current) => ({ ...current, [nextDraft.threadId]: nextDraft }));
+          replyTarget={replyTarget}
+          isSending={sendState.status === "sending"}
+          error={sendState.error}
+          onCancelReply={() => setReplyTargetByThread((current) => ({ ...current, [activeThread.threadId]: undefined }))}
+          onDraftChange={(next) => {
+            setDrafts((current) => ({ ...current, [next.threadId]: next }));
+            setSendByThread((current) => ({ ...current, [next.threadId]: { status: "idle" } }));
           }}
           onSubmit={submitDraft}
         />
-        {sendState === "sent" && <div className="sent-banner">回话已送出。</div>}
       </div>
     </div>
   );
+}
+
+function mergeThreads(current: WorldVisibleThread[], incoming: WorldVisibleThread[]): WorldVisibleThread[] {
+  if (current.length === 0) return incoming;
+  const currentByID = new Map(current.map((thread) => [thread.threadId, thread]));
+  return incoming.map((next) => {
+    const previous = currentByID.get(next.threadId);
+    if (!previous) return next;
+    const hasLoadedOlder = previous.messages.length > next.messages.length;
+    return {
+      ...next,
+      messages: mergeMessages(previous.messages, next.messages),
+      hasMore: hasLoadedOlder ? previous.hasMore : next.hasMore,
+      nextBefore: hasLoadedOlder ? previous.nextBefore : next.nextBefore,
+    };
+  });
+}
+
+function mergeMessages(...groups: WorldMessage[][]): WorldMessage[] {
+  const byID = new Map<string, WorldMessage>();
+  for (const group of groups) for (const message of group) byID.set(message.id, message);
+  return [...byID.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function appendMessage(thread: WorldVisibleThread, message: WorldMessage): WorldVisibleThread {
+  const messages = mergeMessages(thread.messages, [message]);
+  return {
+    ...thread,
+    messages,
+    total: Math.max(thread.total + (messages.length > thread.messages.length ? 1 : 0), messages.length),
+    lastMessageAt: message.createdAt,
+    lastPreview: message.body,
+    deliveredCount: thread.deliveredCount + (message.status === "delivered" ? 1 : 0),
+  };
+}
+
+function formatContactTime(value?: string): string {
+  if (!value) return "";
+  const time = new Date(value);
+  if (Number.isNaN(time.getTime())) return value;
+  const now = new Date();
+  if (time.toDateString() === now.toDateString()) {
+    return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(time);
+  }
+  return new Intl.DateTimeFormat(undefined, { month: "numeric", day: "numeric" }).format(time);
 }

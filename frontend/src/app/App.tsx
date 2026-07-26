@@ -60,7 +60,8 @@ export function App() {
   }, [telemetry, fetchOnce]);
 
   const openThread = useCallback((threadId: string) => {
-    setActiveThreadId(threadId);
+    const resident = threadId.match(/(?:chat|ticket)-(jade|amber|onyx)(?:-|$)/)?.[1];
+    setActiveThreadId(resident ? `chat-${resident}` : threadId);
     setPage("world-chat");
   }, []);
 

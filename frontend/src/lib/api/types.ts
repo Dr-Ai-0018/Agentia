@@ -23,7 +23,7 @@ export interface ArenaConsoleApi {
   listWorldThreads(): Promise<WorldVisibleThread[]>;
   listAlerts(): Promise<AlertItem[]>;
   getResidentThreads(resident: ResidentId): Promise<WorldVisibleThread[]>;
-  sendWorldChatReply(input: WorldChatReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
+  sendWorldChatReply(input: WorldChatReplyRequest): Promise<WorldMessage>;
   sendWorldChat(input: WorldChatRequest): Promise<WorldMessage>;
   sendWorldTicketReply(input: WorldTicketReplyRequest): Promise<{ ok: true; acceptedAt: string }>;
   getPreflight(): Promise<PreflightResponse>;

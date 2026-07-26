@@ -286,13 +286,13 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
   }
 
   async sendWorldChatReply(input: WorldChatReplyRequest) {
-    return parseJson(
+    return messageFromThreadMessage(await parseJson<ApiThreadMessage>(
       await fetch(this.url("/reply"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       }),
-    );
+    ));
   }
 
   async sendWorldChat(input: WorldChatRequest) {

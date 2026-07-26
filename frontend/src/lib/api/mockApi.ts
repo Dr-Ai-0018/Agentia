@@ -54,9 +54,18 @@ export class MockArenaConsoleApi implements ArenaConsoleApi {
     return Object.values(threads).filter((thread) => thread.resident === resident);
   }
 
-  async sendWorldChatReply() {
+  async sendWorldChatReply(input: import("../../types/domain").WorldChatReplyRequest) {
     await wait(140);
-    return { ok: true as const, acceptedAt: new Date().toISOString() };
+    return {
+      id: `mock-reply-${Date.now()}`,
+      from: "chenglin" as const,
+      to: "jade" as const,
+      direction: "chenglin_to_resident" as const,
+      createdAt: new Date().toISOString(),
+      body: input.body,
+      status: "delivered" as const,
+      replyToId: input.message_id,
+    };
   }
 
   async sendWorldChat(input: import("../../types/domain").WorldChatRequest) {
