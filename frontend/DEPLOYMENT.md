@@ -109,6 +109,17 @@ Do not edit or restart the service during launch cleanup without fresh host appr
 
 ## Smoke Checks
 
+Use the safe smoke helper for API/artifact checks that need credentials:
+
+```bash
+scripts/ops/console-safe-smoke.sh
+```
+
+This helper must remain the default path for launch cleanup. It reads local
+credential files into shell variables, passes them to `curl` through stdin
+config, and prints only safe facts such as HTTP status codes, asset paths, hash
+matches, summary state, abandoned run IDs, and bundle string scan results.
+
 Public unauthenticated checks should return 401:
 
 ```bash
@@ -123,7 +134,9 @@ Authenticated browser review should confirm:
 - page navigation emits `/api/summary`, `/api/inbox`, `/api/preflight`, and `/api/diagnostics/compaction` requests;
 - API failures surface as operator-facing errors, not silent mock fallbacks.
 
-Backend direct token checks may be run locally, but command output must not print token values.
+Do not run ad hoc credential-bearing commands such as `curl -u ...` or
+`curl -H X-Arena-Console-Token: ...` during launch cleanup. If the helper is
+insufficient, extend the helper first.
 
 ## Security Requirements
 
