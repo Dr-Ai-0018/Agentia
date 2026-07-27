@@ -1,6 +1,7 @@
 package newborn
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1468,6 +1470,27 @@ func TestRunnerReportRecordsActionFailureRawOutput(t *testing.T) {
 	if !strings.Contains(string(raw), `"action_error": true`) || !strings.Contains(string(raw), `"raw_output": "cat: write error: No space left on device"`) {
 		t.Fatalf("expected action error and raw output in report json: %s", raw)
 	}
+	journalMatches, err := filepath.Glob(filepath.Join(dir, "runs", "jade-*", "rounds.jsonl"))
+	if err != nil {
+		t.Fatalf("glob round journal: %v", err)
+	}
+	if len(journalMatches) != 1 {
+		t.Fatalf("expected one round journal, got %#v", journalMatches)
+	}
+	journalRaw, err := os.ReadFile(journalMatches[0])
+	if err != nil {
+		t.Fatalf("read round journal: %v", err)
+	}
+	if bytes.Count(journalRaw, []byte{'\n'}) != 1 || !strings.Contains(string(journalRaw), `"raw_output":"cat: write error: No space left on device"`) {
+		t.Fatalf("expected one complete durable round entry: %s", journalRaw)
+	}
+	var durableRound RoundLog
+	if err := json.Unmarshal(bytes.TrimSpace(journalRaw), &durableRound); err != nil {
+		t.Fatalf("decode durable round: %v", err)
+	}
+	if !reflect.DeepEqual(durableRound, report.RoundLogs[0]) {
+		t.Fatalf("final report round differs from journal\n journal=%#v\n report=%#v", durableRound, report.RoundLogs[0])
+	}
 }
 
 func TestRunnerStopsAfterResidentNoop(t *testing.T) {
@@ -1605,6 +1628,27 @@ func TestRunnerDoesNotExecuteActionWhenActualUsageDenied(t *testing.T) {
 	}
 	if !round.ActionError || round.ErrorKind != "actual_usage_denied" {
 		t.Fatalf("expected non-executed action error marker, got %#v", round)
+	}
+	journalMatches, err := filepath.Glob(filepath.Join(dir, "runs", "jade-*", "rounds.jsonl"))
+	if err != nil {
+		t.Fatalf("glob round journal: %v", err)
+	}
+	if len(journalMatches) != 1 {
+		t.Fatalf("expected one round journal, got %#v", journalMatches)
+	}
+	journalRaw, err := os.ReadFile(journalMatches[0])
+	if err != nil {
+		t.Fatalf("read round journal: %v", err)
+	}
+	if bytes.Count(journalRaw, []byte{'\n'}) != 1 {
+		t.Fatalf("expected one complete durable denied round: %s", journalRaw)
+	}
+	var durableRound RoundLog
+	if err := json.Unmarshal(bytes.TrimSpace(journalRaw), &durableRound); err != nil {
+		t.Fatalf("decode durable denied round: %v", err)
+	}
+	if !reflect.DeepEqual(durableRound, round) {
+		t.Fatalf("denied round differs from journal\n journal=%#v\n report=%#v", durableRound, round)
 	}
 	events, _, err := brokerstate.New(filepath.Join(dir, "agents", "brokerstate")).LoadQuotaEvents("jade")
 	if err != nil {

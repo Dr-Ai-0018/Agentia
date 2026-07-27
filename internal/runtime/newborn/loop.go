@@ -141,6 +141,9 @@ func isConversationPurpose(purpose string) bool {
 func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (FinalReport, error) {
 	started := time.Now().UTC()
 	deadline := started.Add(duration)
+	if err := r.reports.Begin(outDir, started, profile.Name); err != nil {
+		return FinalReport{}, fmt.Errorf("initialize durable round journal: %w", err)
+	}
 	if resetResident {
 		if err := r.budget.ResetResident(profile.Name, started); err != nil {
 			return FinalReport{}, fmt.Errorf("reset resident baseline: %w", err)
@@ -326,7 +329,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			totalInputTokens += result.InputTokens
 			totalCachedTokens += result.CachedTokens
 			totalOutputTokens += result.OutputTokens
-			roundLogs = append(roundLogs, RoundLog{
+			roundLog := RoundLog{
 				Round:        round,
 				RemainingSec: remaining,
 				Decision:     decision,
@@ -340,7 +343,10 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				CachedTokens: result.CachedTokens,
 				OutputTokens: result.OutputTokens,
 				Broker:       brokerLog,
-			})
+			}
+			if err := r.persistRound(outDir, started, profile.Name, &roundLogs, roundLog); err != nil {
+				return FinalReport{}, fmt.Errorf("round %d durable journal append failed: %w", round, err)
+			}
 			stoppedReason = brokerDeniedStopReason("broker_actual_denied", brokerLog)
 			r.emitProgress(ProgressEvent{
 				Phase:             "actual_usage_denied",
@@ -413,7 +419,7 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		totalCachedTokens += result.CachedTokens
 		totalOutputTokens += result.OutputTokens
 
-		roundLogs = append(roundLogs, RoundLog{
+		roundLog := RoundLog{
 			Round:        round,
 			RemainingSec: remaining,
 			Decision:     decision,
@@ -428,7 +434,10 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			CachedTokens: result.CachedTokens,
 			OutputTokens: result.OutputTokens,
 			Broker:       brokerLog,
-		})
+		}
+		if err := r.persistRound(outDir, started, profile.Name, &roundLogs, roundLog); err != nil {
+			return FinalReport{}, fmt.Errorf("round %d durable journal append failed: %w", round, err)
+		}
 		r.emitProgress(ProgressEvent{
 			Phase:               "round_finished",
 			Round:               round,
@@ -518,6 +527,11 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 }
 
 func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, stablePrefix string, history runHistory, roundLogs []RoundLog, compactionEvents []CompactionEvent, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
+	durableRounds, err := r.reports.ValidateRounds(outDir, started, profile.Name, roundLogs)
+	if err != nil {
+		return FinalReport{}, fmt.Errorf("validate durable round journal: %w", err)
+	}
+	roundLogs = durableRounds
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
 	var acceptanceBroker *BrokerUsageLog
 	if len(roundLogs) > 0 && shouldRunAcceptance(stoppedReason) {
@@ -540,6 +554,14 @@ func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, st
 		acceptanceBroker = brokerLog
 	}
 	return r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, acceptance, acceptanceBroker, outDir)
+}
+
+func (r *Runner) persistRound(outDir string, started time.Time, resident string, roundLogs *[]RoundLog, round RoundLog) error {
+	if err := r.reports.AppendRound(outDir, started, resident, round); err != nil {
+		return err
+	}
+	*roundLogs = append(*roundLogs, round)
+	return nil
 }
 
 func shouldRunAcceptance(stoppedReason string) bool {
