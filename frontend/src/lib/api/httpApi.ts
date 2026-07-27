@@ -34,7 +34,18 @@ type HttpOptions = {
 async function parseJson<T = any>(response: Response): Promise<T> {
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `HTTP ${response.status}`);
+    let code = "";
+    try {
+      code = (JSON.parse(text) as { error?: { code?: string } }).error?.code ?? "";
+    } catch {
+      // Keep the fallback below for non-JSON failures from a proxy or server.
+    }
+    const friendlyMessage: Record<string, string> = {
+      chat_failed: "消息发送失败，请稍后重试；草稿已保留。",
+      reply_failed: "回复发送失败，请稍后重试；草稿已保留。",
+      chat_rate_limited: "发送得太快了，请稍等片刻再试；草稿已保留。",
+    };
+    throw new Error(friendlyMessage[code] ?? (text || `HTTP ${response.status}`));
   }
   return (await response.json()) as T;
 }

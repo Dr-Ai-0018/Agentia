@@ -14,6 +14,8 @@ import (
 
 var ErrMessageFileConflict = errors.New("message file changed during rewrite")
 
+const sharedMessageFileMode os.FileMode = 0o660
+
 const (
 	DirectionResidentToChenglin = "resident_to_chenglin"
 	DirectionChenglinToResident = "chenglin_to_resident"
@@ -686,7 +688,7 @@ func (s *Store) append(msg Message, now time.Time) error {
 	}
 
 	dayFile := filepath.Join(dir, now.UTC().Format("2006-01-02")+".jsonl")
-	f, err := os.OpenFile(dayFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := openSharedAppendFile(dayFile)
 	if err != nil {
 		return err
 	}
@@ -746,7 +748,7 @@ func (s *Store) rewriteAllChecked(messages []Message, expected map[string]string
 				return fmt.Errorf("%w: %s", ErrMessageFileConflict, file)
 			}
 		}
-		if err := atomicWriteFile(file, []byte(content), 0o644); err != nil {
+		if err := atomicWriteSharedFile(file, []byte(content), sharedMessageFileMode); err != nil {
 			return err
 		}
 	}
@@ -1375,6 +1377,44 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return nil
+}
+
+func atomicWriteSharedFile(path string, data []byte, mode os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, mode); err != nil {
+		return err
+	}
+	// os.WriteFile applies the process umask when it creates the temp file.
+	// Message journals are shared by the root orchestrator and the unprivileged
+	// console service, so preserve the requested mode exactly before rename.
+	if err := os.Chmod(tmp, mode); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func openSharedAppendFile(path string) (*os.File, error) {
+	// O_EXCL tells us whether this process created the file. Only the creator
+	// may chmod it; existing journals can be owned by the other collaborating
+	// writer and merely need to already carry the shared mode.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_APPEND|os.O_WRONLY, sharedMessageFileMode)
+	if err == nil {
+		if chmodErr := f.Chmod(sharedMessageFileMode); chmodErr != nil {
+			_ = f.Close()
+			_ = os.Remove(path)
+			return nil, chmodErr
+		}
+		return f, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 }
 
 func normalizeTicketPriority(priority string) string {

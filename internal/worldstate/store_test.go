@@ -6,10 +6,40 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
 )
+
+func TestMessageJournalStaysGroupWritableAcrossAppendAndRewrite(t *testing.T) {
+	oldUmask := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(oldUmask) })
+
+	root := t.TempDir()
+	store := New(root)
+	now := time.Date(2026, 7, 27, 8, 30, 0, 0, time.UTC)
+	msg, err := store.AppendResidentToChenglin("amber", "hello", now)
+	if err != nil {
+		t.Fatalf("append message: %v", err)
+	}
+	path := filepath.Join(root, "world", "messages", "2026-07-27.jsonl")
+	assertMode := func(stage string) {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			t.Fatalf("stat after %s: %v", stage, statErr)
+		}
+		if got := info.Mode().Perm(); got != sharedMessageFileMode {
+			t.Fatalf("mode after %s = %04o, want %04o", stage, got, sharedMessageFileMode)
+		}
+	}
+	assertMode("append")
+
+	if _, err := store.ReplyToResidentMessage(msg.ID, "reply", now.Add(time.Second)); err != nil {
+		t.Fatalf("reply and rewrite journal: %v", err)
+	}
+	assertMode("rewrite")
+}
 
 func TestReplyLifecycle(t *testing.T) {
 	root := t.TempDir()

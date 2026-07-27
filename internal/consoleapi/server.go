@@ -770,7 +770,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.actions.Chat(residents[0], input.Body)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "chat_failed", err)
+		log.Printf("consoleapi chat resident=%s failed: %v", residents[0], err)
+		writeError(w, http.StatusInternalServerError, "chat_failed", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
