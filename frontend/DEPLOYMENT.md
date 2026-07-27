@@ -15,18 +15,20 @@ The frontend is a static Vite build. nginx serves `frontend/dist` directly. Runn
 From the repository root:
 
 ```bash
-VITE_CONSOLE_DATA_MODE=http VITE_API_BASE_PATH=/api npm --prefix frontend run build
+npm --prefix frontend run build:http
 ```
 
 Equivalent command from `frontend/`:
 
 ```bash
-VITE_CONSOLE_DATA_MODE=http VITE_API_BASE_PATH=/api corepack pnpm run build
+npm run build:http
 ```
 
 Important:
 
-- `VITE_CONSOLE_DATA_MODE=http` is required for the deployed artifact.
+- `build:http` pins `VITE_CONSOLE_DATA_MODE=http` and `VITE_API_BASE_PATH=/api` for the deployed artifact.
+- A plain production `npm run build` also defaults to HTTP and rejects bundles containing mock-mode markers.
+- A local fixture production preview must use the explicit `npm run build:mock` escape hatch and must never be served publicly.
 - `VITE_API_BASE_PATH=/api` is the current root-path API route.
 - Do not use mock mode for the public artifact.
 - Do not set `/arena/` unless nginx is intentionally changed to serve the app under that subpath.

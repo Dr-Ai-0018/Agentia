@@ -113,6 +113,12 @@ else
 fi
 
 if compgen -G "${DIST_DIR}/assets/index-*.js" >/dev/null; then
+  if rg -q '演示中|Mode = mock|不是真实 backend' "${DIST_DIR}"/assets/index-*.js; then
+    print_check bundle_data_mode mock
+    exit 1
+  else
+    print_check bundle_data_mode http
+  fi
   if rg -q '这座 24 小时|目标 24h|历史观察已经' "${DIST_DIR}"/assets/index-*.js; then
     print_check bundle_old_strings found
   else

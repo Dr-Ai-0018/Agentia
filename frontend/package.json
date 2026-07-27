@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 8787",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/assert-http-build.mjs",
+    "build:http": "VITE_CONSOLE_DATA_MODE=http VITE_API_BASE_PATH=/api npm run build",
+    "build:mock": "VITE_CONSOLE_DATA_MODE=mock tsc -b && VITE_CONSOLE_DATA_MODE=mock vite build",
     "preview": "vite preview --host 127.0.0.1 --port 8787",
     "test:formatting": "node scripts/run-formatting-tests.mjs",
     "test:api": "node scripts/run-api-contract-tests.mjs",
