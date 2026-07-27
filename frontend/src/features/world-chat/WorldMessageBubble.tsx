@@ -1,6 +1,7 @@
 import { Reply } from "lucide-react";
 import type { WorldMessage } from "../../types/domain";
 import { residentLabel } from "../residents/residentTheme";
+import { WorldMarkdown } from "./WorldMarkdown";
 
 export function WorldMessageBubble({ message, onReply }: { message: WorldMessage; onReply?: (message: WorldMessage) => void }) {
   const isChenglin = message.from === "chenglin";
@@ -15,7 +16,7 @@ export function WorldMessageBubble({ message, onReply }: { message: WorldMessage
         <strong>{author}</strong>
         <time>{formatMessageTime(message.createdAt)}</time>
       </header>
-      <p>{message.body}</p>
+      <WorldMarkdown body={message.body} />
       {message.status === "pending" && onReply ? (
         <button type="button" className="world-message__reply" onClick={() => onReply(message)}>
           <Reply size={13} />

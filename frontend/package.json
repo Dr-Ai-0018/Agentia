@@ -9,13 +9,16 @@
     "preview": "vite preview --host 127.0.0.1 --port 8787",
     "test:formatting": "node scripts/run-formatting-tests.mjs",
     "test:api": "node scripts/run-api-contract-tests.mjs",
+    "test:world-chat": "node scripts/run-world-chat-tests.mjs",
     "typecheck": "tsc -b"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "recharts": "^2.15.0"
+    "react-markdown": "^10.1.0",
+    "recharts": "^2.15.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",

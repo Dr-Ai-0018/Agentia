@@ -5,6 +5,7 @@ import { findForbiddenReplyTerms } from "../../lib/reply";
 import type { FollowupItem, ResidentId, TicketPriority, WorldTicket, WorldTicketSummary } from "../../types/domain";
 import { residentLabel } from "../residents/residentTheme";
 import { formatTicketTime, interventionFollowups, interventionStatusLabel, priorityLabel, ticketStatusLabel } from "./ticketPresentation";
+import { WorldMarkdown } from "./WorldMarkdown";
 
 type TicketFilters = {
   resident: "all" | ResidentId;
@@ -204,5 +205,5 @@ function InterventionWorkspace({ items }: { items: FollowupItem[] }) {
 }
 
 function TicketEntry({ author, body, createdAt }: { author: string; body: string; createdAt: string }) {
-  return <article className="ticket-entry"><header><strong>{author}</strong><time>{formatTicketTime(createdAt)}</time></header><p>{body}</p></article>;
+  return <article className="ticket-entry"><header><strong>{author}</strong><time>{formatTicketTime(createdAt)}</time></header><WorldMarkdown body={body} /></article>;
 }

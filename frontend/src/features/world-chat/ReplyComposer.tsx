@@ -41,7 +41,7 @@ export function ReplyComposer({
             <span>回复这条</span>
             <p>{replyTarget.body}</p>
           </div>
-          <button type="button" title="取消回复这条" onClick={onCancelReply}><X size={15} /></button>
+          <button type="button" aria-label="取消回复这条" title="取消回复这条" onClick={onCancelReply}><X size={15} /></button>
         </div>
       ) : null}
       <textarea

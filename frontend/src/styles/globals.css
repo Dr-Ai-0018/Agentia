@@ -1015,6 +1015,7 @@ button {
 }
 
 .world-message {
+  min-width: 0;
   max-width: min(680px, 82%);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
@@ -1042,12 +1043,39 @@ button {
   font-weight: 600;
 }
 
-.world-message p {
-  margin: 8px 0 0;
+.world-markdown {
+  min-width: 0;
+  color: var(--text-primary);
   line-height: 1.7;
   overflow-wrap: anywhere;
-  color: var(--text-primary);
+  word-break: break-word;
 }
+
+.world-markdown > :first-child { margin-top: 8px; }
+.world-markdown > :last-child { margin-bottom: 0; }
+.world-markdown p { margin: 8px 0 0; white-space: pre-wrap; }
+.world-markdown h1,
+.world-markdown h2,
+.world-markdown h3,
+.world-markdown h4,
+.world-markdown h5,
+.world-markdown h6 { margin: 12px 0 6px; line-height: 1.35; }
+.world-markdown h1 { font-size: 1.35em; }
+.world-markdown h2 { font-size: 1.2em; }
+.world-markdown h3 { font-size: 1.08em; }
+.world-markdown ul,
+.world-markdown ol { margin: 8px 0 0; padding-left: 22px; }
+.world-markdown li + li { margin-top: 3px; }
+.world-markdown blockquote { margin: 8px 0 0; padding-left: 10px; border-left: 3px solid var(--border-default); color: var(--text-secondary); }
+.world-markdown a { color: var(--accent-info); overflow-wrap: anywhere; }
+.world-markdown code { border-radius: 4px; background: var(--bg-control); padding: 1px 4px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.9em; overflow-wrap: anywhere; }
+.world-markdown pre { max-width: 100%; margin: 8px 0 0; overflow-x: auto; border-radius: var(--radius-control); background: var(--bg-control); padding: 10px 12px; white-space: pre; }
+.world-markdown pre code { padding: 0; background: transparent; overflow-wrap: normal; }
+.world-markdown__table-wrap { max-width: 100%; margin-top: 8px; overflow-x: auto; }
+.world-markdown table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.world-markdown th,
+.world-markdown td { border: 1px solid var(--border-default); padding: 5px 8px; text-align: left; }
+.world-markdown__image { display: inline; color: var(--text-secondary); overflow-wrap: anywhere; }
 
 .world-message__reply {
   margin-top: 8px;
@@ -1063,6 +1091,7 @@ button {
 }
 
 .reply-composer {
+  width: 100%;
   padding: 10px 14px 12px;
   display: grid;
   gap: 8px;
@@ -1108,8 +1137,10 @@ button {
 }
 
 .reply-composer__target {
+  width: 100%;
+  min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   border-left: 3px solid var(--accent-info);
@@ -1117,9 +1148,12 @@ button {
   background: var(--bg-canvas);
 }
 
+.reply-composer__target > div { min-width: 0; flex: 1 1 auto; }
 .reply-composer__target span { color: var(--accent-info); font-size: 11px; }
-.reply-composer__target p { margin: 2px 0 0; color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.reply-composer__target button { border: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+.reply-composer__target p { max-height: min(28vh, 220px); margin: 2px 0 0; padding-right: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; color: var(--text-secondary); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.reply-composer__target button { flex: 0 0 auto; display: grid; place-items: center; width: 30px; height: 30px; margin: -2px -4px 0 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); cursor: pointer; }
+.reply-composer__target button:hover { background: var(--bg-hover); color: var(--text-primary); }
+.reply-composer__target button:focus-visible { outline: 2px solid var(--accent-info); outline-offset: 1px; }
 
 .reply-composer__error {
   color: var(--accent-danger);
@@ -1338,7 +1372,7 @@ button {
 .ticket-entry { border-left: 2px solid var(--border-default); padding: 4px 0 16px 14px; }
 .ticket-entry header { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
 .ticket-entry time { color: var(--text-muted); }
-.ticket-entry p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.ticket-entry .world-markdown { line-height: 1.65; }
 .ticket-reply { display: grid; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border-default); }
 .ticket-reply textarea { width: 100%; resize: none; border: 1px solid var(--border-default); border-radius: var(--radius-control); padding: 9px 10px; font: inherit; }
 .ticket-reply__footer { display: flex; align-items: center; justify-content: flex-end; gap: 14px; }
@@ -2661,8 +2695,8 @@ button {
     display: none;
   }
   .world-chat-main {
-    height: calc(100dvh - 230px);
-    min-height: 520px;
+    height: max(480px, calc(100dvh - 262px));
+    min-height: 0;
   }
   .world-thread__messages {
     padding: 14px 12px;
@@ -2672,6 +2706,9 @@ button {
   }
   .reply-composer {
     padding: 8px 10px 10px;
+  }
+  .reply-composer__target p {
+    max-height: min(16vh, 120px);
   }
   .boundary-check span {
     font-size: 11px;

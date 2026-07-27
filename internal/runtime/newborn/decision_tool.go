@@ -211,7 +211,9 @@ func compactDecision(decision AgentDecision) AgentDecision {
 	decision.Situation = truncateForModel(decision.Situation, 220)
 	decision.Reason = truncateForModel(decision.Reason, 220)
 	decision.Command = truncateForModel(decision.Command, 500)
-	decision.Message = truncateForModel(decision.Message, 260)
+	// Message is world-visible source data. Keep it byte-for-byte intact here;
+	// model-facing history may summarize it later, but persistence must never
+	// inherit a preview-style truncation.
 	decision.NoteFile = truncateForModel(decision.NoteFile, 100)
 	decision.NoteText = truncateForModel(decision.NoteText, 2000)
 	decision.BackupFile = truncateForModel(decision.BackupFile, 100)

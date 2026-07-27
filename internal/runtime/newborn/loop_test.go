@@ -416,6 +416,29 @@ func TestParseDecisionResultFromFunctionCall(t *testing.T) {
 	}
 }
 
+func TestParseDecisionResultPreservesLongMarkdownMessage(t *testing.T) {
+	message := strings.Repeat("中文正文不能被截断。", 48) + "\n\n## 结果\n\n- [x] 完整保留\n- [ ] 后续工作\n\n```text\nhttps://example.com/a/very/long/path\n```"
+	arguments, err := json.Marshal(map[string]string{
+		"situation": "send a detailed update",
+		"reason":    "the complete evidence matters",
+		"message":   message,
+	})
+	if err != nil {
+		t.Fatalf("marshal tool arguments: %v", err)
+	}
+	decision, err := parseDecisionResult(openai.StreamResult{FunctionCalls: []openai.ResponseItem{{
+		Type:      "function_call",
+		Name:      "talk_to_chenglin",
+		Arguments: string(arguments),
+	}}})
+	if err != nil {
+		t.Fatalf("parse decision result: %v", err)
+	}
+	if decision.Message != message {
+		t.Fatalf("parsed world message changed:\nwant: %q\n got: %q", message, decision.Message)
+	}
+}
+
 func TestParseDecisionResultFromSplitToolCallName(t *testing.T) {
 	result := openai.StreamResult{
 		FunctionCalls: []openai.ResponseItem{
@@ -2524,6 +2547,17 @@ func TestNormalizeDecisionForActionClearsIrrelevantFields(t *testing.T) {
 	}
 	if decision.Message != "" || decision.TicketTitle != "" || decision.MemoryID != "" {
 		t.Fatalf("expected irrelevant fields cleared, got %#v", decision)
+	}
+}
+
+func TestCompactDecisionPreservesWorldMessageExactly(t *testing.T) {
+	message := strings.Repeat("这是一段需要完整保留的中文。", 40) + "\n\n## 进度\n\n- [x] 已检查\n- [ ] 待继续\n\n```sh\nprintf '%s' '完整正文'\n```"
+	decision := compactDecision(AgentDecision{
+		NextAction: "talk_to_chenglin",
+		Message:    message,
+	})
+	if decision.Message != message {
+		t.Fatalf("world message changed before persistence:\nwant: %q\n got: %q", message, decision.Message)
 	}
 }
 
