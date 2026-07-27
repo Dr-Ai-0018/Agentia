@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ConsoleShell, type ConsolePage } from "./layouts/ConsoleShell";
 import { arenaApi } from "../lib/api/client";
 import { CompactionDiagnosticsPage } from "../pages/CompactionDiagnosticsPage";
@@ -10,7 +10,8 @@ import { SystemPage } from "../pages/SystemPage";
 import { WorldChatPage } from "../pages/WorldChatPage";
 import type { OperatorTelemetry, WorldVisibleThread } from "../types/domain";
 
-const POLL_INTERVAL_MS = 8000;
+const SUMMARY_POLL_INTERVAL_MS = 15000;
+const CHAT_POLL_INTERVAL_MS = 8000;
 
 export function App() {
   const [page, setPage] = useState<ConsolePage>("overview");
@@ -20,30 +21,55 @@ export function App() {
   const [fatalError, setFatalError] = useState<string>("");
   const [syncError, setSyncError] = useState<string>("");
   const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null);
+  const summaryInFlight = useRef(false);
+  const chatInFlight = useRef(false);
 
-  const fetchOnce = useCallback(async () => {
-    const [summary, worldThreads] = await Promise.all([
-      arenaApi.getSummary(),
-      arenaApi.listWorldThreads(),
-    ]);
-    setTelemetry(summary);
-    setThreads(worldThreads);
-    setActiveThreadId((current) => current || worldThreads[0]?.threadId || "");
-    setLastFetchedAt(new Date());
-    setSyncError("");
+  const fetchSummary = useCallback(async () => {
+    if (summaryInFlight.current) return;
+    summaryInFlight.current = true;
+    try {
+      setTelemetry(await arenaApi.getSummary());
+      setLastFetchedAt(new Date());
+      setSyncError("");
+    } finally {
+      summaryInFlight.current = false;
+    }
   }, []);
+
+  const fetchAllThreads = useCallback(async () => {
+    if (chatInFlight.current) return;
+    chatInFlight.current = true;
+    try {
+      const worldThreads = await arenaApi.listWorldThreads();
+      setThreads(worldThreads);
+      setActiveThreadId((current) => current || worldThreads[0]?.threadId || "");
+    } finally {
+      chatInFlight.current = false;
+    }
+  }, []);
+
+  const fetchActiveThread = useCallback(async () => {
+    if (!activeThreadId || chatInFlight.current) return;
+    chatInFlight.current = true;
+    try {
+      const updated = await arenaApi.getWorldThread(activeThreadId);
+      setThreads((current) => current.map((thread) => thread.threadId === updated.threadId ? updated : thread));
+    } finally {
+      chatInFlight.current = false;
+    }
+  }, [activeThreadId]);
 
   // Initial load: first failure is fatal so the user sees a real error rather
   // than an empty console.
   useEffect(() => {
     let cancelled = false;
-    fetchOnce().catch((err) => {
+    fetchSummary().catch((err) => {
       if (!cancelled) setFatalError(err instanceof Error ? err.message : String(err));
     });
     return () => {
       cancelled = true;
     };
-  }, [fetchOnce]);
+  }, [fetchSummary]);
 
   // Polling loop. Only starts after the initial load succeeds. Skips a tick
   // when the tab is hidden — the human isn't looking, and it keeps the mock
@@ -52,12 +78,26 @@ export function App() {
     if (!telemetry) return;
     const id = window.setInterval(() => {
       if (document.hidden) return;
-      fetchOnce().catch((err) => {
+      fetchSummary().catch((err) => {
         setSyncError(err instanceof Error ? err.message : String(err));
       });
-    }, POLL_INTERVAL_MS);
+    }, SUMMARY_POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [telemetry, fetchOnce]);
+  }, [telemetry, fetchSummary]);
+
+  useEffect(() => {
+    if (page !== "world-chat") return;
+    fetchAllThreads().catch((err) => setSyncError(err instanceof Error ? err.message : String(err)));
+  }, [page, fetchAllThreads]);
+
+  useEffect(() => {
+    if (page !== "world-chat" || !activeThreadId) return;
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      fetchActiveThread().catch((err) => setSyncError(err instanceof Error ? err.message : String(err)));
+    }, CHAT_POLL_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [page, activeThreadId, fetchActiveThread]);
 
   const openThread = useCallback((threadId: string) => {
     const resident = threadId.match(/(?:chat|ticket)-(jade|amber|onyx)(?:-|$)/)?.[1];

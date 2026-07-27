@@ -312,6 +312,8 @@ export interface WorldTicket {
 export type CompactionTriggerReason =
   | "preflight_measured"
   | "acceptance_microcompact"
+  | "final_reflection_microcompact"
+  | "scheduled_probe"
   | "reactive_overflow"
   | "manual";
 
@@ -348,7 +350,7 @@ export interface CompactionRunSummary {
   runStartedAt: string;
   resident: ResidentId;
   totalCompactions: number;
-  triggerBreakdown: Record<CompactionTriggerReason, number>;
+  triggerBreakdown: Partial<Record<CompactionTriggerReason, number>>;
   outcomeBreakdown: Record<CompactionOutcome, number>;
   totalTokensBefore: number;
   totalTokensAfter: number;

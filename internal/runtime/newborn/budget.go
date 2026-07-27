@@ -1,6 +1,7 @@
 package newborn
 
 import (
+	"strings"
 	"time"
 
 	"ai-arena/internal/broker"
@@ -63,6 +64,14 @@ func (b *BudgetController) SleepStart(profile ResidentProfile, minutes int, star
 
 func (b *BudgetController) SleepEnd(profile ResidentProfile, endedAt time.Time) (brokerstate.SleepRecordResponse, error) {
 	return b.brokerApp.RunSleepEnd(profile.Name, endedAt)
+}
+
+func (b *BudgetController) ReconcileActiveSleep(profile ResidentProfile, endedAt time.Time) (brokerstate.SleepRecordResponse, bool, error) {
+	out, err := b.brokerApp.RunSleepEnd(profile.Name, endedAt)
+	if err != nil && strings.Contains(err.Error(), "no active sleep session") {
+		return brokerstate.SleepRecordResponse{}, false, nil
+	}
+	return out, err == nil, err
 }
 
 func recoveryModeForPreflight(state loopState) string {

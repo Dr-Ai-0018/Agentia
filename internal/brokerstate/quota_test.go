@@ -60,6 +60,32 @@ func TestBuildQuotaSnapshotBlocksOnRollingDayQuota(t *testing.T) {
 	}
 }
 
+func TestBuildQuotaSnapshotMatchesFatigueAdmissionBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fatigue int
+		allowed bool
+	}{
+		{name: "below cap", fatigue: 2_499_999, allowed: true},
+		{name: "at cap", fatigue: 2_500_000, allowed: false},
+		{name: "above cap", fatigue: 2_500_001, allowed: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := BuildQuotaSnapshot(ResidentStatus{
+				SparkBalance: 10,
+				Fatigue:      tc.fatigue,
+				FatigueCap:   2_500_000,
+			})
+			if snapshot.WorkAllowedNow != tc.allowed {
+				t.Fatalf("work allowed = %t, want %t: %#v", snapshot.WorkAllowedNow, tc.allowed, snapshot)
+			}
+			if !tc.allowed && snapshot.BlockingReason != "fatigue_exhausted" {
+				t.Fatalf("blocking reason = %q, want fatigue_exhausted", snapshot.BlockingReason)
+			}
+		})
+	}
+}
+
 func TestPhysiologyTightestQuotaIgnoresSixHourObservation(t *testing.T) {
 	status := ResidentStatus{
 		SparkBalance:         3.5,
@@ -105,6 +131,19 @@ func TestPhysiologyUsesNormalizedFatigueForPressure(t *testing.T) {
 	physiology := DerivePhysiology(status, testNow())
 	if physiology.Pressure == "critical" {
 		t.Fatalf("low normalized fatigue should not read as critical: %#v", physiology)
+	}
+}
+
+func TestDefaultFatigueRecoveryMatchesHumanScale(t *testing.T) {
+	cfg := DefaultRuntimeConfig()
+	perHour := cfg.RecoveryPolicy.FatigueRecoveryPerHour
+	if perHour < 50_000 || perHour > 150_000 {
+		t.Fatalf("default fatigue recovery remains dimensionally implausible: %d/hour", perHour)
+	}
+	sleepMultiplier := cfg.RecoveryPolicy.ActivityMultipliers["sleep"]
+	hoursFromCap := float64(cfg.FatigueCap) / (float64(perHour) * sleepMultiplier)
+	if hoursFromCap < 6 || hoursFromCap > 16 {
+		t.Fatalf("full fatigue recovery under sleep = %.2fh, want night-scale", hoursFromCap)
 	}
 }
 

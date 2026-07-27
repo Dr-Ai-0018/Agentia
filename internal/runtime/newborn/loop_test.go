@@ -2,6 +2,7 @@ package newborn
 
 import (
 	"bytes"
+	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,9 +11,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"ai-arena/internal/broker"
 	"ai-arena/internal/brokerstate"
@@ -55,6 +58,12 @@ func TestRenderQuotaObservationIsCompact(t *testing.T) {
 			DebtAmount:     0,
 			RecoveryMode:   "idle",
 			LastRecoveryAt: time.Date(2026, 6, 7, 9, 0, 0, 0, time.UTC),
+			Fatigue:        1_250_000,
+			FatigueCap:     2_500_000,
+			Physiology: brokerstate.ResidentPhysiology{
+				RecoverySuggested: true,
+				RecoveryUrgency:   "medium",
+			},
 		},
 		Quota: brokerstate.QuotaSnapshot{
 			Window6HRemaining:          530,
@@ -81,6 +90,10 @@ func TestRenderQuotaObservationIsCompact(t *testing.T) {
 		"recent_6h_remaining_reference=",
 		"rolling_day_remaining=",
 		"can_work_now=true",
+		"fatigue_level=50",
+		"fatigue_units=1250000",
+		"fatigue_cap=2500000",
+		"recovery_suggested=true",
 		"next_natural_recovery_at=2026-06-07T09:15:00Z",
 		"sleep_hint=如果最近节奏太快",
 	} {
@@ -100,6 +113,7 @@ func TestRenderResidentStatusObservationIsCompact(t *testing.T) {
 		ResidentID:           "amber",
 		SparkBalance:         4.125,
 		Fatigue:              180,
+		FatigueCap:           2_500_000,
 		SleepDebt:            1,
 		DebtActive:           false,
 		DebtAmount:           0,
@@ -124,6 +138,9 @@ func TestRenderResidentStatusObservationIsCompact(t *testing.T) {
 		"self status 快照:",
 		"resident_id=amber",
 		"spark_balance=4.1250",
+		"fatigue_level=0",
+		"fatigue_units=180",
+		"fatigue_cap=2500000",
 		"recent_6h_used=190",
 		"rolling_day_remaining=2400",
 		"next_natural_recovery_at=2026-06-07T10:00:00Z",
@@ -137,6 +154,22 @@ func TestRenderResidentStatusObservationIsCompact(t *testing.T) {
 		if strings.Contains(got, banned) {
 			t.Fatalf("self status observation should not contain legacy wording %q in %q", banned, got)
 		}
+	}
+}
+
+func TestUTF8TruncationPreservesValidText(t *testing.T) {
+	got := truncateForModel("你好世界🙂", 4)
+	if !utf8.ValidString(got) || got != "你..." {
+		t.Fatalf("unexpected rune-safe model truncation: %q", got)
+	}
+	observation := compactObservationForHistory(strings.Repeat("界", maxObservationHistoryChars+10))
+	if !utf8.ValidString(observation) || strings.Contains(observation, "�") {
+		t.Fatalf("observation truncation corrupted UTF-8: %q", observation)
+	}
+	raw := strings.Repeat("前", actionRawOutputMax) + "最后内容"
+	tail := limitNoteReadObservation("note_meta mode=tail\n"+raw, "tail")
+	if !utf8.ValidString(tail) || !strings.Contains(tail, "最后内容") {
+		t.Fatalf("tail note window lost newest UTF-8 content: %q", tail[len(tail)-100:])
 	}
 }
 
@@ -1345,11 +1378,13 @@ func TestRecordRoundMemoryWritesHistoryGroupAndShortReflection(t *testing.T) {
 	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	var err error
 	state, err = runner.recordRoundMemory(profile, state, 2, AgentDecision{
-		Situation:  "I should make contact while the machine picture is still fresh.",
-		NextAction: "talk_to_chenglin",
-		Reason:     "relationship matters early",
-		Message:    "hello",
-	}, "message delivered to Chenglin", now)
+		Situation:      "I need a host decision before changing the environment.",
+		NextAction:     "submit_ticket",
+		Reason:         "the boundary requires explicit approval",
+		TicketTitle:    "Approve environment change",
+		TicketBody:     "Please decide whether this change is allowed.",
+		TicketPriority: "medium",
+	}, "ticket submitted", now)
 	if err != nil {
 		t.Fatalf("record round memory: %v", err)
 	}
@@ -1716,11 +1751,11 @@ func TestRunnerDoesNotUseAcceptanceTextWhenActualUsageDenied(t *testing.T) {
 		t.Fatalf("expected partial run error after acceptance denial, got report=%#v err=%v", report, err)
 	}
 	report = partial.Report
-	if !strings.Contains(report.StoppedReason, "acceptance_actual_denied:") {
-		t.Fatalf("expected acceptance_actual_denied stop, got %q", report.StoppedReason)
+	if !strings.Contains(report.StoppedReason, "final_reflection_actual_denied:") {
+		t.Fatalf("expected final_reflection_actual_denied stop, got %q", report.StoppedReason)
 	}
-	if strings.Contains(report.Acceptance, "THIS OVER-BUDGET") {
-		t.Fatalf("over-budget acceptance text must not be used: %q", report.Acceptance)
+	if strings.Contains(report.FinalReflection, "THIS OVER-BUDGET") {
+		t.Fatalf("over-budget final reflection text must not be used: %q", report.FinalReflection)
 	}
 	if report.AcceptanceBroker == nil || !report.AcceptanceBroker.Denied || !report.AcceptanceBroker.ProviderCostRecorded {
 		t.Fatalf("expected denied acceptance broker log, got %#v", report.AcceptanceBroker)
@@ -1807,6 +1842,106 @@ func TestRunnerSleepDoesNotRequestModelDuringSleep(t *testing.T) {
 	}
 	if sessions[0].ActualMinutes < 0 || sessions[0].Depth == "" {
 		t.Fatalf("unexpected sleep session: %#v", sessions[0])
+	}
+}
+
+func TestRunnerCancellationEndsActiveSleepAndSkipsAcceptance(t *testing.T) {
+	dir := t.TempDir()
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		body := renderSSECompleted(t, map[string]any{
+			"id":    "resp-sleep-before-cancel",
+			"usage": map[string]any{"input_tokens": 100, "output_tokens": 30},
+			"output": []map[string]any{{
+				"type": "function_call", "name": "sleep",
+				"arguments": `{"situation":"I need recovery.","reason":"Rest now.","sleep_minutes":30}`,
+			}},
+		})
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}, nil
+	})}
+	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.SetRunContext(ctx)
+	runner.SetProgressSink(func(event ProgressEvent) {
+		if event.Phase == "resident_sleep" {
+			cancel()
+		}
+	})
+	runner.actions = fakeActionExecutor{result: ActionResult{Observation: "sleep scheduled", Activity: tokenledger.ActivityStatusCheck}}
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, time.Hour, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("cancel run: %v", err)
+	}
+	if report.StoppedReason != "aborted_by_host" || report.Rounds != 1 {
+		t.Fatalf("unexpected cancellation report: %#v", report)
+	}
+	if report.AcceptanceBroker != nil || requests != 1 {
+		t.Fatalf("cancellation must not make acceptance call: requests=%d broker=%#v", requests, report.AcceptanceBroker)
+	}
+	store := brokerstate.New(filepath.Join(dir, "agents", "brokerstate"))
+	sessions, _, err := store.LoadSleepSessions("jade")
+	if err != nil {
+		t.Fatalf("load sleep sessions: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].EndedAt.IsZero() {
+		t.Fatalf("active sleep was not reconciled: %#v", sessions)
+	}
+}
+
+func TestRunnerCancellationInterruptsModelStreamAndWritesReport(t *testing.T) {
+	dir := t.TempDir()
+	requestStarted := make(chan struct{})
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		close(requestStarted)
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})}
+	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.SetRunContext(ctx)
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+	done := make(chan FinalReport, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, time.Hour, filepath.Join(dir, "runs"), false, true)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		done <- report
+	}()
+	select {
+	case <-requestStarted:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("model request did not start")
+	}
+	select {
+	case err := <-errCh:
+		t.Fatalf("cancelled stream returned error: %v", err)
+	case report := <-done:
+		if report.StoppedReason != "aborted_by_host" || report.Rounds != 0 {
+			t.Fatalf("unexpected stream cancellation report: %#v", report)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled model stream did not finalize")
+	}
+	if requests != 1 {
+		t.Fatalf("cancellation triggered another provider call: %d", requests)
 	}
 }
 
@@ -1911,6 +2046,70 @@ func TestBudgetControllerPreflightAutoRecoversToNow(t *testing.T) {
 	}
 	if prepared.BeforeStatus.LastRecoveryAt.Before(start.Add(30 * time.Minute)) {
 		t.Fatalf("expected last recovery at to advance before preflight")
+	}
+}
+
+func TestFatigueCapDenialRecoversWithoutProviderCall(t *testing.T) {
+	dir := t.TempDir()
+	app := broker.New(dir)
+	controller := NewBudgetController(app)
+	start := time.Date(2026, 7, 27, 5, 25, 30, 0, time.UTC)
+	if err := controller.ResetResident("jade", start); err != nil {
+		t.Fatalf("reset resident: %v", err)
+	}
+	store := brokerstate.New(filepath.Join(dir, "brokerstate"))
+	snapshot, _, err := store.LoadResidentSnapshot("jade")
+	if err != nil {
+		t.Fatalf("load resident snapshot: %v", err)
+	}
+	snapshot.State.Fatigue = brokerstate.DefaultRuntimeConfig().FatigueCap + 1_000
+	snapshot.State.LastRecoveryAt = start
+	if _, err := store.SaveResidentSnapshot("jade", snapshot); err != nil {
+		t.Fatalf("seed fatigue cap: %v", err)
+	}
+	profile := ResidentProfile{Name: "jade", Model: "gpt-5.4"}
+	denied, err := controller.PreparePreflight(profile, loopState{}, start, 100)
+	if err != nil {
+		t.Fatalf("prepare denied preflight: %v", err)
+	}
+	if !denied.Denied || !slices.Contains(denied.DeniedReason, "fatigue_exhausted") {
+		t.Fatalf("expected fatigue denial: %#v", denied)
+	}
+	if err := controller.Recover(profile, loopState{}, start.Add(15*time.Minute)); err != nil {
+		t.Fatalf("recover without provider: %v", err)
+	}
+	allowed, err := controller.PreparePreflight(profile, loopState{}, start.Add(15*time.Minute), 100)
+	if err != nil {
+		t.Fatalf("prepare recovered preflight: %v", err)
+	}
+	if allowed.Denied {
+		t.Fatalf("resident did not rejoin after recovery tick: %#v", allowed.DeniedReason)
+	}
+}
+
+func TestRecoverablePreflightDenialParksWithoutFinalModelCall(t *testing.T) {
+	for _, reason := range []string{"fatigue_exhausted", "spark_exhausted", "spark_debt_active", "day_quota_exhausted", "week_quota_exhausted"} {
+		if !recoverablePreflightDenial([]string{reason}) {
+			t.Fatalf("expected %s to be recoverable", reason)
+		}
+		if shouldRunAcceptance("broker_preflight_denied: " + reason) {
+			t.Fatalf("preflight denial %s must not make a final model call", reason)
+		}
+	}
+	if recoverablePreflightDenial([]string{"invalid_configuration"}) {
+		t.Fatal("configuration denial must remain terminal")
+	}
+}
+
+func TestScheduledCompactionDueUsesDeterministicCycle(t *testing.T) {
+	if scheduledCompactionDue(19, 20, 19) {
+		t.Fatal("probe fired before configured cycle")
+	}
+	if !scheduledCompactionDue(20, 20, 20) {
+		t.Fatal("probe did not fire at configured cycle")
+	}
+	if scheduledCompactionDue(40, 20, 10) {
+		t.Fatal("probe must not run without enough recent rounds to absorb")
 	}
 }
 
@@ -2115,8 +2314,18 @@ func TestShortReflectionCooldownSkipsAdjacentRounds(t *testing.T) {
 	if runner.shouldCreateShortReflection(state, 4, AgentDecision{NextAction: "talk_to_chenglin"}, "message delivered") {
 		t.Fatalf("expected cooldown to suppress reflection")
 	}
-	if !runner.shouldCreateShortReflection(state, 5, AgentDecision{NextAction: "talk_to_chenglin"}, "message delivered") {
+	if !runner.shouldCreateShortReflection(state, 5, AgentDecision{NextAction: "submit_ticket"}, "ticket submitted") {
 		t.Fatalf("expected reflection after cooldown window")
+	}
+}
+
+func TestRoutineRecoveryAndReadActionsDoNotCreateSemanticMemory(t *testing.T) {
+	runner := NewRunner(nil, "", "")
+	state := loopState{UsedActions: map[string]int{"guest_exec": 4, "talk_to_chenglin": 2}}
+	for _, action := range []string{"self_status", "self_quota", "sleep", "noop", "note_read", "note_list", "talk_to_chenglin"} {
+		if runner.shouldCreateShortReflection(state, 12, AgentDecision{NextAction: action}, "routine action complete") {
+			t.Fatalf("routine action %s must not create semantic memory", action)
+		}
 	}
 }
 
@@ -2148,6 +2357,89 @@ func TestCloseRunHistoryGroupClosesOpenGroup(t *testing.T) {
 	}
 	if len(groups) != 1 || groups[0].State != memory.HistoryGroupClosed {
 		t.Fatalf("expected closed group, got %#v", groups)
+	}
+}
+
+func TestRunHistoryRolloverPreservesEveryRoundReference(t *testing.T) {
+	dir := t.TempDir()
+	runner := NewRunner(nil, "", "")
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "memory"))
+	profile := ResidentProfile{Name: "amber"}
+	state := loopState{RunGroupID: "newborn-amber-rollover", UsedActions: map[string]int{}}
+	started := time.Date(2026, 7, 27, 5, 25, 30, 0, time.UTC)
+
+	for round := 1; round <= 37; round++ {
+		var err error
+		state, err = runner.recordRoundMemory(profile, state, round, AgentDecision{NextAction: "noop"}, "quiet round", started.Add(time.Duration(round)*time.Minute))
+		if err != nil {
+			t.Fatalf("record round %d: %v", round, err)
+		}
+	}
+	groups, err := runner.memories.ListHistoryGroups(profile.Name)
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	if len(groups) != 4 {
+		t.Fatalf("history groups = %d, want 4: %#v", len(groups), groups)
+	}
+	refs := make(map[string]bool, 37)
+	for _, group := range groups {
+		if !historyGroupBelongsToRun(group, state.RunGroupID) {
+			t.Fatalf("group %q lost run identity: %#v", group.GroupUUID, group.Tags)
+		}
+		for _, ref := range group.RawEventRefs {
+			refs[ref] = true
+		}
+	}
+	for round := 1; round <= 37; round++ {
+		ref := fmt.Sprintf("round-%03d", round)
+		if !refs[ref] {
+			t.Fatalf("missing %s across history segments", ref)
+		}
+	}
+	if err := runner.closeRunHistoryGroup(profile, state, started.Add(time.Hour), "finished", 37); err != nil {
+		t.Fatalf("close groups: %v", err)
+	}
+	groups, err = runner.memories.ListHistoryGroups(profile.Name)
+	if err != nil {
+		t.Fatalf("list closed groups: %v", err)
+	}
+	for _, group := range groups {
+		if group.State != memory.HistoryGroupClosed {
+			t.Fatalf("group left open: %#v", group)
+		}
+	}
+}
+
+func TestStartupReconcilesStaleRuntimeHistoryGroupsOnly(t *testing.T) {
+	dir := t.TempDir()
+	runner := NewRunner(nil, "", "")
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "memory"))
+	now := time.Date(2026, 7, 27, 13, 0, 0, 0, time.UTC)
+	for _, group := range []memory.HistoryGroup{
+		{GroupUUID: "old-run", Resident: "jade", SourceKind: "newborn_runtime_rounds", State: memory.HistoryGroupOpen, CreatedAt: now.Add(-time.Hour)},
+		{GroupUUID: "manual-group", Resident: "jade", SourceKind: "manual", State: memory.HistoryGroupOpen, CreatedAt: now.Add(-time.Hour)},
+	} {
+		if err := runner.memories.UpsertHistoryGroup(group); err != nil {
+			t.Fatalf("seed group: %v", err)
+		}
+	}
+	if err := runner.reconcileStaleRunHistoryGroups(ResidentProfile{Name: "jade"}, "current-run", now); err != nil {
+		t.Fatalf("reconcile groups: %v", err)
+	}
+	groups, err := runner.memories.ListHistoryGroups("jade")
+	if err != nil {
+		t.Fatalf("list groups: %v", err)
+	}
+	states := map[string]memory.HistoryGroupState{}
+	for _, group := range groups {
+		states[group.GroupUUID] = group.State
+		if group.GroupUUID == "old-run" && group.CloseReason != "startup_reconciled_interrupted" {
+			t.Fatalf("stale runtime group missing reconciliation reason: %#v", group)
+		}
+	}
+	if states["old-run"] != memory.HistoryGroupClosed || states["manual-group"] != memory.HistoryGroupOpen {
+		t.Fatalf("unexpected reconciliation scope: %#v", states)
 	}
 }
 

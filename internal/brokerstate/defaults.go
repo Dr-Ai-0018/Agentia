@@ -10,11 +10,13 @@ func DefaultRuntimeConfig() runtimecore.Config {
 	return runtimecore.Config{
 		TokenPolicy: tokenledger.DefaultConfig(),
 		RecoveryPolicy: recovery.Policy{
-			SparkRecoveryPerHour:     0.2,
-			StrainRecoveryPerHour:    100,
-			DayRecoveryPerHour:       50,
-			WeekRecoveryPerHour:      25,
-			FatigueRecoveryPerHour:   180,
+			SparkRecoveryPerHour:  0.2,
+			StrainRecoveryPerHour: 100,
+			DayRecoveryPerHour:    50,
+			WeekRecoveryPerHour:   25,
+			// A full fatigue bar should recover on the scale of a night's sleep,
+			// not multiple calendar years. Sleep-depth and debt multipliers still apply.
+			FatigueRecoveryPerHour:   100_000,
 			SleepDebtRecoveryPerHour: 2,
 			ActivityMultipliers: map[string]float64{
 				"idle":       1.0,

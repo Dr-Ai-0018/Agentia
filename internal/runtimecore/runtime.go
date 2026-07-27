@@ -92,6 +92,10 @@ func (e *Engine) State() ResidentState {
 	return state
 }
 
+func (e *Engine) FatigueCap() int {
+	return e.cfg.FatigueCap
+}
+
 func (e *Engine) PrepareCall(kind runtimeguard.CallKind, usage tokenledger.Usage, penalties tokenledger.Penalties) (PreparedCall, error) {
 	return e.PrepareCallWithQuotaContext(kind, usage, penalties, QuotaContext{})
 }

@@ -3,6 +3,7 @@ package openai
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -209,6 +210,10 @@ func ProbeStructuredTool(client *http.Client, baseURL, apiKey string, payload Re
 }
 
 func PostStreamWithFailover(client *http.Client, endpoints []Endpoint, payload RequestPayload, verbose bool) (StreamResult, error) {
+	return PostStreamWithFailoverContext(context.Background(), client, endpoints, payload, verbose)
+}
+
+func PostStreamWithFailoverContext(ctx context.Context, client *http.Client, endpoints []Endpoint, payload RequestPayload, verbose bool) (StreamResult, error) {
 	usable := normalizeEndpoints(endpoints)
 	if len(usable) == 0 {
 		return StreamResult{}, errors.New("no usable OpenAI endpoints configured")
@@ -217,7 +222,7 @@ func PostStreamWithFailover(client *http.Client, endpoints []Endpoint, payload R
 	var lastErr error
 	allRetryable := true
 	for i, endpoint := range usable {
-		result, err := PostStream(client, endpoint.BaseURL, endpoint.APIKey, payload, verbose)
+		result, err := PostStreamContext(ctx, client, endpoint.BaseURL, endpoint.APIKey, payload, verbose)
 		if err == nil {
 			result.EndpointName = endpoint.Name
 			return result, nil
@@ -243,6 +248,10 @@ func PostStreamWithFailover(client *http.Client, endpoints []Endpoint, payload R
 }
 
 func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayload, verbose bool) (StreamResult, error) {
+	return PostStreamContext(context.Background(), client, baseURL, apiKey, payload, verbose)
+}
+
+func PostStreamContext(ctx context.Context, client *http.Client, baseURL, apiKey string, payload RequestPayload, verbose bool) (StreamResult, error) {
 	payload.Stream = true
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -251,7 +260,7 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 	endpoint := strings.TrimRight(baseURL, "/") + "/responses"
 	var lastErr error
 	for attempt := 0; attempt < 5; attempt++ {
-		req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return StreamResult{}, fmt.Errorf("build request: %w", err)
 		}
@@ -262,7 +271,9 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 		if err != nil {
 			lastErr = fmt.Errorf("send request: %w", err)
 			if attempt < 4 {
-				time.Sleep(retryDelay(attempt))
+				if err := waitContext(ctx, retryDelay(attempt)); err != nil {
+					return StreamResult{}, err
+				}
 				continue
 			}
 			return StreamResult{}, lastErr
@@ -282,7 +293,9 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 				apiErr.Retryable = false
 			}
 			if shouldRetryHTTPStatus(resp.StatusCode) && attempt < 4 {
-				time.Sleep(retryDelay(attempt))
+				if err := waitContext(ctx, retryDelay(attempt)); err != nil {
+					return StreamResult{}, err
+				}
 				continue
 			}
 			return StreamResult{}, lastErr
@@ -293,7 +306,9 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 		if err != nil {
 			lastErr = err
 			if attempt < 4 {
-				time.Sleep(retryDelay(attempt))
+				if err := waitContext(ctx, retryDelay(attempt)); err != nil {
+					return StreamResult{}, err
+				}
 				continue
 			}
 			return StreamResult{}, err
@@ -305,6 +320,17 @@ func PostStream(client *http.Client, baseURL, apiKey string, payload RequestPayl
 		return StreamResult{}, lastErr
 	}
 	return StreamResult{}, errors.New("request failed without a concrete error")
+}
+
+func waitContext(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func normalizeEndpoints(endpoints []Endpoint) []Endpoint {

@@ -3,12 +3,15 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"ai-arena/internal/broker"
@@ -20,22 +23,26 @@ const defaultBaseURL = "https://api.openai.com/v1"
 
 func main() {
 	loadDotEnvIfPresent(".env")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	var (
-		baseURL                = flag.String("base-url", orchestrator.EnvOrDefault("OPENAI_BASE_URL", defaultBaseURL), "OpenAI API base URL")
-		residents              = flag.String("residents", "jade,amber,onyx", "Comma-separated residents")
-		duration               = flag.Duration("duration", 90*time.Second, "Run duration per resident")
-		outDir                 = flag.String("out-dir", "runs/orchestrator", "Output directory")
-		verbose                = flag.Bool("verbose", false, "Print streamed text as it arrives")
-		reset                  = flag.Bool("reset-resident", false, "Reset resident runtime state before each run")
-		mode                   = flag.String("mode", "run", "Mode: run|list|status|summary|report|pause|resume|retry-failed")
-		runMode                = flag.String("run-mode", "sequential", "Run mode for run: sequential|parallel")
-		runID                  = flag.String("run-id", "", "Run ID for status|summary|pause|resume")
-		limit                  = flag.Int("limit", 10, "Run list limit for list mode")
-		turns                  = flag.Int("turns", 8, "Turns for cache-probe mode")
-		continueOnNoop         = flag.Bool("continue-on-noop", false, "Keep running until duration when a resident chooses noop")
-		purpose                = flag.String("purpose", "", "Optional run purpose, e.g. conversation")
-		compactionRecentRounds = flag.Int("compaction-recent-rounds", 0, "Recent verbatim rounds kept by long-context compaction; 0 uses runtime default")
+		baseURL                    = flag.String("base-url", orchestrator.EnvOrDefault("OPENAI_BASE_URL", defaultBaseURL), "OpenAI API base URL")
+		residents                  = flag.String("residents", "jade,amber,onyx", "Comma-separated residents")
+		duration                   = flag.Duration("duration", 90*time.Second, "Run duration per resident")
+		outDir                     = flag.String("out-dir", "runs/orchestrator", "Output directory")
+		verbose                    = flag.Bool("verbose", false, "Print streamed text as it arrives")
+		reset                      = flag.Bool("reset-resident", false, "Reset resident runtime state before each run")
+		mode                       = flag.String("mode", "run", "Mode: run|list|status|summary|report|pause|resume|retry-failed")
+		runMode                    = flag.String("run-mode", "sequential", "Run mode for run: sequential|parallel")
+		runID                      = flag.String("run-id", "", "Run ID for status|summary|pause|resume")
+		limit                      = flag.Int("limit", 10, "Run list limit for list mode")
+		turns                      = flag.Int("turns", 8, "Turns for cache-probe mode")
+		continueOnNoop             = flag.Bool("continue-on-noop", false, "Keep running until duration when a resident chooses noop")
+		purpose                    = flag.String("purpose", "", "Optional run purpose, e.g. conversation")
+		compactionRecentRounds     = flag.Int("compaction-recent-rounds", 0, "Recent verbatim rounds kept by long-context compaction; 0 uses runtime default")
+		compactionProbeEveryRounds = flag.Int("compaction-probe-every-rounds", 0, "Force a normal compaction probe after every N completed rounds; 0 disables scheduled probes")
+		requiredCompactionCycles   = flag.Int("required-compaction-cycles", 0, "Fail resident evidence unless at least N non-final compaction cycles summarize successfully")
 	)
 	flag.Parse()
 
@@ -55,16 +62,18 @@ func main() {
 	service := orchestrator.New(app, &http.Client{Timeout: 5 * time.Minute}, *baseURL, apiKey)
 	switch modeValue {
 	case "run":
-		out, err := service.Run(orchestrator.RunInput{
-			Residents:              orchestrator.ParseResidentRoster(*residents),
-			Duration:               *duration,
-			OutDir:                 *outDir,
-			Verbose:                *verbose,
-			ResetResident:          *reset,
-			Mode:                   orchestrator.RunMode(strings.ToLower(strings.TrimSpace(*runMode))),
-			ContinueOnNoop:         *continueOnNoop,
-			Purpose:                *purpose,
-			CompactionRecentRounds: *compactionRecentRounds,
+		out, err := service.RunContext(ctx, orchestrator.RunInput{
+			Residents:                  orchestrator.ParseResidentRoster(*residents),
+			Duration:                   *duration,
+			OutDir:                     *outDir,
+			Verbose:                    *verbose,
+			ResetResident:              *reset,
+			Mode:                       orchestrator.RunMode(strings.ToLower(strings.TrimSpace(*runMode))),
+			ContinueOnNoop:             *continueOnNoop,
+			Purpose:                    *purpose,
+			CompactionRecentRounds:     *compactionRecentRounds,
+			CompactionProbeEveryRounds: *compactionProbeEveryRounds,
+			RequiredCompactionCycles:   *requiredCompactionCycles,
 		})
 		if err != nil {
 			exitf("%v", err)

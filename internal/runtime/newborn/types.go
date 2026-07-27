@@ -45,6 +45,8 @@ type AgentDecision struct {
 	Message        string `json:"message,omitempty"`
 	NoteFile       string `json:"note_file,omitempty"`
 	NoteText       string `json:"note_text,omitempty"`
+	NoteReadMode   string `json:"note_read_mode,omitempty"`
+	NoteStartLine  int    `json:"note_start_line,omitempty"`
 	BackupFile     string `json:"backup_file,omitempty"`
 	TicketTitle    string `json:"ticket_title,omitempty"`
 	TicketBody     string `json:"ticket_body,omitempty"`
@@ -85,6 +87,12 @@ func (d AgentDecision) CompactForHistory() string {
 		}
 		if v := truncateForModel(strings.TrimSpace(d.BackupFile), 80); v != "" {
 			parts = append(parts, "backup_file="+v)
+		}
+		if d.NextAction == "note_read" {
+			parts = append(parts, "note_read_mode="+normalizeNoteReadMode(d.NoteReadMode))
+			if d.NoteStartLine > 0 {
+				parts = append(parts, "note_start_line="+strconv.Itoa(d.NoteStartLine))
+			}
 		}
 	case "talk_to_chenglin":
 		if v := truncateForModel(strings.TrimSpace(d.Message), 180); v != "" {
@@ -188,8 +196,9 @@ type CompactionTriggerReason string
 
 const (
 	CompactionTriggerPreflightMeasured CompactionTriggerReason = "preflight_measured"
-	CompactionTriggerAcceptanceMicro   CompactionTriggerReason = "acceptance_microcompact"
+	CompactionTriggerAcceptanceMicro   CompactionTriggerReason = "final_reflection_microcompact"
 	CompactionTriggerReactiveOverflow  CompactionTriggerReason = "reactive_overflow"
+	CompactionTriggerScheduledProbe    CompactionTriggerReason = "scheduled_probe"
 	CompactionTriggerManual            CompactionTriggerReason = "manual"
 )
 
@@ -252,12 +261,15 @@ type ProgressEvent struct {
 	TotalCachedTokens   int          `json:"total_cached_tokens,omitempty"`
 	TotalOutputTokens   int          `json:"total_output_tokens,omitempty"`
 	SummaryPane         *SummaryPane `json:"summary_pane,omitempty"`
+	TokenUsagePresent   bool         `json:"token_usage_present,omitempty"`
+	TokenTotalsPresent  bool         `json:"token_totals_present,omitempty"`
 }
 
 type RunOptions struct {
-	ContinueOnNoop         bool
-	Purpose                string
-	CompactionRecentRounds int
+	ContinueOnNoop             bool
+	Purpose                    string
+	CompactionRecentRounds     int
+	CompactionProbeEveryRounds int
 }
 
 type FinalReport struct {
@@ -267,7 +279,8 @@ type FinalReport struct {
 	Rounds           int               `json:"rounds"`
 	StartedAt        string            `json:"started_at"`
 	EndedAt          string            `json:"ended_at"`
-	Acceptance       string            `json:"acceptance"`
+	FinalReflection  string            `json:"final_reflection"`
+	Acceptance       string            `json:"acceptance,omitempty"` // Legacy read compatibility for older run artifacts.
 	AcceptanceBroker *BrokerUsageLog   `json:"acceptance_broker,omitempty"`
 	RoundLogs        []RoundLog        `json:"round_logs"`
 	StoppedReason    string            `json:"stopped_reason,omitempty"`

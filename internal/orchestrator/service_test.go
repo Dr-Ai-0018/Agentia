@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +19,19 @@ type fakeRunner struct {
 	report newborn.FinalReport
 	err    error
 	calls  []newborn.ResidentProfile
+}
+
+type cancellationRunner struct {
+	ctx context.Context
+}
+
+func (r *cancellationRunner) SetRunContext(ctx context.Context) {
+	r.ctx = ctx
+}
+
+func (r *cancellationRunner) Run(profile newborn.ResidentProfile, _ time.Duration, _ string, _ bool, _ bool) (newborn.FinalReport, error) {
+	<-r.ctx.Done()
+	return newborn.FinalReport{Resident: profile.Name, Model: profile.Model, StoppedReason: "aborted_by_host"}, nil
 }
 
 func (f *fakeRunner) Run(profile newborn.ResidentProfile, duration time.Duration, outDir string, verbose bool, resetResident bool) (newborn.FinalReport, error) {
@@ -74,6 +89,43 @@ func TestServiceRunSequential(t *testing.T) {
 	}
 }
 
+func TestNewRunReconcilesDeadOwnerAndWritesOperationalEvents(t *testing.T) {
+	root := t.TempDir()
+	service := New(broker.New(root), &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	stale := RunStatus{
+		RunID:     "stale-run",
+		Status:    "running",
+		StartedAt: "2026-07-27T05:25:30Z",
+		UpdatedAt: "2026-07-27T05:26:00Z",
+		OwnerPID:  99_999_999,
+		Residents: []ResidentRunStatus{{Resident: "jade", Status: "running"}},
+	}
+	if err := service.writeStatus(stale); err != nil {
+		t.Fatalf("seed stale status: %v", err)
+	}
+	service.runnerFactory = func(_ *http.Client, _, _, _ string) Runner {
+		return &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
+	}
+	out, err := service.Run(RunInput{Residents: []string{"jade"}, Duration: time.Minute, OutDir: filepath.Join(root, "out")})
+	if err != nil {
+		t.Fatalf("new run: %v", err)
+	}
+	reconciled, err := service.ReadRunStatus("stale-run")
+	if err != nil {
+		t.Fatalf("read stale status: %v", err)
+	}
+	if reconciled.Status != "interrupted" || reconciled.Residents[0].Status != "interrupted" {
+		t.Fatalf("stale run not reconciled: %#v", reconciled)
+	}
+	for _, runID := range []string{"stale-run", out.RunID} {
+		raw, err := os.ReadFile(filepath.Join(service.stateRoot, runID, "events.jsonl"))
+		if err != nil || len(raw) == 0 {
+			t.Fatalf("operational event log missing for %s: bytes=%d err=%v", runID, len(raw), err)
+		}
+	}
+}
+
 func TestServiceRunParallelKeepsAllResidentStatuses(t *testing.T) {
 	root := t.TempDir()
 	app := broker.New(root)
@@ -106,6 +158,96 @@ func TestServiceRunParallelKeepsAllResidentStatuses(t *testing.T) {
 		if item.Status != "finished" {
 			t.Fatalf("expected finished resident status, got %#v", status.Residents)
 		}
+	}
+}
+
+func TestServiceRunContextFinalizesHostCancellation(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	service.runnerFactory = func(_ *http.Client, _, _, _ string) Runner {
+		return &cancellationRunner{}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan RunSummary, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		out, err := service.RunContext(ctx, RunInput{
+			Residents: []string{"jade"},
+			Duration:  time.Hour,
+			OutDir:    filepath.Join(root, "out"),
+			Mode:      RunModeParallel,
+		})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		done <- out
+	}()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	var summary RunSummary
+	select {
+	case err := <-errCh:
+		t.Fatalf("cancelled run returned error: %v", err)
+	case summary = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled run did not finalize")
+	}
+	status, err := service.ReadRunStatus(summary.RunID)
+	if err != nil {
+		t.Fatalf("read cancelled status: %v", err)
+	}
+	if status.Status != "aborted_by_host" || status.FinishedAt == "" {
+		t.Fatalf("unexpected cancelled status: %#v", status)
+	}
+	if len(status.Residents) != 1 || status.Residents[0].Status != "aborted" {
+		t.Fatalf("resident cancellation not finalized: %#v", status.Residents)
+	}
+	if len(summary.Runs) != 1 || summary.Runs[0].Report == nil {
+		t.Fatalf("partial report missing after cancellation: %#v", summary.Runs)
+	}
+}
+
+func TestServiceRequiresConfiguredCompactionProbeForFormalObjective(t *testing.T) {
+	service := New(broker.New(t.TempDir()), &http.Client{}, "http://example.invalid", "key")
+	_, err := service.Run(RunInput{
+		Residents:                []string{"jade"},
+		Duration:                 time.Minute,
+		OutDir:                   t.TempDir(),
+		RequiredCompactionCycles: 2,
+	})
+	if err == nil || !strings.Contains(err.Error(), "compaction-probe-every-rounds") {
+		t.Fatalf("expected objective-aware preflight rejection, got %v", err)
+	}
+}
+
+func TestServiceFailsEvidenceWhenCompactionObjectiveIsUnmet(t *testing.T) {
+	root := t.TempDir()
+	service := New(broker.New(root), &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	service.runnerFactory = func(_ *http.Client, _, _, _ string) Runner {
+		return &fakeRunner{report: newborn.FinalReport{
+			Rounds: 25,
+			CompactionEvents: []newborn.CompactionEvent{{
+				TriggerReason: newborn.CompactionTriggerScheduledProbe,
+				Outcome:       newborn.CompactionOutcomeSummarized,
+			}},
+		}}
+	}
+	out, err := service.Run(RunInput{
+		Residents:                  []string{"jade"},
+		Duration:                   time.Minute,
+		OutDir:                     filepath.Join(root, "out"),
+		CompactionProbeEveryRounds: 20,
+		RequiredCompactionCycles:   2,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if out.Runs[0].Status != "error" || !strings.Contains(out.Runs[0].Error, "compaction objective unmet") {
+		t.Fatalf("formal compaction shortfall did not fail evidence: %#v", out.Runs[0])
 	}
 }
 
@@ -193,6 +335,31 @@ func TestServiceWritesResidentProgressStatus(t *testing.T) {
 	}
 	if final.LastRoundFinishedAt == "" || final.TotalInputTokens != 180 {
 		t.Fatalf("expected final progress totals to remain visible, got %#v", final)
+	}
+}
+
+func TestResidentProgressAcceptsMeasuredZeroCacheTokens(t *testing.T) {
+	root := t.TempDir()
+	service := New(broker.New(root), &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	status := RunStatus{
+		RunID:  "zero-cache-transition",
+		Status: "running",
+		Residents: []ResidentRunStatus{{
+			Resident:     "jade",
+			Status:       "running",
+			CachedTokens: 64,
+		}},
+	}
+	service.updateResidentProgress(&status, nil, "jade", newborn.ProgressEvent{
+		Phase:             "model_stream_done",
+		InputTokens:       100,
+		CachedTokens:      0,
+		OutputTokens:      7,
+		TokenUsagePresent: true,
+	})
+	if status.Residents[0].CachedTokens != 0 {
+		t.Fatalf("measured zero cache value remained stale: %#v", status.Residents[0])
 	}
 }
 

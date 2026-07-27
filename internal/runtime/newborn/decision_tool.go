@@ -37,9 +37,9 @@ func decisionTools() []openai.ResponseTool {
 		tool("note_list", "通过安全 note API 列出 /root/arena-notes 里的文件。", props(
 			field("situation"), field("reason"),
 		), []string{"situation", "reason"}),
-		tool("note_read", "通过安全 note API 读取一个连续性笔记文件。", props(
-			field("situation"), field("reason"), field("note_file"),
-		), []string{"situation", "reason", "note_file"}),
+		tool("note_read", "通过安全 note API 读取连续性笔记。默认 tail 返回最新 220 行；也可选择 head，或用 range 从 note_start_line 开始读取。", props(
+			field("situation"), field("reason"), field("note_file"), enumField("note_read_mode", []string{"tail", "head", "range"}), intField("note_start_line", 1, 10000000),
+		), []string{"situation", "reason", "note_file", "note_read_mode", "note_start_line"}),
 		tool("note_append", "通过安全 note API 向一个连续性笔记文件追加纯文本。", props(
 			field("situation"), field("reason"), field("note_file"), field("note_text"),
 		), []string{"situation", "reason", "note_file", "note_text"}),
@@ -215,6 +215,15 @@ func compactDecision(decision AgentDecision) AgentDecision {
 	// model-facing history may summarize it later, but persistence must never
 	// inherit a preview-style truncation.
 	decision.NoteFile = truncateForModel(decision.NoteFile, 100)
+	if decision.NextAction == "note_read" {
+		decision.NoteReadMode = normalizeNoteReadMode(decision.NoteReadMode)
+		if decision.NoteStartLine < 1 {
+			decision.NoteStartLine = 1
+		}
+	} else {
+		decision.NoteReadMode = ""
+		decision.NoteStartLine = 0
+	}
 	decision.NoteText = truncateForModel(decision.NoteText, 2000)
 	decision.BackupFile = truncateForModel(decision.BackupFile, 100)
 	decision.TicketTitle = truncateForModel(decision.TicketTitle, 100)

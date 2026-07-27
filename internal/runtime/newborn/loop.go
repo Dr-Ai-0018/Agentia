@@ -1,6 +1,8 @@
 package newborn
 
 import (
+	stdcontext "context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -27,6 +29,7 @@ type Runner struct {
 	memories  *memory.FileStore
 	progress  func(ProgressEvent)
 	options   RunOptions
+	ctx       stdcontext.Context
 }
 
 type loopState struct {
@@ -69,14 +72,16 @@ func NewRunnerWithEndpoints(client *http.Client, endpoints []openai.Endpoint) *R
 		reports:   NewReportWriter(),
 		world:     NewWorldBridge(".agents"),
 		memories:  memory.NewFileStore(".agents/memory"),
+		ctx:       stdcontext.Background(),
 	}
 }
 
 func (r *Runner) postStream(payload openai.RequestPayload, verbose bool) (openai.StreamResult, error) {
+	ctx := r.runContext()
 	if len(r.endpoints) > 0 {
-		return openai.PostStreamWithFailover(r.client, r.endpoints, payload, verbose)
+		return openai.PostStreamWithFailoverContext(ctx, r.client, r.endpoints, payload, verbose)
 	}
-	return openai.PostStream(r.client, r.baseURL, r.apiKey, payload, verbose)
+	return openai.PostStreamContext(ctx, r.client, r.baseURL, r.apiKey, payload, verbose)
 }
 
 func (r *Runner) postStreamWithTimeout(payload openai.RequestPayload, verbose bool, timeout time.Duration) (openai.StreamResult, error) {
@@ -91,10 +96,12 @@ func (r *Runner) postStreamWithTimeout(payload openai.RequestPayload, verbose bo
 		}
 		client = &copyClient
 	}
+	ctx, cancel := stdcontext.WithTimeout(r.runContext(), timeout)
+	defer cancel()
 	if len(r.endpoints) > 0 {
-		return openai.PostStreamWithFailover(client, r.endpoints, payload, verbose)
+		return openai.PostStreamWithFailoverContext(ctx, client, r.endpoints, payload, verbose)
 	}
-	return openai.PostStream(client, r.baseURL, r.apiKey, payload, verbose)
+	return openai.PostStreamContext(ctx, client, r.baseURL, r.apiKey, payload, verbose)
 }
 
 func (r *Runner) SetProgressSink(fn func(ProgressEvent)) {
@@ -103,6 +110,34 @@ func (r *Runner) SetProgressSink(fn func(ProgressEvent)) {
 
 func (r *Runner) SetRunOptions(options RunOptions) {
 	r.options = options
+}
+
+func (r *Runner) SetRunContext(ctx stdcontext.Context) {
+	if ctx == nil {
+		ctx = stdcontext.Background()
+	}
+	r.ctx = ctx
+}
+
+func (r *Runner) runContext() stdcontext.Context {
+	if r.ctx == nil {
+		return stdcontext.Background()
+	}
+	return r.ctx
+}
+
+func (r *Runner) wait(duration time.Duration) bool {
+	if duration <= 0 {
+		return true
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-r.runContext().Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (r *Runner) emitProgress(event ProgressEvent) {
@@ -156,6 +191,14 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		NotePath:    "/root/arena-notes/boot-notes.md",
 		RunGroupID:  fmt.Sprintf("newborn-%s-%s", profile.Name, started.Format("20060102T150405Z")),
 	}
+	if sleep, reconciled, err := r.budget.ReconcileActiveSleep(profile, started); err != nil {
+		return FinalReport{}, fmt.Errorf("reconcile interrupted sleep: %w", err)
+	} else if reconciled {
+		state.LastSleepDepth = sleep.Session.Depth
+	}
+	if err := r.reconcileStaleRunHistoryGroups(profile, state.RunGroupID, started); err != nil {
+		return FinalReport{}, fmt.Errorf("reconcile interrupted history groups: %w", err)
+	}
 	initialPacket := r.buildContextPacket(profile, int(duration.Seconds()), state)
 	stablePrefix := initialPacket.StablePrefix()
 	promptCacheKey := initialPacket.PromptCacheKey(profile.Name)
@@ -167,7 +210,12 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 	totalOutputTokens := 0
 	compactionEvents := []CompactionEvent{}
 
+runLoop:
 	for {
+		if err := r.runContext().Err(); err != nil {
+			stoppedReason = "aborted_by_host"
+			break
+		}
 		roundNow := time.Now().UTC()
 		remaining := int(time.Until(deadline).Seconds())
 		if remaining <= 25 {
@@ -182,9 +230,10 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		}
 		round++
 		r.emitProgress(ProgressEvent{
-			Phase:        "preflight",
-			Round:        round,
-			RemainingSec: remaining,
+			Phase:             "preflight",
+			Round:             round,
+			RemainingSec:      remaining,
+			TokenUsagePresent: true,
 		})
 
 		if err := r.budget.Recover(profile, state, roundNow); err != nil {
@@ -193,7 +242,14 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		packet := r.buildContextPacket(profile, remaining, state)
 		input := history.inputWithWorkingContext(stablePrefix, packet)
 		measuredPromptTokens := estimatePromptTokens(input)
-		if shouldCompactBeforeModel(history, measuredPromptTokens, profile.Model) {
+		if scheduledCompactionDue(len(roundLogs), r.options.CompactionProbeEveryRounds, history.recentRounds) {
+			keepRounds := maxInt(1, r.options.CompactionProbeEveryRounds/2)
+			detail := fmt.Sprintf("scheduled_probe completed_rounds=%d every=%d keep=%d", len(roundLogs), r.options.CompactionProbeEveryRounds, keepRounds)
+			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerScheduledProbe, detail, keepRounds, len(roundLogs), verbose)
+			compactionEvents = append(compactionEvents, event)
+			input = history.inputWithWorkingContext(stablePrefix, packet)
+			measuredPromptTokens = estimatePromptTokens(input)
+		} else if shouldCompactBeforeModel(history, measuredPromptTokens, profile.Model) {
 			detail := fmt.Sprintf("measured_prompt_tokens=%d recent_rounds=%d limit=%d", measuredPromptTokens, history.recentRounds, history.recentRoundWindowLimit())
 			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerPreflightMeasured, detail, history.recentRoundWindowLimit(), len(roundLogs), verbose)
 			compactionEvents = append(compactionEvents, event)
@@ -216,20 +272,38 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				AfterStatus:        &prepared.BeforeStatus,
 			}
 			stoppedReason = fmt.Sprintf("broker_preflight_denied: %s", strings.Join(prepared.DeniedReason, ","))
+			if recoverablePreflightDenial(prepared.DeniedReason) {
+				waitFor := preflightRecoveryWait(prepared.Quota.NextRecoveryAt, deadline)
+				if waitFor > 0 {
+					r.emitProgress(ProgressEvent{
+						Phase:        "recovery_wait",
+						Round:        round,
+						RemainingSec: remaining,
+					})
+					round--
+					if !r.wait(waitFor) {
+						stoppedReason = "aborted_by_host"
+						break
+					}
+					continue
+				}
+			}
 			break
 		}
+		stoppedReason = ""
 		history.appendWorkingContext(packet)
 
 		inFlightStartedAt := time.Now().UTC().Format(time.RFC3339)
 		r.emitProgress(ProgressEvent{
-			Phase:             "model_stream",
-			Round:             round,
-			RemainingSec:      remaining,
-			InFlightStartedAt: inFlightStartedAt,
-			TotalInputTokens:  totalInputTokens,
-			TotalCachedTokens: totalCachedTokens,
-			TotalOutputTokens: totalOutputTokens,
-			SummaryPane:       history.summaryPaneSnapshot(),
+			Phase:              "model_stream",
+			Round:              round,
+			RemainingSec:       remaining,
+			InFlightStartedAt:  inFlightStartedAt,
+			TotalInputTokens:   totalInputTokens,
+			TotalCachedTokens:  totalCachedTokens,
+			TotalOutputTokens:  totalOutputTokens,
+			SummaryPane:        history.summaryPaneSnapshot(),
+			TokenTotalsPresent: true,
 		})
 		result, err := r.postStream(buildDecisionToolPayload(profile, input, promptCacheKey), verbose)
 		if err != nil && openai.IsContextOverflowError(err) {
@@ -240,13 +314,14 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerReactiveOverflow, "provider reported context overflow; retrying once after compacting older rounds", retryLimit, len(roundLogs), verbose)
 			compactionEvents = append(compactionEvents, event)
 			r.emitProgress(ProgressEvent{
-				Phase:             "context_overflow_retry",
-				Round:             round,
-				RemainingSec:      remaining,
-				TotalInputTokens:  totalInputTokens,
-				TotalCachedTokens: totalCachedTokens,
-				TotalOutputTokens: totalOutputTokens,
-				SummaryPane:       history.summaryPaneSnapshot(),
+				Phase:              "context_overflow_retry",
+				Round:              round,
+				RemainingSec:       remaining,
+				TotalInputTokens:   totalInputTokens,
+				TotalCachedTokens:  totalCachedTokens,
+				TotalOutputTokens:  totalOutputTokens,
+				SummaryPane:        history.summaryPaneSnapshot(),
+				TokenTotalsPresent: true,
 			})
 			retryInput := history.input(stablePrefix)
 			if event.RoundsAbsorbed == 0 && estimatePromptTokens(retryInput) >= estimatePromptTokens(input) {
@@ -256,6 +331,10 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			}
 		}
 		if err != nil {
+			if errors.Is(err, stdcontext.Canceled) || errors.Is(err, stdcontext.DeadlineExceeded) && r.runContext().Err() != nil {
+				stoppedReason = "aborted_by_host"
+				break
+			}
 			if openai.IsContextOverflowError(err) || strings.Contains(err.Error(), "context budget exhausted") {
 				stoppedReason = "context_budget_exhausted"
 			}
@@ -275,17 +354,19 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			return FinalReport{}, fmt.Errorf("round %d request failed: %w", round, err)
 		}
 		r.emitProgress(ProgressEvent{
-			Phase:             "model_stream_done",
-			Round:             round,
-			RemainingSec:      remaining,
-			ResponseID:        result.ResponseID,
-			InputTokens:       result.InputTokens,
-			CachedTokens:      result.CachedTokens,
-			OutputTokens:      result.OutputTokens,
-			TotalInputTokens:  totalInputTokens,
-			TotalCachedTokens: totalCachedTokens,
-			TotalOutputTokens: totalOutputTokens,
-			SummaryPane:       history.summaryPaneSnapshot(),
+			Phase:              "model_stream_done",
+			Round:              round,
+			RemainingSec:       remaining,
+			ResponseID:         result.ResponseID,
+			InputTokens:        result.InputTokens,
+			CachedTokens:       result.CachedTokens,
+			OutputTokens:       result.OutputTokens,
+			TotalInputTokens:   totalInputTokens,
+			TotalCachedTokens:  totalCachedTokens,
+			TotalOutputTokens:  totalOutputTokens,
+			SummaryPane:        history.summaryPaneSnapshot(),
+			TokenUsagePresent:  true,
+			TokenTotalsPresent: true,
 		})
 
 		decision, err := parseDecisionResult(result)
@@ -306,15 +387,16 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			activity = tokenledger.ActivityStatusCheck
 		}
 		r.emitProgress(ProgressEvent{
-			Phase:             "settle",
-			Round:             round,
-			RemainingSec:      remaining,
-			Action:            decision.NextAction,
-			ResponseID:        result.ResponseID,
-			TotalInputTokens:  totalInputTokens,
-			TotalCachedTokens: totalCachedTokens,
-			TotalOutputTokens: totalOutputTokens,
-			SummaryPane:       history.summaryPaneSnapshot(),
+			Phase:              "settle",
+			Round:              round,
+			RemainingSec:       remaining,
+			Action:             decision.NextAction,
+			ResponseID:         result.ResponseID,
+			TotalInputTokens:   totalInputTokens,
+			TotalCachedTokens:  totalCachedTokens,
+			TotalOutputTokens:  totalOutputTokens,
+			SummaryPane:        history.summaryPaneSnapshot(),
+			TokenTotalsPresent: true,
 		})
 		brokerLog, err := r.budget.Settle(profile, result, roundNow, runtimeguard.CallKindWork, activity)
 		if err != nil {
@@ -349,31 +431,34 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			}
 			stoppedReason = brokerDeniedStopReason("broker_actual_denied", brokerLog)
 			r.emitProgress(ProgressEvent{
-				Phase:             "actual_usage_denied",
-				Round:             round,
-				RemainingSec:      remaining,
-				Action:            decision.NextAction,
-				ResponseID:        result.ResponseID,
-				InputTokens:       result.InputTokens,
-				CachedTokens:      result.CachedTokens,
-				OutputTokens:      result.OutputTokens,
-				TotalInputTokens:  totalInputTokens,
-				TotalCachedTokens: totalCachedTokens,
-				TotalOutputTokens: totalOutputTokens,
-				SummaryPane:       history.summaryPaneSnapshot(),
+				Phase:              "actual_usage_denied",
+				Round:              round,
+				RemainingSec:       remaining,
+				Action:             decision.NextAction,
+				ResponseID:         result.ResponseID,
+				InputTokens:        result.InputTokens,
+				CachedTokens:       result.CachedTokens,
+				OutputTokens:       result.OutputTokens,
+				TotalInputTokens:   totalInputTokens,
+				TotalCachedTokens:  totalCachedTokens,
+				TotalOutputTokens:  totalOutputTokens,
+				SummaryPane:        history.summaryPaneSnapshot(),
+				TokenUsagePresent:  true,
+				TokenTotalsPresent: true,
 			})
 			break
 		}
 		r.emitProgress(ProgressEvent{
-			Phase:             "action_exec",
-			Round:             round,
-			RemainingSec:      remaining,
-			Action:            decision.NextAction,
-			ResponseID:        result.ResponseID,
-			TotalInputTokens:  totalInputTokens,
-			TotalCachedTokens: totalCachedTokens,
-			TotalOutputTokens: totalOutputTokens,
-			SummaryPane:       history.summaryPaneSnapshot(),
+			Phase:              "action_exec",
+			Round:              round,
+			RemainingSec:       remaining,
+			Action:             decision.NextAction,
+			ResponseID:         result.ResponseID,
+			TotalInputTokens:   totalInputTokens,
+			TotalCachedTokens:  totalCachedTokens,
+			TotalOutputTokens:  totalOutputTokens,
+			SummaryPane:        history.summaryPaneSnapshot(),
+			TokenTotalsPresent: true,
 		})
 		var actionResult ActionResult
 		if parseError != "" {
@@ -452,6 +537,8 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 			TotalCachedTokens:   totalCachedTokens,
 			TotalOutputTokens:   totalOutputTokens,
 			SummaryPane:         history.summaryPaneSnapshot(),
+			TokenUsagePresent:   true,
+			TokenTotalsPresent:  true,
 		})
 		if parseError != "" {
 			stoppedReason = "structured_decision_parse_failed"
@@ -475,17 +562,24 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 				})
 			}
 			r.emitProgress(ProgressEvent{
-				Phase:             "resident_sleep",
-				Round:             round,
-				RemainingSec:      remaining,
-				Action:            decision.NextAction,
-				ResponseID:        result.ResponseID,
-				TotalInputTokens:  totalInputTokens,
-				TotalCachedTokens: totalCachedTokens,
-				TotalOutputTokens: totalOutputTokens,
-				SummaryPane:       history.summaryPaneSnapshot(),
+				Phase:              "resident_sleep",
+				Round:              round,
+				RemainingSec:       remaining,
+				Action:             decision.NextAction,
+				ResponseID:         result.ResponseID,
+				TotalInputTokens:   totalInputTokens,
+				TotalCachedTokens:  totalCachedTokens,
+				TotalOutputTokens:  totalOutputTokens,
+				SummaryPane:        history.summaryPaneSnapshot(),
+				TokenTotalsPresent: true,
 			})
-			time.Sleep(sleepDuration)
+			if !r.wait(sleepDuration) {
+				if sleep, err := r.budget.SleepEnd(profile, time.Now().UTC()); err == nil {
+					state.LastSleepDepth = sleep.Session.Depth
+				}
+				stoppedReason = "aborted_by_host"
+				break runLoop
+			}
 			if sleep, err := r.budget.SleepEnd(profile, time.Now().UTC()); err == nil {
 				state.LastSleepDepth = sleep.Session.Depth
 			} else {
@@ -501,17 +595,21 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 		if decision.NextAction == "noop" {
 			if r.options.ContinueOnNoop {
 				r.emitProgress(ProgressEvent{
-					Phase:             "noop_wait",
-					Round:             round,
-					RemainingSec:      remaining,
-					Action:            decision.NextAction,
-					ResponseID:        result.ResponseID,
-					TotalInputTokens:  totalInputTokens,
-					TotalCachedTokens: totalCachedTokens,
-					TotalOutputTokens: totalOutputTokens,
-					SummaryPane:       history.summaryPaneSnapshot(),
+					Phase:              "noop_wait",
+					Round:              round,
+					RemainingSec:       remaining,
+					Action:             decision.NextAction,
+					ResponseID:         result.ResponseID,
+					TotalInputTokens:   totalInputTokens,
+					TotalCachedTokens:  totalCachedTokens,
+					TotalOutputTokens:  totalOutputTokens,
+					SummaryPane:        history.summaryPaneSnapshot(),
+					TokenTotalsPresent: true,
 				})
-				time.Sleep(minDuration(20*time.Second, time.Until(deadline)-25*time.Second))
+				if !r.wait(minDuration(20*time.Second, time.Until(deadline)-25*time.Second)) {
+					stoppedReason = "aborted_by_host"
+					break runLoop
+				}
 				continue
 			}
 			stoppedReason = "resident_noop"
@@ -527,6 +625,9 @@ func (r *Runner) Run(profile ResidentProfile, duration time.Duration, outDir str
 }
 
 func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, stablePrefix string, history runHistory, roundLogs []RoundLog, compactionEvents []CompactionEvent, stoppedReason, outDir string, verbose bool) (FinalReport, error) {
+	if r.runContext().Err() != nil {
+		stoppedReason = "aborted_by_host"
+	}
 	durableRounds, err := r.reports.ValidateRounds(outDir, started, profile.Name, roundLogs)
 	if err != nil {
 		return FinalReport{}, fmt.Errorf("validate durable round journal: %w", err)
@@ -539,9 +640,9 @@ func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, st
 		compactionEvents = append(compactionEvents, acceptanceEvents...)
 		if err != nil {
 			if brokerLog != nil && brokerLog.Denied {
-				stoppedReason = appendStopReason(stoppedReason, brokerDeniedStopReason("acceptance_actual_denied", brokerLog))
+				stoppedReason = appendStopReason(stoppedReason, brokerDeniedStopReason("final_reflection_actual_denied", brokerLog))
 			} else {
-				stoppedReason = appendStopReason(stoppedReason, "acceptance_failed")
+				stoppedReason = appendStopReason(stoppedReason, "final_reflection_failed")
 			}
 			acceptance = fallbackAcceptance(roundLogs, stoppedReason)
 			report, finalizeErr := r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, acceptance, brokerLog, outDir)
@@ -565,6 +666,9 @@ func (r *Runner) persistRound(outDir string, started time.Time, resident string,
 }
 
 func shouldRunAcceptance(stoppedReason string) bool {
+	if strings.HasPrefix(stoppedReason, "aborted_by_host") || strings.HasPrefix(stoppedReason, "broker_preflight_denied:") {
+		return false
+	}
 	if strings.HasPrefix(stoppedReason, "upstream_request_failed:") {
 		return false
 	}
@@ -572,6 +676,31 @@ func shouldRunAcceptance(stoppedReason string) bool {
 		return false
 	}
 	return stoppedReason != "structured_decision_parse_failed"
+}
+
+func recoverablePreflightDenial(reasons []string) bool {
+	if len(reasons) == 0 {
+		return false
+	}
+	for _, reason := range reasons {
+		switch strings.TrimSpace(reason) {
+		case "fatigue_exhausted", "spark_exhausted", "spark_debt_active", "day_quota_exhausted", "week_quota_exhausted":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func preflightRecoveryWait(nextRecoveryAt string, deadline time.Time) time.Duration {
+	waitFor := 15 * time.Minute
+	if next, err := time.Parse(time.RFC3339, strings.TrimSpace(nextRecoveryAt)); err == nil {
+		if candidate := time.Until(next); candidate > 0 {
+			waitFor = candidate
+		}
+	}
+	remaining := time.Until(deadline) - 25*time.Second
+	return minDuration(waitFor, remaining)
 }
 
 func (r *Runner) writeFinalReport(profile ResidentProfile, duration time.Duration, started time.Time, state loopState, history runHistory, roundLogs []RoundLog, compactionEvents []CompactionEvent, stoppedReason, acceptance string, acceptanceBroker *BrokerUsageLog, outDir string) (FinalReport, error) {
@@ -586,7 +715,7 @@ func (r *Runner) writeFinalReport(profile ResidentProfile, duration time.Duratio
 		Rounds:           len(roundLogs),
 		StartedAt:        started.Format(time.RFC3339),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339),
-		Acceptance:       acceptance,
+		FinalReflection:  acceptance,
 		AcceptanceBroker: acceptanceBroker,
 		RoundLogs:        roundLogs,
 		StoppedReason:    stoppedReason,
@@ -1146,6 +1275,10 @@ func shouldCompactBeforeModel(history runHistory, measuredPromptTokens int, mode
 	return measuredPromptTokens > modelContextTriggerTokens(model)
 }
 
+func scheduledCompactionDue(completedRounds, everyRounds, recentRounds int) bool {
+	return everyRounds > 1 && completedRounds > 0 && completedRounds%everyRounds == 0 && recentRounds > everyRounds/2
+}
+
 func preflightActivity(state loopState) tokenledger.ActivityType {
 	if state.LastDecision == nil {
 		return tokenledger.ActivityNormalWork
@@ -1252,14 +1385,14 @@ func minDuration(a, b time.Duration) time.Duration {
 func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, history runHistory, state loopState, rounds []RoundLog, verbose bool) (string, *BrokerUsageLog, []CompactionEvent, error) {
 	events := []CompactionEvent{}
 	if history.recentRounds > 3 {
-		event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerAcceptanceMicro, "final acceptance keeps only the most recent 3 rounds verbatim", 3, len(rounds), verbose)
+		event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerAcceptanceMicro, "final reflection keeps only the most recent 3 rounds verbatim", 3, len(rounds), verbose)
 		events = append(events, event)
 	}
 	acceptanceInput := history.input(stablePrefix)
 	acceptanceInput = append(acceptanceInput, openai.Message{
 		Role: "user",
 		Content: strings.Join([]string{
-			"[acceptance_request]",
+			"[final_reflection_request]",
 			"现在停止行动。不要再做下一次决策。不要输出任何 command、JSON、schema 或 decision summary。",
 			"只写最终纯文本验收报告。",
 			"严格基于本次运行的 transcript 和已观察事实。",
@@ -1295,7 +1428,7 @@ func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, his
 			acceptanceInput = append(acceptanceInput, openai.Message{
 				Role: "user",
 				Content: strings.Join([]string{
-					"[acceptance_request]",
+					"[final_reflection_request]",
 					"现在停止行动。不要再做下一次决策。不要输出任何 command、JSON、schema 或 decision summary。",
 					"只写最终纯文本验收报告。",
 					"严格基于本次运行的 transcript 和已观察事实。",
@@ -1314,15 +1447,15 @@ func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, his
 			}, verbose)
 		}
 		if err != nil {
-			return "", nil, events, fmt.Errorf("acceptance request failed: %w", err)
+			return "", nil, events, fmt.Errorf("final reflection request failed: %w", err)
 		}
 	}
 	brokerLog, err := r.budget.Settle(profile, result, time.Now().UTC(), runtimeguard.CallKindAcceptance, tokenledger.ActivityLightWork)
 	if err != nil {
-		return "", nil, events, fmt.Errorf("acceptance broker settlement failed: %w", err)
+		return "", nil, events, fmt.Errorf("final reflection broker settlement failed: %w", err)
 	}
 	if brokerLog.Denied {
-		return "", brokerLog, events, fmt.Errorf("acceptance actual usage denied: %s", strings.Join(brokerLog.DeniedReason, ","))
+		return "", brokerLog, events, fmt.Errorf("final reflection actual usage denied: %s", strings.Join(brokerLog.DeniedReason, ","))
 	}
 	return normalizeAcceptance(result.OutputText), brokerLog, events, nil
 }
@@ -1362,8 +1495,8 @@ func fallbackAcceptance(rounds []RoundLog, stoppedReason string) string {
 	if strings.HasPrefix(stoppedReason, "upstream_request_failed:") {
 		return fmt.Sprintf("本次运行在下一次模型调用被可重试 upstream 请求失败打断前，完成了 %d 个有效轮次。已记录的 round log 仍是 resident 在中断前观察和行动的有效证据。", len(rounds))
 	}
-	if strings.Contains(stoppedReason, "acceptance_failed") {
-		return fmt.Sprintf("本次运行完成了 %d 个有效轮次，但最终 acceptance 调用失败。这个 partial report 以已记录 round log 为事实来源。", len(rounds))
+	if strings.Contains(stoppedReason, "final_reflection_failed") || strings.Contains(stoppedReason, "acceptance_failed") {
+		return fmt.Sprintf("本次运行完成了 %d 个有效轮次，但最终回顾调用失败。这个 partial report 以已记录 round log 为事实来源。", len(rounds))
 	}
 	return ""
 }

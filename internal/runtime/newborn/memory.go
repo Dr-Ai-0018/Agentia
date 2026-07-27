@@ -58,19 +58,52 @@ func (r *Runner) getOrCreateOpenRunGroup(profile ResidentProfile, state loopStat
 		return memory.HistoryGroup{}, err
 	}
 	for _, group := range groups {
-		if group.State == memory.HistoryGroupOpen && group.GroupUUID == state.RunGroupID {
+		if group.State == memory.HistoryGroupOpen && historyGroupBelongsToRun(group, state.RunGroupID) {
 			return group, nil
 		}
 	}
+	groupID, segment := nextRunHistoryGroupID(groups, state.RunGroupID)
 	return memory.HistoryGroup{
-		GroupUUID:   state.RunGroupID,
+		GroupUUID:   groupID,
 		Resident:    profile.Name,
 		CreatedAt:   now,
 		LastEventAt: now,
 		SourceKind:  "newborn_runtime_rounds",
 		State:       memory.HistoryGroupOpen,
-		Tags:        []string{"runtime:newborn", "resident:" + profile.Name},
+		Tags:        []string{"runtime:newborn", "resident:" + profile.Name, "run:" + state.RunGroupID, fmt.Sprintf("segment:%03d", segment)},
 	}, nil
+}
+
+func historyGroupBelongsToRun(group memory.HistoryGroup, runID string) bool {
+	if group.GroupUUID == runID {
+		return true
+	}
+	for _, tag := range group.Tags {
+		if tag == "run:"+runID {
+			return true
+		}
+	}
+	return false
+}
+
+func nextRunHistoryGroupID(groups []memory.HistoryGroup, runID string) (string, int) {
+	used := make(map[string]struct{}, len(groups))
+	segments := 0
+	for _, group := range groups {
+		used[group.GroupUUID] = struct{}{}
+		if historyGroupBelongsToRun(group, runID) {
+			segments++
+		}
+	}
+	if segments == 0 {
+		return runID, 1
+	}
+	for segment := segments + 1; ; segment++ {
+		candidate := fmt.Sprintf("%s-seg-%03d", runID, segment)
+		if _, exists := used[candidate]; !exists {
+			return candidate, segment
+		}
+	}
 }
 
 func (r *Runner) closeRunHistoryGroup(profile ResidentProfile, state loopState, now time.Time, stoppedReason string, rounds int) error {
@@ -79,7 +112,7 @@ func (r *Runner) closeRunHistoryGroup(profile ResidentProfile, state loopState, 
 		return err
 	}
 	for _, group := range groups {
-		if group.State != memory.HistoryGroupOpen || group.GroupUUID != state.RunGroupID {
+		if group.State != memory.HistoryGroupOpen || !historyGroupBelongsToRun(group, state.RunGroupID) {
 			continue
 		}
 		group.State = memory.HistoryGroupClosed
@@ -90,7 +123,29 @@ func (r *Runner) closeRunHistoryGroup(profile ResidentProfile, state loopState, 
 		} else {
 			group.CloseReason = stoppedReason
 		}
-		return r.memories.UpsertHistoryGroup(group)
+		if err := r.memories.UpsertHistoryGroup(group); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) reconcileStaleRunHistoryGroups(profile ResidentProfile, currentRunID string, now time.Time) error {
+	groups, err := r.memories.ListHistoryGroups(profile.Name)
+	if err != nil {
+		return err
+	}
+	for _, group := range groups {
+		if group.State != memory.HistoryGroupOpen || group.SourceKind != "newborn_runtime_rounds" || historyGroupBelongsToRun(group, currentRunID) {
+			continue
+		}
+		group.State = memory.HistoryGroupClosed
+		group.ClosedAt = now
+		group.LastEventAt = now
+		group.CloseReason = "startup_reconciled_interrupted"
+		if err := r.memories.UpsertHistoryGroup(group); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -105,20 +160,21 @@ func (r *Runner) shouldCreateShortReflection(state loopState, round int, decisio
 	if decision.NextAction == "noop" {
 		return false
 	}
+	switch decision.NextAction {
+	case "self_status", "self_quota", "sleep", "note_read", "note_list":
+		return false
+	}
 	observation = strings.ToLower(observation)
 	if strings.Contains(observation, "error:") || strings.Contains(observation, "failed") || strings.Contains(observation, "permission denied") {
 		return true
 	}
-	if decision.NextAction == "talk_to_chenglin" || decision.NextAction == "submit_ticket" {
+	if decision.NextAction == "submit_ticket" {
 		return true
 	}
-	if isNoteAction(decision.NextAction) && state.UsedActions["guest_exec"] >= 2 {
+	if (decision.NextAction == "note_append" || decision.NextAction == "note_replace_with_backup" || decision.NextAction == "note_summarize_or_compact") && state.UsedActions["guest_exec"] >= 2 {
 		return true
 	}
 	if strings.Contains(strings.ToLower(observation), "duplicate action suppressed") {
-		return true
-	}
-	if state.UsedActions["guest_exec"] > 0 && state.UsedActions["talk_to_chenglin"] > 0 {
 		return true
 	}
 	if decision.NextAction == "guest_exec" && latestActionExpandedFrontier(state) {
@@ -156,7 +212,13 @@ func (r *Runner) writeShortReflection(profile ResidentProfile, state loopState, 
 	groups, err := r.memories.ListHistoryGroups(profile.Name)
 	if err == nil {
 		for _, group := range groups {
-			if group.State == memory.HistoryGroupOpen && group.GroupUUID == state.RunGroupID {
+			if !historyGroupBelongsToRun(group, state.RunGroupID) {
+				continue
+			}
+			if groupID == "" {
+				groupID = group.GroupUUID
+			}
+			if group.State == memory.HistoryGroupOpen {
 				groupID = group.GroupUUID
 				break
 			}
@@ -172,6 +234,9 @@ func (r *Runner) writeShortReflection(profile ResidentProfile, state loopState, 
 		DropCondition:   "到期前审阅，并选择提升、改写或删除",
 	}
 	summary := summarizeShortReflection(decision, observation)
+	if r.hasEquivalentShortReflection(profile.Name, summary) {
+		return nil
+	}
 	residentText := renderResidentShortReflection(profile, round, decision, observation, now)
 	record := memory.AbstractMemory{
 		Record: memory.ApplyDecision(now, memory.Record{
@@ -200,6 +265,20 @@ func (r *Runner) writeShortReflection(profile ResidentProfile, state loopState, 
 		Boundary:       "仅作为当前探索线的近程工作记忆使用。",
 	}
 	return r.memories.UpsertAbstractMemory(record)
+}
+
+func (r *Runner) hasEquivalentShortReflection(resident, summary string) bool {
+	records, err := r.memories.ListAbstractMemories(resident)
+	if err != nil {
+		return false
+	}
+	target := normalizeDuplicateText(summary)
+	for _, record := range records {
+		if record.Layer == memory.LayerShort && normalizeDuplicateText(record.Summary) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func buildMemoryTags(decision AgentDecision, summary, residentText string) []string {

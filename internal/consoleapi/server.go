@@ -29,6 +29,15 @@ type Server struct {
 	writeLimiter *rateLimiter
 	startedAt    time.Time
 	access       *accessStats
+	summaryCache summaryExpensiveCache
+}
+
+type summaryExpensiveCache struct {
+	mu         sync.Mutex
+	limit      int
+	expiresAt  time.Time
+	inspect    broker.HostInspectSummary
+	acceptance broker.V0AcceptanceOutput
 }
 
 type Options struct {
@@ -366,8 +375,7 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "followups_unavailable", err)
 		return
 	}
-	inspect, _ := s.runHostInspectSummary(limit)
-	acceptance, _ := s.runV0Acceptance(limit)
+	inspect, acceptance := s.cachedExpensiveSummary(limit)
 	var latest *orchestrator.RunRecord
 	var active *orchestrator.RunStatus
 	var staleRunAlerts []OperatorAlert
@@ -394,6 +402,22 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 		out.Acceptance = &acceptance
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) cachedExpensiveSummary(limit int) (broker.HostInspectSummary, broker.V0AcceptanceOutput) {
+	s.summaryCache.mu.Lock()
+	defer s.summaryCache.mu.Unlock()
+	now := s.now()
+	if s.summaryCache.limit == limit && now.Before(s.summaryCache.expiresAt) {
+		return s.summaryCache.inspect, s.summaryCache.acceptance
+	}
+	inspect, _ := s.runHostInspectSummary(limit)
+	acceptance, _ := s.runV0Acceptance(limit)
+	s.summaryCache.limit = limit
+	s.summaryCache.expiresAt = now.Add(30 * time.Second)
+	s.summaryCache.inspect = inspect
+	s.summaryCache.acceptance = acceptance
+	return inspect, acceptance
 }
 
 const activeRunFreshnessLimit = 30 * time.Minute

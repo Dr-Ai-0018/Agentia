@@ -23,6 +23,7 @@ type ResidentStatus struct {
 	SparkBalance         float64            `json:"spark_balance"`
 	SparkBalanceUnits    int64              `json:"spark_balance_units"`
 	Fatigue              int                `json:"fatigue"`
+	FatigueCap           int                `json:"fatigue_cap"`
 	SleepDebt            int                `json:"sleep_debt"`
 	Sleep                SleepStateSnapshot `json:"sleep"`
 	DebtActive           bool               `json:"debt_active"`
@@ -144,6 +145,7 @@ func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath
 		SparkBalance:         account.Balance,
 		SparkBalanceUnits:    account.BalanceUnits,
 		Fatigue:              state.Fatigue,
+		FatigueCap:           engine.FatigueCap(),
 		SleepDebt:            state.SleepDebt,
 		DebtActive:           state.DebtActive,
 		DebtAmount:           state.DebtAmount,
@@ -165,6 +167,7 @@ func BuildResidentStatusAt(engine *runtimecore.Engine, loaded bool, snapshotPath
 			ResidentID:           state.ResidentID,
 			SparkBalance:         account.Balance,
 			Fatigue:              state.Fatigue,
+			FatigueCap:           engine.FatigueCap(),
 			SleepDebt:            state.SleepDebt,
 			DebtActive:           state.DebtActive,
 			DebtAmount:           state.DebtAmount,

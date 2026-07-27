@@ -173,8 +173,8 @@ func oneLine(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 280 {
-		return s[:280] + "..."
+	if len([]rune(s)) > 280 {
+		return truncateRunes(s, 280) + "..."
 	}
 	return s
 }

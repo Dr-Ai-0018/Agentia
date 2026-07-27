@@ -12,7 +12,9 @@ import type {
 
 const TRIGGER_LABEL: Record<CompactionTriggerReason, string> = {
   preflight_measured: "开跑前实测",
-  acceptance_microcompact: "验收前收摊",
+  acceptance_microcompact: "旧版最终回顾前收拢",
+  final_reflection_microcompact: "最终回顾前收拢",
+  scheduled_probe: "定期压缩探针",
   reactive_overflow: "撞墙后自救",
   manual: "手动",
 };

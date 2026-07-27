@@ -65,6 +65,8 @@ func quotaAvailability(status ResidentStatus, snapshot QuotaSnapshot) (bool, str
 		return false, "spark_debt_active", "spark 欠账还没还清，先恢复或等结算清掉再继续。"
 	case status.SparkBalance <= 0:
 		return false, "spark_exhausted", "spark 余额不够，暂时不能继续消耗。"
+	case status.FatigueCap > 0 && status.Fatigue >= status.FatigueCap:
+		return false, "fatigue_exhausted", "疲劳已经到达硬上限，先等待自然恢复再继续。"
 	case status.DayCap > 0 && status.RollingDayUsed >= status.DayCap:
 		return false, "day_quota_exhausted", "过去 24 小时已经太满了，等前面的消耗自然滚出窗口后再继续。"
 	case status.WeekCap > 0 && status.RollingWeekUsed >= status.WeekCap:

@@ -124,7 +124,7 @@ func (e *IncusActionExecutor) executeNoteAppend(profile ResidentProfile, decisio
 	if text == "" {
 		return actionError("note_append denied: 请在 note_text 提供笔记正文；note 工具不会执行 shell 命令", "validation_error", decision.Command)
 	}
-	if len(text) > noteTextMaxChars {
+	if len([]rune(text)) > noteTextMaxChars {
 		return actionError(fmt.Sprintf("note_append denied: note_text 超过 %d 字符", noteTextMaxChars), "validation_error", text)
 	}
 	result := appendGuestNote(profile.Instance, decision.NoteFile, text)
@@ -166,7 +166,10 @@ func renderResidentStatusObservation(status brokerstate.ResidentStatus) string {
 		"self status 快照:",
 		fmt.Sprintf("resident_id=%s", status.ResidentID),
 		fmt.Sprintf("spark_balance=%.4f", status.SparkBalance),
-		fmt.Sprintf("fatigue=%d", status.Fatigue),
+		fmt.Sprintf("fatigue_level=%d", fatigueLevel(status.Fatigue, status.FatigueCap)),
+		fmt.Sprintf("fatigue_units=%d", status.Fatigue),
+		fmt.Sprintf("fatigue_cap=%d", effectiveFatigueCap(status.FatigueCap)),
+		"fatigue_trend_note=status checks and model turns can add strain; use fatigue_level, current_state and current_pressure together",
 		fmt.Sprintf("sleep_depth=%s", sleepDepth),
 		fmt.Sprintf("sleep_debt_hours=%.2f", status.Sleep.DebtHours),
 		fmt.Sprintf("debt_active=%t", status.DebtActive),
@@ -192,6 +195,10 @@ func renderResidentStatusObservation(status brokerstate.ResidentStatus) string {
 	if status.Physiology.Pressure != "" {
 		lines = append(lines, fmt.Sprintf("current_pressure=%s", status.Physiology.Pressure))
 	}
+	lines = append(lines,
+		fmt.Sprintf("recovery_suggested=%t", status.Physiology.RecoverySuggested),
+		fmt.Sprintf("recovery_urgency=%s", compactValue(status.Physiology.RecoveryUrgency)),
+	)
 	return strings.Join(lines, "\n")
 }
 
@@ -218,12 +225,16 @@ func renderQuotaObservation(out broker.QuotaOutput) string {
 		fmt.Sprintf("rolling_week_used=%d", out.Quota.RollingWeekUsed),
 		fmt.Sprintf("rolling_week_cap=%d", out.Quota.WeekCap),
 		fmt.Sprintf("rolling_week_remaining=%d", out.Quota.RollingWeekRemaining),
-		fmt.Sprintf("fatigue=%d", out.Status.Fatigue),
+		fmt.Sprintf("fatigue_level=%d", fatigueLevel(out.Status.Fatigue, out.Status.FatigueCap)),
+		fmt.Sprintf("fatigue_units=%d", out.Status.Fatigue),
+		fmt.Sprintf("fatigue_cap=%d", effectiveFatigueCap(out.Status.FatigueCap)),
 		fmt.Sprintf("sleep_depth=%s", sleepDepth),
 		fmt.Sprintf("sleep_debt_hours=%.2f", out.Status.Sleep.DebtHours),
 		fmt.Sprintf("can_work_now=%t", out.Quota.WorkAllowedNow),
 		fmt.Sprintf("next_natural_recovery_at=%s", compactValue(out.Quota.NextRecoveryAt)),
 		fmt.Sprintf("recovery_tick_minutes=%d", out.Quota.RecoveryTickMinutes),
+		fmt.Sprintf("recovery_suggested=%t", out.Status.Physiology.RecoverySuggested),
+		fmt.Sprintf("recovery_urgency=%s", compactValue(out.Status.Physiology.RecoveryUrgency)),
 		"recent_6h_note=recent_6h 是近期节奏观察，不是单独硬门槛；真正会挡住普通行动的是 rolling_day / rolling_week、spark、欠账或疲劳。",
 		"sleep_hint=如果最近节奏太快、疲劳上来、睡眠债变重，或 day/week 剩余很少，可以主动 sleep 几分钟或十几分钟；睡眠期间不会继续消耗模型调用，醒来后再查 self_quota。",
 	}
@@ -234,6 +245,25 @@ func renderQuotaObservation(out broker.QuotaOutput) string {
 		lines = append(lines, "pause_reason="+summary)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func effectiveFatigueCap(cap int) int {
+	if cap <= 0 {
+		return 2_500_000
+	}
+	return cap
+}
+
+func fatigueLevel(fatigue, cap int) int {
+	cap = effectiveFatigueCap(cap)
+	level := int(float64(fatigue) * 100 / float64(cap))
+	if level < 0 {
+		return 0
+	}
+	if level > 100 {
+		return 100
+	}
+	return level
 }
 
 func recent6HUsed(rolling, legacy int) int {
@@ -425,16 +455,55 @@ func executeNoteRead(profile ResidentProfile, decision AgentDecision) ActionResu
 		"note_dir=/root/arena-notes",
 		"note_file=$note_dir/$1",
 		"if [ ! -f \"$note_file\" ]; then echo \"note_read denied: file not found: $1\" >&2; exit 44; fi",
-		"wc -c \"$note_file\"",
-		"sed -n '1,220p' \"$note_file\"",
+		"mode=$2",
+		"start_line=$3",
+		"total_bytes=$(wc -c < \"$note_file\")",
+		"total_lines=$(awk 'END { print NR }' \"$note_file\")",
+		"case \"$mode\" in",
+		"  head) first=1; last=220 ;;",
+		"  range) first=$start_line; last=$((start_line + 219)) ;;",
+		"  *) mode=tail; first=$((total_lines > 220 ? total_lines - 219 : 1)); last=$total_lines ;;",
+		"esac",
+		"if [ \"$last\" -gt \"$total_lines\" ]; then last=$total_lines; fi",
+		"if [ \"$total_lines\" -eq 0 ]; then first=0; last=0; fi",
+		"partial=false; if [ \"$first\" -gt 1 ] || [ \"$last\" -lt \"$total_lines\" ]; then partial=true; fi",
+		"printf 'note_meta mode=%s total_bytes=%s total_lines=%s returned_start=%s returned_end=%s partial=%s\\n' \"$mode\" \"$total_bytes\" \"$total_lines\" \"$first\" \"$last\" \"$partial\"",
+		"if [ \"$first\" -gt 0 ] && [ \"$first\" -le \"$last\" ]; then sed -n \"${first},${last}p\" \"$note_file\"; fi",
 	}, "\n")
-	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script, "note_read", file)
+	mode := normalizeNoteReadMode(decision.NoteReadMode)
+	startLine := decision.NoteStartLine
+	if startLine < 1 {
+		startLine = 1
+	}
+	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script, "note_read", file, mode, strconv.Itoa(startLine))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
 		return ActionResult{Observation: "note_read failed:\n" + raw, Activity: tokenledger.ActivityLightWork, Error: true, ErrorKind: "note_read_failed", RawOutput: raw}
 	}
-	return ActionResult{Observation: "note_read 读取 /root/arena-notes/" + file + ":\n" + limitActionObservation(string(out)), Activity: tokenledger.ActivityLightWork}
+	return ActionResult{Observation: "note_read 读取 /root/arena-notes/" + file + ":\n" + limitNoteReadObservation(string(out), mode), Activity: tokenledger.ActivityLightWork}
+}
+
+func normalizeNoteReadMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "head", "range":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "tail"
+	}
+}
+
+func limitNoteReadObservation(raw, mode string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) <= actionRawOutputMax {
+		return raw
+	}
+	meta, body, _ := strings.Cut(raw, "\n")
+	if mode == "tail" {
+		kept := validUTF8Suffix(body, actionRawOutputMax-len(meta)-80)
+		return meta + "\n[note_content_prefix_omitted bytes=" + strconv.Itoa(len(body)-len(kept)) + "]\n" + kept
+	}
+	return limitRawOutput(raw)
 }
 
 func appendGuestNote(instance, noteFile, text string) ActionResult {
@@ -485,7 +554,7 @@ func replaceGuestNoteWithBackup(profile ResidentProfile, decision AgentDecision,
 	if text == "" {
 		return actionError(action+" denied: note_text 是必填项", "validation_error", "")
 	}
-	if len(text) > noteTextMaxChars {
+	if len([]rune(text)) > noteTextMaxChars {
 		return actionError(fmt.Sprintf("%s denied: note_text 超过 %d 字符", action, noteTextMaxChars), "validation_error", text)
 	}
 	script := strings.Join([]string{
@@ -560,8 +629,9 @@ func limitRawOutput(raw string) string {
 	if len(raw) <= actionRawOutputMax {
 		return raw
 	}
-	omitted := len(raw) - actionRawOutputMax
-	return raw[:actionRawOutputMax] + "\n[raw_output_truncated bytes_omitted=" + strconv.Itoa(omitted) + "]"
+	kept := validUTF8Prefix(raw, actionRawOutputMax)
+	omitted := len(raw) - len(kept)
+	return kept + "\n[raw_output_truncated bytes_omitted=" + strconv.Itoa(omitted) + "]"
 }
 
 func limitActionObservation(raw string) string {
@@ -582,9 +652,7 @@ func decisionSignature(decision AgentDecision) string {
 	normalize := func(s string) string {
 		s = strings.ToLower(strings.TrimSpace(s))
 		s = strings.Join(strings.Fields(s), " ")
-		if len(s) > 180 {
-			s = s[:180]
-		}
+		s = truncateRunes(s, 180)
 		return s
 	}
 	switch decision.NextAction {
@@ -687,8 +755,6 @@ func repeatedTicket(resident, title, body, priority string) bool {
 func normalizeDuplicateText(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 200 {
-		s = s[:200]
-	}
+	s = truncateRunes(s, 200)
 	return s
 }
