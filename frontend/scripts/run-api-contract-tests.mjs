@@ -31,6 +31,21 @@ const jsonResponse = (value) => ({
 
 globalThis.fetch = async (url, init = {}) => {
   requests.push({ url: String(url), init });
+  if (url === "/api/summary") {
+    return jsonResponse({
+      followups: [{
+        kind: "host_intervention",
+        resident: "onyx",
+        target_id: "intervention-1",
+        title: "检查服务状态",
+        preview: "需要程林确认维护结果",
+        status: "in_progress",
+        created_at: "2026-07-26T09:00:00Z",
+        updated_at: "2026-07-26T10:00:00Z",
+        maintenance: { service: "arena-console-server" },
+      }],
+    });
+  }
   if (url === "/api/threads") {
     return jsonResponse([
       { resident: "jade", pending_count: 2, last_preview: "jade latest" },
@@ -120,6 +135,13 @@ globalThis.fetch = async (url, init = {}) => {
 };
 
 const api = new HttpArenaConsoleApi({ basePath: "/api" });
+const summary = await api.getSummary();
+assert.equal(summary.followups[0].kind, "intervention");
+assert.equal(summary.followups[0].threadId, undefined);
+assert.equal(summary.followups[0].status, "in_progress");
+assert.equal(summary.followups[0].title, "检查服务状态");
+assert.equal(summary.followups[0].updatedAt, "2026-07-26T10:00:00Z");
+assert.deepEqual(summary.followups[0].maintenance, { service: "arena-console-server" });
 const threads = await api.listWorldThreads();
 assert.deepEqual(threads.map((thread) => thread.threadId), ["chat-jade", "chat-amber", "chat-onyx"]);
 assert.equal(threads[0].messages[0].body, "完整正文，不是 preview");

@@ -212,6 +212,7 @@ type ApiFollowup = {
   title?: string;
   preview?: string;
   status?: string;
+  maintenance?: Record<string, string>;
 };
 
 type ApiInspect = {
@@ -625,11 +626,14 @@ function normalizeFollowups(input: ApiFollowup[] | undefined, inbox: ApiInbox | 
       kind,
       resident: asResident(item.resident) ?? "jade",
       targetId: item.target_id,
-      threadId: threadIDFor(kind, item.resident, item.target_id),
+      threadId: kind === "intervention" ? undefined : threadIDFor(kind, item.resident, item.target_id),
       createdAt: item.created_at ?? "",
+      updatedAt: item.updated_at || undefined,
       age: item.created_at ? ageFromNow(item.created_at) : "",
-      status: item.status === "closed" || item.status === "replied" ? item.status : kind === "ticket" ? "open" : "pending",
+      status: normalizeFollowupStatus(item.status, kind),
       priority: item.priority,
+      title: item.title || undefined,
+      maintenance: item.maintenance,
       preview: item.preview ?? item.title ?? "",
     }];
   });
@@ -665,7 +669,24 @@ function normalizeAlertMessage(input: ApiAlert): string {
 function normalizeFollowupKind(kind: string): FollowupItem["kind"] | null {
   if (kind === "ticket" || kind === "ticket_reply") return "ticket";
   if (kind === "chat" || kind === "chat_reply") return "chat";
+  if (kind === "host_intervention" || kind === "intervention") return "intervention";
   return null;
+}
+
+function normalizeFollowupStatus(status: string | undefined, kind: FollowupItem["kind"]): FollowupItem["status"] {
+  switch (status) {
+    case "pending":
+    case "open":
+    case "replied":
+    case "closed":
+    case "planned":
+    case "in_progress":
+    case "failed":
+    case "rolled_back":
+      return status;
+    default:
+      return kind === "ticket" ? "open" : kind === "chat" ? "pending" : "unknown";
+  }
 }
 
 function normalizeEvidence(input: ApiAcceptance | undefined): EvidenceItem[] {

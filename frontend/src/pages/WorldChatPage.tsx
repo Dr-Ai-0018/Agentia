@@ -10,6 +10,7 @@ import { arenaApi } from "../lib/api/client";
 import { buildChatReplyRequest } from "../lib/reply";
 import type {
   AssertWorldSurfaceIsolated,
+  FollowupItem,
   ReplyDraft,
   WorldMessage,
   WorldVisibleThread,
@@ -17,13 +18,14 @@ import type {
 
 type WorldChatPageProps = AssertWorldSurfaceIsolated<{
   threads: WorldVisibleThread[];
+  interventions: FollowupItem[];
   activeThreadId: string;
   onSelectThread: (threadId: string) => void;
 }>;
 
 type SendState = { status: "idle" | "sending" | "error"; error?: string };
 
-export function WorldChatPage({ threads, activeThreadId, onSelectThread }: WorldChatPageProps) {
+export function WorldChatPage({ threads, interventions, activeThreadId, onSelectThread }: WorldChatPageProps) {
   const [view, setView] = useState<"chat" | "tickets">("chat");
   const [localThreads, setLocalThreads] = useState<WorldVisibleThread[]>(threads);
   const [drafts, setDrafts] = useState<Record<string, ReplyDraft>>(() => loadPersistedDrafts());
@@ -105,7 +107,7 @@ export function WorldChatPage({ threads, activeThreadId, onSelectThread }: World
         <button type="button" role="tab" aria-selected={view === "chat"} className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}>对话</button>
         <button type="button" role="tab" aria-selected={view === "tickets"} className={view === "tickets" ? "active" : ""} onClick={() => setView("tickets")}>单据</button>
       </div>
-      {view === "tickets" ? <TicketWorkspace /> : <div className="world-chat-page">
+      {view === "tickets" ? <TicketWorkspace interventions={interventions} /> : <div className="world-chat-page">
       <aside className="thread-list" aria-label="住户会话">
         <div className="thread-list__title">
           <span className="thread-list__title-h">对话</span>

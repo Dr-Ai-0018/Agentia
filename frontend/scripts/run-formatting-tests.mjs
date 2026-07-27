@@ -23,6 +23,7 @@ function loadTsModule(relativePath) {
 
 const { compactDuration, compactElapsedLabel } = loadTsModule("src/lib/duration.ts");
 const { describeDoing, doingPrefix } = loadTsModule("src/features/residents/residentSpeak.ts");
+const { interventionFollowups, interventionStatusLabel, priorityLabel, ticketStatusLabel } = loadTsModule("src/features/world-chat/ticketPresentation.ts");
 
 assert.equal(compactDuration("25m29.998555982s"), "25m29s");
 assert.equal(compactDuration("1h0m14.232882426s"), "1h0m");
@@ -36,3 +37,13 @@ assert.equal(`${doingPrefix("running", "她正在", "在敲字")}在敲字`, "�
 assert.equal(`${doingPrefix("running", "她正在", "接待来客")}接待来客`, "她正在接待来客");
 assert.equal(`${doingPrefix("running", "正在", "在敲字")}在敲字`, "在敲字");
 assert.equal(`${doingPrefix("sleeping", "她正在", "睡着")}${describeDoing({ resident: "onyx", status: "sleeping" }).verb}`, "睡着");
+
+assert.equal(ticketStatusLabel("open"), "待处理");
+assert.equal(ticketStatusLabel("answered"), "已答复");
+assert.equal(priorityLabel("urgent"), "紧急");
+assert.equal(interventionStatusLabel("in_progress"), "处理中");
+assert.deepEqual(interventionFollowups([
+  { kind: "chat", targetId: "chat-1" },
+  { kind: "intervention", targetId: "intervention-1" },
+  { kind: "ticket", targetId: "ticket-1" },
+]).map((item) => item.targetId), ["intervention-1"]);

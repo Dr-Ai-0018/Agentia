@@ -4,7 +4,7 @@ export type ResidentStatus = "running" | "sleeping" | "finished" | "error" | "bl
 
 export type Severity = "p0" | "p1" | "p2" | "info";
 
-export type FollowupKind = "chat" | "ticket";
+export type FollowupKind = "chat" | "ticket" | "intervention";
 
 export type ReplyKind = "chat_reply" | "ticket_reply";
 
@@ -135,8 +135,11 @@ export interface FollowupItem {
   threadId?: string;
   createdAt: string;
   age: string;
-  status: "pending" | "open" | "replied" | "closed";
+  status: "pending" | "open" | "replied" | "closed" | "planned" | "in_progress" | "failed" | "rolled_back" | "unknown";
   priority?: "low" | "medium" | "high" | "urgent";
+  title?: string;
+  updatedAt?: string;
+  maintenance?: Record<string, string>;
   preview: string;
 }
 
@@ -208,7 +211,7 @@ export interface WorldVisibleThread {
   resident: ResidentId;
   threadId: string;
   targetId?: string;
-  kind: FollowupKind;
+  kind: "chat" | "ticket";
   messages: WorldMessage[];
   total: number;
   pendingCount: number;

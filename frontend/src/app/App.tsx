@@ -78,7 +78,12 @@ export function App() {
       {page === "overview" && <OverviewPage telemetry={telemetry} onOpenThread={openThread} />}
       {page === "residents" && <ResidentsPage telemetry={telemetry} />}
       {page === "world-chat" && (
-        <WorldChatPage threads={threads} activeThreadId={activeThreadId} onSelectThread={setActiveThreadId} />
+        <WorldChatPage
+          threads={threads}
+          interventions={telemetry.followups.filter((item) => item.kind === "intervention")}
+          activeThreadId={activeThreadId}
+          onSelectThread={setActiveThreadId}
+        />
       )}
       {page === "runs" && <RunsPage telemetry={telemetry} />}
       {page === "system" && <SystemPage telemetry={telemetry} />}
