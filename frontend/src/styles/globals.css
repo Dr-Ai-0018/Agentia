@@ -1250,6 +1250,8 @@ button {
 .ticket-workspace {
   display: grid;
   grid-template-columns: 330px minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
   height: min(760px, calc(100vh - 190px));
   border: 1px solid var(--border-default);
   border-radius: var(--radius-panel);
@@ -1258,6 +1260,7 @@ button {
 }
 
 .ticket-list {
+  min-width: 0;
   overflow-y: auto;
   border-right: 1px solid var(--border-default);
   background: var(--bg-canvas);
@@ -2686,6 +2689,8 @@ button {
     flex: 0 0 auto;
   }
   .ticket-list {
+    width: 100%;
+    min-width: 0;
     max-height: 240px;
     border: 1px solid var(--border-default);
     border-radius: var(--radius-panel);
