@@ -9,6 +9,7 @@ const server = await createServer({ root, server: { middlewareMode: true }, appT
 
 try {
   const { WorldMarkdown } = await server.ssrLoadModule("/src/features/world-chat/WorldMarkdown.tsx");
+  const { WorldMessageBubble } = await server.ssrLoadModule("/src/features/world-chat/WorldMessageBubble.tsx");
   const { ReplyComposer } = await server.ssrLoadModule("/src/features/world-chat/ReplyComposer.tsx");
   const React = await import("react");
 
@@ -26,6 +27,43 @@ try {
   assert.match(markdown, /&lt;b&gt;不能执行但必须显示的 HTML&lt;\/b&gt;/);
   assert.doesNotMatch(markdown, /<img/);
   assert.match(markdown, /\[图片：远程图\] https:\/\/tracker\.invalid\/pixel\.png/);
+
+  const damaged = renderToStaticMarkup(React.createElement(WorldMessageBubble, {
+    message: {
+      id: "jade-damaged",
+      resident: "jade",
+      from: "jade",
+      to: "chenglin",
+      direction: "resident_to_chenglin",
+      body: "完整保存下来的前缀 `apt list --u�...",
+      bodyIntegrity: "legacy_truncated",
+      createdAt: "2026-07-26T09:08:48Z",
+      status: "pending",
+    },
+    onReply: () => {},
+  }));
+  assert.match(damaged, /旧版本保存到这里就截断了/);
+  assert.match(damaged, /后文没有写入记录/);
+  assert.match(damaged, /完整保存下来的前缀/);
+  assert.match(damaged, /记录到此中断/);
+  assert.match(damaged, /后文未保存/);
+  assert.match(damaged, /回复这条残片/);
+  assert.doesNotMatch(damaged, /�|\.\.\./);
+
+  const complete = renderToStaticMarkup(React.createElement(WorldMessageBubble, {
+    message: {
+      id: "jade-complete",
+      resident: "jade",
+      from: "jade",
+      to: "chenglin",
+      direction: "resident_to_chenglin",
+      body: "这是自然结束的完整消息...",
+      createdAt: "2026-07-27T04:00:00Z",
+      status: "pending",
+    },
+  }));
+  assert.match(complete, /这是自然结束的完整消息\.\.\./);
+  assert.doesNotMatch(complete, /旧版本保存到这里就截断了/);
 
   const targetBody = "不能省略：" + "很长的中英混合正文 / https://example.com/really/long/path ".repeat(20);
   const composer = renderToStaticMarkup(React.createElement(ReplyComposer, {

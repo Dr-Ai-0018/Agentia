@@ -286,6 +286,7 @@ export const threads: Record<string, WorldVisibleThread> = {
     pendingCount: 1,
     repliedCount: 0,
     deliveredCount: 1,
+    legacyTruncatedCount: 0,
     hasMore: false,
   },
   "thread-amber-24h-001": {
@@ -308,6 +309,7 @@ export const threads: Record<string, WorldVisibleThread> = {
     pendingCount: 1,
     repliedCount: 0,
     deliveredCount: 0,
+    legacyTruncatedCount: 0,
     hasMore: false,
   },
   "thread-onyx-ticket-001": {
@@ -330,6 +332,7 @@ export const threads: Record<string, WorldVisibleThread> = {
     pendingCount: 1,
     repliedCount: 0,
     deliveredCount: 0,
+    legacyTruncatedCount: 0,
     hasMore: false,
   },
 };

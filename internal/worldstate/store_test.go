@@ -319,6 +319,64 @@ func TestReadAllThreadSummaries(t *testing.T) {
 	}
 }
 
+func TestLegacyTruncatedMessageIntegrity(t *testing.T) {
+	root := t.TempDir()
+	store := New(root)
+	legacyBody := strings.Repeat("a", 257) + "..."
+	legacy := Message{
+		Resident:  "jade",
+		Direction: DirectionResidentToChenglin,
+		Body:      legacyBody,
+		CreatedAt: "2026-07-26T09:08:48Z",
+	}
+	if !isLegacyTruncatedMessage(legacy) {
+		t.Fatal("expected exact legacy compaction fingerprint to be marked")
+	}
+
+	completeAfterFix := legacy
+	completeAfterFix.CreatedAt = "2026-07-27T04:00:00Z"
+	if isLegacyTruncatedMessage(completeAfterFix) {
+		t.Fatal("must not mark a natural ellipsis created after the fix")
+	}
+
+	nonFingerprint := legacy
+	nonFingerprint.Body = "a natural short message..."
+	if isLegacyTruncatedMessage(nonFingerprint) {
+		t.Fatal("must not mark a body outside the exact old byte lengths")
+	}
+
+	chenglin := legacy
+	chenglin.Direction = DirectionChenglinToResident
+	if isLegacyTruncatedMessage(chenglin) {
+		t.Fatal("must not mark Chenglin messages")
+	}
+
+	thread := deriveThread([]Message{legacy}, "jade")
+	if len(thread) != 1 || thread[0].BodyIntegrity != BodyIntegrityLegacyTruncated {
+		t.Fatalf("expected derived integrity marker, got %#v", thread)
+	}
+	if thread[0].Body != legacyBody {
+		t.Fatalf("backend must preserve original evidence body, got %q", thread[0].Body)
+	}
+
+	if _, err := store.AppendResidentToChenglin("jade", legacyBody, time.Date(2026, 7, 26, 9, 8, 48, 0, time.UTC)); err != nil {
+		t.Fatalf("append legacy fixture: %v", err)
+	}
+	summaries, err := store.ReadAllThreadSummaries()
+	if err != nil {
+		t.Fatalf("read legacy summary: %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].LegacyTruncatedCount != 1 {
+		t.Fatalf("expected one damaged historical message, got %#v", summaries)
+	}
+	if !strings.HasPrefix(summaries[0].LastPreview, "[旧版本截断残片] ") {
+		t.Fatalf("expected damaged preview label, got %q", summaries[0].LastPreview)
+	}
+	if strings.HasSuffix(summaries[0].LastPreview, "...") {
+		t.Fatalf("damaged preview must not masquerade as expandable ellipsis: %q", summaries[0].LastPreview)
+	}
+}
+
 func TestReadHostInboxSummary(t *testing.T) {
 	root := t.TempDir()
 	store := New(root)

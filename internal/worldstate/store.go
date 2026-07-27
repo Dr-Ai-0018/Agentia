@@ -60,18 +60,20 @@ type ThreadMessage struct {
 	ProcessedAt       string `json:"processed_at,omitempty"`
 	ProcessedBy       string `json:"processed_by,omitempty"`
 	NeedsHostDecision bool   `json:"needs_host_decision,omitempty"`
+	BodyIntegrity     string `json:"body_integrity,omitempty"`
 }
 
 type ResidentThreadSummary struct {
-	Resident           string `json:"resident"`
-	LastMessageAt      string `json:"last_message_at,omitempty"`
-	LastDirection      string `json:"last_direction,omitempty"`
-	LastStatus         string `json:"last_status,omitempty"`
-	LastPreview        string `json:"last_preview,omitempty"`
-	PendingCount       int    `json:"pending_count"`
-	RepliedCount       int    `json:"replied_count"`
-	DeliveredCount     int    `json:"delivered_count"`
-	NeedsHostAttention bool   `json:"needs_host_attention"`
+	Resident             string `json:"resident"`
+	LastMessageAt        string `json:"last_message_at,omitempty"`
+	LastDirection        string `json:"last_direction,omitempty"`
+	LastStatus           string `json:"last_status,omitempty"`
+	LastPreview          string `json:"last_preview,omitempty"`
+	PendingCount         int    `json:"pending_count"`
+	RepliedCount         int    `json:"replied_count"`
+	DeliveredCount       int    `json:"delivered_count"`
+	LegacyTruncatedCount int    `json:"legacy_truncated_count"`
+	NeedsHostAttention   bool   `json:"needs_host_attention"`
 }
 
 type ThreadPage struct {
@@ -514,8 +516,14 @@ func (s *Store) ReadAllThreadSummaries() ([]ResidentThreadSummary, error) {
 		summary.LastDirection = last.Direction
 		summary.LastStatus = last.Status
 		summary.LastPreview = previewText(last.Body, 160)
+		if last.BodyIntegrity == BodyIntegrityLegacyTruncated {
+			summary.LastPreview = damagedPreviewText(last.Body, 120)
+		}
 
 		for _, item := range thread {
+			if item.BodyIntegrity == BodyIntegrityLegacyTruncated {
+				summary.LegacyTruncatedCount++
+			}
 			switch item.Status {
 			case StatusPending:
 				summary.PendingCount++
@@ -807,6 +815,9 @@ func deriveThread(all []Message, resident string) []ThreadMessage {
 		}
 
 		item := ThreadMessage{Message: msg}
+		if isLegacyTruncatedMessage(msg) {
+			item.BodyIntegrity = BodyIntegrityLegacyTruncated
+		}
 		item.Body = displayText(item.Body)
 		switch msg.Direction {
 		case DirectionResidentToChenglin:
@@ -1399,4 +1410,40 @@ func previewText(s string, limit int) string {
 func displayText(s string) string {
 	s = strings.ToValidUTF8(s, "…")
 	return strings.ReplaceAll(s, "\uFFFD", "…")
+}
+
+const BodyIntegrityLegacyTruncated = "legacy_truncated"
+
+var legacyMessageCompactionCutoff = time.Date(2026, 7, 27, 3, 15, 0, 0, time.UTC)
+
+func isLegacyTruncatedMessage(msg Message) bool {
+	if msg.Direction != DirectionResidentToChenglin || !strings.HasSuffix(msg.Body, "...") {
+		return false
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, msg.CreatedAt)
+	if err != nil || !createdAt.Before(legacyMessageCompactionCutoff) {
+		return false
+	}
+	switch len(msg.Body) {
+	case 259, 260, 262, 264:
+		return true
+	default:
+		return false
+	}
+}
+
+func stripLegacyTruncationArtifact(body string) string {
+	body = strings.TrimSuffix(body, "...")
+	body = strings.TrimSuffix(body, "…")
+	body = strings.TrimSuffix(body, "…")
+	return strings.TrimSpace(body)
+}
+
+func damagedPreviewText(body string, limit int) string {
+	body = previewText(stripLegacyTruncationArtifact(body), 0)
+	runes := []rune(body)
+	if limit > 0 && len(runes) > limit {
+		body = string(runes[:limit]) + " [打开查看残片]"
+	}
+	return "[旧版本截断残片] " + body
 }

@@ -139,7 +139,11 @@ export function WorldChatPage({ threads, interventions, activeThreadId, onSelect
       <div className="world-chat-main">
         <div className="world-chat-main__head">
           <MessageCircleMore size={18} />
-          <div><strong>{residentLabel(activeThread.resident)}</strong><span>{activeThread.total} 条消息</span></div>
+          <div>
+            <strong>{residentLabel(activeThread.resident)}</strong>
+            <span>{activeThread.total} 条消息</span>
+            {activeThread.legacyTruncatedCount > 0 ? <em>{activeThread.legacyTruncatedCount} 条旧消息保存不完整</em> : null}
+          </div>
         </div>
         <WorldChatThread
           thread={activeThread}

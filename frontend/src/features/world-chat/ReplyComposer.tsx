@@ -2,6 +2,7 @@ import { Check, Send, X } from "lucide-react";
 import { useMemo } from "react";
 import { canSendReply, findForbiddenReplyTerms } from "../../lib/reply";
 import type { ReplyDraft, WorldMessage } from "../../types/domain";
+import { visibleWorldMessageBody } from "./messageIntegrity";
 
 // This subtree only accepts world-visible chat state. Operator telemetry,
 // run metadata, budgets, and private diagnostics must stay outside it.
@@ -38,8 +39,8 @@ export function ReplyComposer({
       {replyTarget ? (
         <div className="reply-composer__target">
           <div>
-            <span>回复这条</span>
-            <p>{replyTarget.body}</p>
+            <span>{replyTarget.bodyIntegrity === "legacy_truncated" ? "回复旧版本残片" : "回复这条"}</span>
+            <p>{visibleWorldMessageBody(replyTarget)}</p>
           </div>
           <button type="button" aria-label="取消回复这条" title="取消回复这条" onClick={onCancelReply}><X size={15} /></button>
         </div>

@@ -205,6 +205,7 @@ export interface WorldMessage {
   status: "pending" | "replied" | "delivered";
   replyToId?: string;
   readAt?: string;
+  bodyIntegrity?: "legacy_truncated";
 }
 
 export interface WorldVisibleThread {
@@ -217,6 +218,7 @@ export interface WorldVisibleThread {
   pendingCount: number;
   repliedCount: number;
   deliveredCount: number;
+  legacyTruncatedCount: number;
   hasMore: boolean;
   nextBefore?: string;
   lastMessageAt?: string;

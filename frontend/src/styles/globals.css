@@ -920,6 +920,14 @@ button {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.world-chat-main__head em {
+  display: block;
+  margin-top: 2px;
+  color: var(--accent-danger);
+  font-size: 10px;
+  font-style: normal;
+}
+
 .world-chat-main__head div { display: grid; gap: 1px; }
 .world-chat-main__head strong { font-size: 14px; }
 .world-chat-main__head span { color: var(--text-muted); font-size: 11px; }
@@ -1089,6 +1097,39 @@ button {
   font-size: 11px;
   cursor: pointer;
 }
+
+.world-message__integrity {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  border: 1px solid var(--accent-danger);
+  border-radius: var(--radius-control);
+  background: var(--accent-danger-soft);
+  color: var(--text-primary);
+  padding: 7px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.world-message__integrity svg { flex: 0 0 auto; margin-top: 1px; color: var(--accent-danger); }
+
+.world-message__cutoff {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.world-message__cutoff::before {
+  content: "";
+  width: 18px;
+  border-top: 1px dashed var(--accent-danger);
+}
+
+.world-message__cutoff strong { color: var(--accent-danger); font-weight: 700; }
 
 .reply-composer {
   width: 100%;

@@ -154,6 +154,7 @@ type ApiThreadMessage = {
   status?: string;
   reply_to_id?: string;
   read_at?: string;
+  body_integrity?: string;
 };
 
 type ApiThreadSummary = {
@@ -165,6 +166,7 @@ type ApiThreadSummary = {
   pending_count?: number;
   replied_count?: number;
   delivered_count?: number;
+  legacy_truncated_count?: number;
 };
 
 type ApiThreadPage = {
@@ -761,6 +763,7 @@ export function messageFromThreadMessage(input: ApiThreadMessage): WorldMessage 
     status: normalizeMessageStatus(input.status, from),
     replyToId: input.reply_to_id || undefined,
     readAt: input.read_at || undefined,
+    bodyIntegrity: input.body_integrity === "legacy_truncated" ? "legacy_truncated" : undefined,
   };
 }
 
@@ -788,6 +791,7 @@ function threadFromSummary(summary: ApiThreadSummary, page: WorldThreadPage): Wo
     pendingCount: summary.pending_count ?? 0,
     repliedCount: summary.replied_count ?? 0,
     deliveredCount: summary.delivered_count ?? 0,
+    legacyTruncatedCount: summary.legacy_truncated_count ?? 0,
     hasMore: page.hasMore,
     nextBefore: page.nextBefore,
     lastMessageAt: summary.last_message_at,

@@ -48,7 +48,7 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (url === "/api/threads") {
     return jsonResponse([
-      { resident: "jade", pending_count: 2, last_preview: "jade latest" },
+      { resident: "jade", pending_count: 2, legacy_truncated_count: 97, last_preview: "[旧版本截断残片] jade latest" },
       { resident: "amber", pending_count: 0 },
       { resident: "onyx", pending_count: 1 },
     ]);
@@ -69,6 +69,7 @@ globalThis.fetch = async (url, init = {}) => {
         created_at: "2026-07-26T12:00:00Z",
         status: "pending",
         read_at: "2026-07-26T12:01:00Z",
+        body_integrity: "legacy_truncated",
       }],
     });
   }
@@ -147,6 +148,8 @@ assert.deepEqual(threads.map((thread) => thread.threadId), ["chat-jade", "chat-a
 assert.equal(threads[0].messages[0].body, "完整正文，不是 preview");
 assert.equal(threads[0].messages[0].createdAt, "2026-07-26T12:00:00Z");
 assert.equal(threads[0].messages[0].readAt, "2026-07-26T12:01:00Z");
+assert.equal(threads[0].messages[0].bodyIntegrity, "legacy_truncated");
+assert.equal(threads[0].legacyTruncatedCount, 97);
 assert.equal(threads[0].nextBefore, "jade-oldest-visible");
 assert.equal(threads[0].hasMore, true);
 
