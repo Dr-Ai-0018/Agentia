@@ -242,20 +242,6 @@ runLoop:
 		packet := r.buildContextPacket(profile, remaining, state)
 		input := history.inputWithWorkingContext(stablePrefix, packet)
 		measuredPromptTokens := estimatePromptTokens(input)
-		if scheduledCompactionDue(len(roundLogs), r.options.CompactionProbeEveryRounds, history.recentRounds) {
-			keepRounds := maxInt(1, r.options.CompactionProbeEveryRounds/2)
-			detail := fmt.Sprintf("scheduled_probe completed_rounds=%d every=%d keep=%d", len(roundLogs), r.options.CompactionProbeEveryRounds, keepRounds)
-			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerScheduledProbe, detail, keepRounds, len(roundLogs), verbose)
-			compactionEvents = append(compactionEvents, event)
-			input = history.inputWithWorkingContext(stablePrefix, packet)
-			measuredPromptTokens = estimatePromptTokens(input)
-		} else if shouldCompactBeforeModel(history, measuredPromptTokens, profile.Model) {
-			detail := fmt.Sprintf("measured_prompt_tokens=%d recent_rounds=%d limit=%d", measuredPromptTokens, history.recentRounds, history.recentRoundWindowLimit())
-			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerPreflightMeasured, detail, history.recentRoundWindowLimit(), len(roundLogs), verbose)
-			compactionEvents = append(compactionEvents, event)
-			input = history.inputWithWorkingContext(stablePrefix, packet)
-			measuredPromptTokens = estimatePromptTokens(input)
-		}
 		prepared, err := r.budget.PreparePreflight(profile, state, roundNow, measuredPromptTokens)
 		if err != nil {
 			return FinalReport{}, fmt.Errorf("round %d preflight failed: %w", round, err)
@@ -291,6 +277,18 @@ runLoop:
 			break
 		}
 		stoppedReason = ""
+		if scheduledCompactionDue(len(roundLogs), r.options.CompactionProbeEveryRounds, history.recentRounds) {
+			keepRounds := maxInt(1, r.options.CompactionProbeEveryRounds/2)
+			detail := fmt.Sprintf("scheduled_probe completed_rounds=%d every=%d keep=%d", len(roundLogs), r.options.CompactionProbeEveryRounds, keepRounds)
+			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerScheduledProbe, detail, keepRounds, len(roundLogs), verbose)
+			compactionEvents = append(compactionEvents, event)
+			input = history.inputWithWorkingContext(stablePrefix, packet)
+		} else if shouldCompactBeforeModel(history, measuredPromptTokens, profile.Model) {
+			detail := fmt.Sprintf("measured_prompt_tokens=%d recent_rounds=%d limit=%d", measuredPromptTokens, history.recentRounds, history.recentRoundWindowLimit())
+			event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerPreflightMeasured, detail, history.recentRoundWindowLimit(), len(roundLogs), verbose)
+			compactionEvents = append(compactionEvents, event)
+			input = history.inputWithWorkingContext(stablePrefix, packet)
+		}
 		history.appendWorkingContext(packet)
 
 		inFlightStartedAt := time.Now().UTC().Format(time.RFC3339)
@@ -470,7 +468,11 @@ runLoop:
 				RawOutput:   parseError,
 			}
 		} else {
-			actionResult = r.actions.Execute(profile, decision)
+			actionResult = r.actions.Execute(r.runContext(), profile, decision)
+			if r.runContext().Err() != nil {
+				stoppedReason = "aborted_by_host"
+				break runLoop
+			}
 		}
 		observation := actionResult.Observation
 		state.RecentActions = appendRecentAction(state.RecentActions, RecentAction{
@@ -636,6 +638,19 @@ func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, st
 	acceptance := fallbackAcceptance(roundLogs, stoppedReason)
 	var acceptanceBroker *BrokerUsageLog
 	if len(roundLogs) > 0 && shouldRunAcceptance(stoppedReason) {
+		admissionAt := time.Now().UTC()
+		if err := r.budget.Recover(profile, state, admissionAt); err != nil {
+			return FinalReport{}, fmt.Errorf("final reflection recovery failed: %w", err)
+		}
+		prepared, err := r.budget.PrepareFinalReflection(profile, admissionAt, estimatePromptTokens(history.input(stablePrefix)))
+		if err != nil {
+			return FinalReport{}, fmt.Errorf("final reflection preflight failed: %w", err)
+		}
+		if prepared != nil && prepared.Denied {
+			acceptanceBroker = brokerLogFromPrepared(prepared)
+			stoppedReason = appendStopReason(stoppedReason, "final_reflection_preflight_denied: "+strings.Join(prepared.DeniedReason, ","))
+			return r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, fallbackAcceptance(roundLogs, stoppedReason), acceptanceBroker, outDir)
+		}
 		value, brokerLog, acceptanceEvents, err := r.runAcceptance(profile, stablePrefix, history, state, roundLogs, verbose)
 		compactionEvents = append(compactionEvents, acceptanceEvents...)
 		if err != nil {
@@ -655,6 +670,22 @@ func (r *Runner) finalizeRun(profile ResidentProfile, duration time.Duration, st
 		acceptanceBroker = brokerLog
 	}
 	return r.writeFinalReport(profile, duration, started, state, history, roundLogs, compactionEvents, stoppedReason, acceptance, acceptanceBroker, outDir)
+}
+
+func brokerLogFromPrepared(prepared *brokerstate.PreparedAdmission) *BrokerUsageLog {
+	if prepared == nil {
+		return nil
+	}
+	return &BrokerUsageLog{
+		Denied:             prepared.Denied,
+		DeniedReason:       append([]string(nil), prepared.DeniedReason...),
+		BeforeSpark:        prepared.BeforeStatus.SparkBalance,
+		BeforeDebtActive:   prepared.BeforeStatus.DebtActive,
+		PreparedSparkCost:  prepared.Prepared.Cost.SparkCost,
+		PreparedStrainCost: prepared.Prepared.Strain.Rounded,
+		Quota:              &prepared.Quota,
+		AfterStatus:        &prepared.BeforeStatus,
+	}
 }
 
 func (r *Runner) persistRound(outDir string, started time.Time, resident string, roundLogs *[]RoundLog, round RoundLog) error {
@@ -1385,8 +1416,20 @@ func minDuration(a, b time.Duration) time.Duration {
 func (r *Runner) runAcceptance(profile ResidentProfile, stablePrefix string, history runHistory, state loopState, rounds []RoundLog, verbose bool) (string, *BrokerUsageLog, []CompactionEvent, error) {
 	events := []CompactionEvent{}
 	if history.recentRounds > 3 {
-		event := r.compactHistory(profile, stablePrefix, &history, state, CompactionTriggerAcceptanceMicro, "final reflection keeps only the most recent 3 rounds verbatim", 3, len(rounds), verbose)
-		events = append(events, event)
+		before := estimatePromptTokens(history.input(stablePrefix))
+		dropped := history.silentTrimRecentRounds(3)
+		events = append(events, CompactionEvent{
+			CompactionID:   fmt.Sprintf("compact-%s-%s", profile.Name, time.Now().UTC().Format("20060102T150405.000000000Z")),
+			RunID:          state.RunGroupID,
+			Resident:       profile.Name,
+			OccurredAt:     time.Now().UTC().Format(time.RFC3339),
+			TriggerReason:  CompactionTriggerAcceptanceMicro,
+			TriggerDetail:  "final reflection keeps only the most recent 3 rounds verbatim without a provider call",
+			TokensBefore:   before,
+			TokensAfter:    estimatePromptTokens(history.input(stablePrefix)),
+			RoundsAbsorbed: dropped,
+			Outcome:        CompactionOutcomeSilentTrim,
+		})
 	}
 	acceptanceInput := history.input(stablePrefix)
 	acceptanceInput = append(acceptanceInput, openai.Message{

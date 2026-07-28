@@ -2,9 +2,11 @@ package newborn
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"ai-arena/internal/broker"
 	"ai-arena/internal/memory"
 )
 
@@ -146,6 +148,25 @@ func (r *Runner) reconcileStaleRunHistoryGroups(profile ResidentProfile, current
 		if err := r.memories.UpsertHistoryGroup(group); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// ReconcileResidentRuntimeState closes durable state left by a dead orchestrator,
+// including residents omitted from the replacement run's roster.
+func ReconcileResidentRuntimeState(agentRoot, resident string, now time.Time) error {
+	profile := ResidentProfile{Name: strings.TrimSpace(resident)}
+	if profile.Name == "" {
+		return nil
+	}
+	runner := NewRunner(nil, "", "")
+	runner.budget = NewBudgetController(broker.New(agentRoot))
+	runner.memories = memory.NewFileStore(filepath.Join(agentRoot, "memory"))
+	if _, _, err := runner.budget.ReconcileActiveSleep(profile, now); err != nil {
+		return fmt.Errorf("reconcile %s active sleep: %w", profile.Name, err)
+	}
+	if err := runner.reconcileStaleRunHistoryGroups(profile, "", now); err != nil {
+		return fmt.Errorf("reconcile %s history groups: %w", profile.Name, err)
 	}
 	return nil
 }

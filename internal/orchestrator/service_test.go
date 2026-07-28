@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"ai-arena/internal/broker"
+	"ai-arena/internal/memory"
 	"ai-arena/internal/openai"
 	"ai-arena/internal/runtime/newborn"
 )
@@ -207,6 +208,127 @@ func TestServiceRunContextFinalizesHostCancellation(t *testing.T) {
 	}
 	if len(summary.Runs) != 1 || summary.Runs[0].Report == nil {
 		t.Fatalf("partial report missing after cancellation: %#v", summary.Runs)
+	}
+}
+
+func TestServiceSequentialCancellationMarksUnstartedResidentsAborted(t *testing.T) {
+	root := t.TempDir()
+	service := New(broker.New(root), &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	service.runnerFactory = func(_ *http.Client, _, _, _ string) Runner { return &cancellationRunner{} }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan RunSummary, 1)
+	go func() {
+		out, _ := service.RunContext(ctx, RunInput{
+			Residents: []string{"jade", "amber", "onyx"}, Duration: time.Hour, OutDir: filepath.Join(root, "out"), Mode: RunModeSequential,
+		})
+		done <- out
+	}()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	var summary RunSummary
+	select {
+	case summary = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("sequential cancellation did not finalize")
+	}
+	if len(summary.Runs) != 3 {
+		t.Fatalf("missing sequential summary entries: %#v", summary.Runs)
+	}
+	for _, run := range summary.Runs {
+		if run.Resident == "" || run.Status != "aborted" {
+			t.Fatalf("resident was not explicitly aborted: %#v", summary.Runs)
+		}
+	}
+	status, err := service.ReadRunStatus(summary.RunID)
+	if err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	for _, resident := range status.Residents {
+		if resident.Status != "aborted" {
+			t.Fatalf("durable status was not finalized: %#v", status.Residents)
+		}
+	}
+}
+
+func TestNewRunReconcilesStaleResidentsOutsideReplacementRoster(t *testing.T) {
+	root := t.TempDir()
+	app := broker.New(root)
+	service := New(app, &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	now := time.Now().UTC().Add(-time.Hour)
+	for _, resident := range []string{"jade", "amber"} {
+		if _, err := app.RunReset(resident, now); err != nil {
+			t.Fatalf("reset %s: %v", resident, err)
+		}
+		if _, err := app.RunSleepStart(resident, 30, now, "stale run"); err != nil {
+			t.Fatalf("start sleep %s: %v", resident, err)
+		}
+		store := memory.NewFileStore(filepath.Join(root, "memory"))
+		if err := store.UpsertHistoryGroup(memory.HistoryGroup{
+			GroupUUID: "old-" + resident, Resident: resident, CreatedAt: now, LastEventAt: now,
+			SourceKind: "newborn_runtime_rounds", State: memory.HistoryGroupOpen, Tags: []string{"run:old-run"},
+		}); err != nil {
+			t.Fatalf("seed history %s: %v", resident, err)
+		}
+	}
+	if err := service.writeStatus(RunStatus{
+		RunID: "old-run", Status: "running", StartedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339), OwnerPID: 99_999_999,
+		Residents: []ResidentRunStatus{{Resident: "jade", Status: "running"}, {Resident: "amber", Status: "running"}},
+	}); err != nil {
+		t.Fatalf("seed stale run: %v", err)
+	}
+	service.runnerFactory = func(_ *http.Client, _, _, _ string) Runner {
+		return &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
+	}
+	if _, err := service.Run(RunInput{Residents: []string{"onyx"}, Duration: time.Minute, OutDir: filepath.Join(root, "out")}); err != nil {
+		t.Fatalf("replacement run: %v", err)
+	}
+	for _, resident := range []string{"jade", "amber"} {
+		status, err := app.RunStatus(resident)
+		if err != nil {
+			t.Fatalf("status %s: %v", resident, err)
+		}
+		if status.Sleep.Active {
+			t.Fatalf("stale sleep remained active for %s: %#v", resident, status.Sleep)
+		}
+		groups, err := memory.NewFileStore(filepath.Join(root, "memory")).ListHistoryGroups(resident)
+		if err != nil || len(groups) != 1 || groups[0].State != memory.HistoryGroupClosed {
+			t.Fatalf("stale history not closed for %s: groups=%#v err=%v", resident, groups, err)
+		}
+	}
+}
+
+func TestPIDIdentityMismatchDoesNotBlockNewRun(t *testing.T) {
+	root := t.TempDir()
+	service := New(broker.New(root), &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	if err := service.writeStatus(RunStatus{
+		RunID: "pid-reused", Status: "running", StartedAt: time.Now().Add(-time.Hour).Format(time.RFC3339), UpdatedAt: time.Now().Add(-time.Hour).Format(time.RFC3339),
+		OwnerPID: os.Getpid(), OwnerBootID: "different-boot", OwnerStartTicks: 1,
+		Residents: []ResidentRunStatus{{Resident: "jade", Status: "running"}},
+	}); err != nil {
+		t.Fatalf("seed reused pid: %v", err)
+	}
+	service.runnerFactory = func(_ *http.Client, _, _, _ string) Runner {
+		return &fakeRunner{report: newborn.FinalReport{Rounds: 1}}
+	}
+	if _, err := service.Run(RunInput{Residents: []string{"jade"}, Duration: time.Minute, OutDir: filepath.Join(root, "out")}); err != nil {
+		t.Fatalf("identity mismatch falsely blocked run: %v", err)
+	}
+	status, err := service.ReadRunStatus("pid-reused")
+	if err != nil || status.Status != "interrupted" {
+		t.Fatalf("reused pid status not reconciled: %#v err=%v", status, err)
+	}
+}
+
+func TestCurrentProcessIdentityStillBlocksOwnership(t *testing.T) {
+	bootID, startTicks, executable, err := readProcessIdentity(os.Getpid())
+	if err != nil {
+		t.Fatalf("read current identity: %v", err)
+	}
+	if !processOwnsRun(RunStatus{OwnerPID: os.Getpid(), OwnerBootID: bootID, OwnerStartTicks: startTicks, OwnerExecutable: executable}) {
+		t.Fatal("matching live owner identity was not recognized")
 	}
 }
 

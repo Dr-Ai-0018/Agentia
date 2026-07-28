@@ -5,6 +5,7 @@ package newborn
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"net/http"
 	"os"
 	"strings"
@@ -28,7 +29,7 @@ func TestLiveNoteAPISmoke(t *testing.T) {
 	noteFile := "codex-live-note-api-smoke.md"
 	stamp := time.Now().UTC().Format(time.RFC3339)
 
-	denied := executor.Execute(profile, AgentDecision{
+	denied := executor.Execute(context.Background(), profile, AgentDecision{
 		NextAction: "guest_exec",
 		Command:    "cat /root/arena-notes/" + noteFile,
 		Reason:     "live smoke verifies continuity surface boundary",
@@ -37,7 +38,7 @@ func TestLiveNoteAPISmoke(t *testing.T) {
 		t.Fatalf("expected semantic note-tool denial, got %#v", denied)
 	}
 
-	appendResult := executor.Execute(profile, AgentDecision{
+	appendResult := executor.Execute(context.Background(), profile, AgentDecision{
 		NextAction: "note_append",
 		NoteFile:   noteFile,
 		NoteText:   "live smoke append via note_append at " + stamp,
@@ -45,7 +46,7 @@ func TestLiveNoteAPISmoke(t *testing.T) {
 	})
 	requireLiveActionOK(t, "note_append", appendResult)
 
-	readResult := executor.Execute(profile, AgentDecision{
+	readResult := executor.Execute(context.Background(), profile, AgentDecision{
 		NextAction: "note_read",
 		NoteFile:   noteFile,
 		Reason:     "verify read path",
@@ -55,7 +56,7 @@ func TestLiveNoteAPISmoke(t *testing.T) {
 		t.Fatalf("note_read did not include appended text: %s", readResult.Observation)
 	}
 
-	replaceResult := executor.Execute(profile, AgentDecision{
+	replaceResult := executor.Execute(context.Background(), profile, AgentDecision{
 		NextAction: "note_replace_with_backup",
 		NoteFile:   noteFile,
 		NoteText:   "live smoke replacement via note_replace_with_backup at " + stamp,
@@ -67,7 +68,7 @@ func TestLiveNoteAPISmoke(t *testing.T) {
 		t.Fatalf("replace observation did not report backup file: %s", replaceResult.Observation)
 	}
 
-	compactResult := executor.Execute(profile, AgentDecision{
+	compactResult := executor.Execute(context.Background(), profile, AgentDecision{
 		NextAction: "note_summarize_or_compact",
 		NoteFile:   noteFile,
 		NoteText:   "live smoke compacted continuity summary at " + stamp,
@@ -75,7 +76,7 @@ func TestLiveNoteAPISmoke(t *testing.T) {
 	})
 	requireLiveActionOK(t, "note_summarize_or_compact", compactResult)
 
-	restoreResult := executor.Execute(profile, AgentDecision{
+	restoreResult := executor.Execute(context.Background(), profile, AgentDecision{
 		NextAction: "note_restore_backup",
 		NoteFile:   noteFile,
 		BackupFile: backup,
@@ -83,7 +84,7 @@ func TestLiveNoteAPISmoke(t *testing.T) {
 	})
 	requireLiveActionOK(t, "note_restore_backup", restoreResult)
 
-	restoredRead := executor.Execute(profile, AgentDecision{
+	restoredRead := executor.Execute(context.Background(), profile, AgentDecision{
 		NextAction: "note_read",
 		NoteFile:   noteFile,
 		Reason:     "verify restored content",

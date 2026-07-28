@@ -50,6 +50,18 @@ func (b *BudgetController) PreparePreflight(profile ResidentProfile, state loopS
 	return &prepared, nil
 }
 
+func (b *BudgetController) PrepareFinalReflection(profile ResidentProfile, startedAt time.Time, measuredPromptTokens int) (*brokerstate.PreparedAdmission, error) {
+	spec := broker.DefaultAcceptanceSpec(startedAt, preflightResponseID("final_reflection_preflight", measuredPromptTokens))
+	spec.Usage.Model = profile.Model
+	spec.Usage.InputTokens = maxInt(spec.Usage.InputTokens, measuredPromptTokens)
+	spec.Usage.TotalTokens = spec.Usage.InputTokens + spec.Usage.OutputTokens
+	prepared, err := b.brokerApp.RunPrepareSpec(profile.Name, spec)
+	if err != nil {
+		return nil, err
+	}
+	return &prepared, nil
+}
+
 func (b *BudgetController) Preflight(profile ResidentProfile, state loopState, startedAt time.Time) (*brokerstate.PreparedAdmission, error) {
 	if err := b.Recover(profile, state, startedAt); err != nil {
 		return nil, err

@@ -268,8 +268,8 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
     return `${this.basePath}${path.startsWith("/") ? path : `/${path}`}`;
   }
 
-  async getSummary() {
-    return normalizeSummary(await parseJson<ApiSummary>(await fetch(this.url("/summary"))));
+  async getSummary(signal?: AbortSignal) {
+    return normalizeSummary(await parseJson<ApiSummary>(await fetch(this.url("/summary"), { signal })));
   }
 
   async listRuns(limit = 20) {
@@ -287,29 +287,29 @@ export class HttpArenaConsoleApi implements ArenaConsoleApi {
     return (summary.alerts ?? []).map(normalizeAlert);
   }
 
-  async listWorldThreads() {
-    const summaries = await parseJson<ApiThreadSummary[]>(await fetch(this.url("/threads")));
+  async listWorldThreads(signal?: AbortSignal) {
+    const summaries = await parseJson<ApiThreadSummary[]>(await fetch(this.url("/threads"), { signal }));
     return Promise.all(summaries.map(async (summary) => {
       const resident = asResident(summary.resident);
       if (!resident) throw new Error(`Unknown resident in thread summary: ${summary.resident}`);
-      const page = await this.getWorldThreadPage(resident);
+      const page = await this.getWorldThreadPage(resident, undefined, 50, signal);
       return threadFromSummary(summary, page);
     }));
   }
 
-  async getWorldThread(threadId: string) {
+  async getWorldThread(threadId: string, signal?: AbortSignal) {
     const resident = residentFromThreadID(threadId);
-    const summaries = await parseJson<ApiThreadSummary[]>(await fetch(this.url("/threads")));
+    const summaries = await parseJson<ApiThreadSummary[]>(await fetch(this.url("/threads"), { signal }));
     const summary = summaries.find((item) => item.resident === resident);
     if (!summary) throw new Error(`World thread not found: ${threadId}`);
-    return threadFromSummary(summary, await this.getWorldThreadPage(resident));
+    return threadFromSummary(summary, await this.getWorldThreadPage(resident, undefined, 50, signal));
   }
 
-  async getWorldThreadPage(resident: ResidentId, before?: string, limit = 50): Promise<WorldThreadPage> {
+  async getWorldThreadPage(resident: ResidentId, before?: string, limit = 50, signal?: AbortSignal): Promise<WorldThreadPage> {
     const query = new URLSearchParams({ limit: String(limit) });
     if (before) query.set("before", before);
     return normalizeThreadPage(await parseJson<ApiThreadPage>(
-      await fetch(this.url(`/messages/${resident}/thread?${query.toString()}`)),
+      await fetch(this.url(`/messages/${resident}/thread?${query.toString()}`), { signal }),
     ));
   }
 

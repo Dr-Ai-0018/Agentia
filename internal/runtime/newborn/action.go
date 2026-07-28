@@ -1,6 +1,7 @@
 package newborn
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 )
 
 type ActionExecutor interface {
-	Execute(profile ResidentProfile, decision AgentDecision) ActionResult
+	Execute(ctx context.Context, profile ResidentProfile, decision AgentDecision) ActionResult
 }
 
 type ActionResult struct {
@@ -46,23 +47,26 @@ func NewIncusActionExecutor() *IncusActionExecutor {
 	}
 }
 
-func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDecision) ActionResult {
+func (e *IncusActionExecutor) Execute(ctx context.Context, profile ResidentProfile, decision AgentDecision) ActionResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if suppressed, reason := suppressDuplicateAction(profile, decision); suppressed {
 		return ActionResult{Observation: reason, Activity: tokenledger.ActivityStatusCheck}
 	}
 	switch decision.NextAction {
 	case "write_note", "note_append":
-		return e.executeNoteAppend(profile, decision)
+		return e.executeNoteAppend(ctx, profile, decision)
 	case "note_list":
-		return executeNoteList(profile)
+		return executeNoteList(ctx, profile)
 	case "note_read":
-		return executeNoteRead(profile, decision)
+		return executeNoteRead(ctx, profile, decision)
 	case "note_replace_with_backup":
-		return executeNoteReplaceWithBackup(profile, decision)
+		return executeNoteReplaceWithBackup(ctx, profile, decision)
 	case "note_restore_backup":
-		return executeNoteRestoreBackup(profile, decision)
+		return executeNoteRestoreBackup(ctx, profile, decision)
 	case "note_summarize_or_compact":
-		return executeNoteSummarizeOrCompact(profile, decision)
+		return executeNoteSummarizeOrCompact(ctx, profile, decision)
 	case "guest_exec":
 		if strings.TrimSpace(decision.Command) == "" {
 			return actionError("guest_exec denied: command 是必填项", "validation_error", "")
@@ -70,7 +74,7 @@ func (e *IncusActionExecutor) Execute(profile ResidentProfile, decision AgentDec
 		if result, denied := validateGuestExecCommand(decision.Command); denied {
 			return result
 		}
-		return guestCommand(profile.Instance, decision.Command, classifyGuestExecActivity(decision.Command))
+		return guestCommand(ctx, profile.Instance, decision.Command, classifyGuestExecActivity(decision.Command))
 	case "self_status":
 		return ActionResult{Observation: e.executeSelfStatus(profile), Activity: tokenledger.ActivityStatusCheck}
 	case "self_quota":
@@ -113,7 +117,7 @@ func clampSleepMinutes(minutes int) int {
 	return minutes
 }
 
-func (e *IncusActionExecutor) executeNoteAppend(profile ResidentProfile, decision AgentDecision) ActionResult {
+func (e *IncusActionExecutor) executeNoteAppend(ctx context.Context, profile ResidentProfile, decision AgentDecision) ActionResult {
 	text := strings.TrimSpace(decision.NoteText)
 	if text == "" {
 		text = strings.TrimSpace(decision.MemoryText)
@@ -127,7 +131,7 @@ func (e *IncusActionExecutor) executeNoteAppend(profile ResidentProfile, decisio
 	if len([]rune(text)) > noteTextMaxChars {
 		return actionError(fmt.Sprintf("note_append denied: note_text 超过 %d 字符", noteTextMaxChars), "validation_error", text)
 	}
-	result := appendGuestNote(profile.Instance, decision.NoteFile, text)
+	result := appendGuestNote(ctx, profile.Instance, decision.NoteFile, text)
 	if result.Error {
 		result.ErrorKind = "note_append_failed"
 	}
@@ -413,8 +417,8 @@ func isNarrowProbeCommand(command string) bool {
 	return false
 }
 
-func guestCommand(instance, script string, activity tokenledger.ActivityType) ActionResult {
-	cmd := exec.Command("incus", "exec", instance, "--", "bash", "-lc", script)
+func guestCommand(ctx context.Context, instance, script string, activity tokenledger.ActivityType) ActionResult {
+	cmd := exec.CommandContext(ctx, "incus", "exec", instance, "--", "bash", "-lc", script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
@@ -429,14 +433,14 @@ func guestCommand(instance, script string, activity tokenledger.ActivityType) Ac
 	return ActionResult{Observation: limitActionObservation(string(out)), Activity: activity}
 }
 
-func executeNoteList(profile ResidentProfile) ActionResult {
+func executeNoteList(ctx context.Context, profile ResidentProfile) ActionResult {
 	script := strings.Join([]string{
 		"set -euo pipefail",
 		"note_dir=/root/arena-notes",
 		"mkdir -p \"$note_dir\"",
 		"find \"$note_dir\" -maxdepth 1 -type f -printf '%f %s %TY-%Tm-%Td %TH:%TM\\n' | sort",
 	}, "\n")
-	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script)
+	cmd := exec.CommandContext(ctx, "incus", "exec", profile.Instance, "--", "bash", "-lc", script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
@@ -445,7 +449,7 @@ func executeNoteList(profile ResidentProfile) ActionResult {
 	return ActionResult{Observation: "note_list 列出 /root/arena-notes 下的文件:\n" + string(out), Activity: tokenledger.ActivityLightWork}
 }
 
-func executeNoteRead(profile ResidentProfile, decision AgentDecision) ActionResult {
+func executeNoteRead(ctx context.Context, profile ResidentProfile, decision AgentDecision) ActionResult {
 	file, err := safeNoteFile(decision.NoteFile)
 	if err != nil {
 		return actionError("note_read denied: "+err.Error(), "note_path_invalid", decision.NoteFile)
@@ -475,7 +479,7 @@ func executeNoteRead(profile ResidentProfile, decision AgentDecision) ActionResu
 	if startLine < 1 {
 		startLine = 1
 	}
-	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script, "note_read", file, mode, strconv.Itoa(startLine))
+	cmd := exec.CommandContext(ctx, "incus", "exec", profile.Instance, "--", "bash", "-lc", script, "note_read", file, mode, strconv.Itoa(startLine))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
@@ -506,7 +510,7 @@ func limitNoteReadObservation(raw, mode string) string {
 	return limitRawOutput(raw)
 }
 
-func appendGuestNote(instance, noteFile, text string) ActionResult {
+func appendGuestNote(ctx context.Context, instance, noteFile, text string) ActionResult {
 	file, err := safeNoteFile(noteFile)
 	if err != nil {
 		return actionError("note_append denied: "+err.Error(), "note_path_invalid", noteFile)
@@ -522,7 +526,7 @@ func appendGuestNote(instance, noteFile, text string) ActionResult {
 		"printf '%s\n' \"$2\" >> \"$note_file\"",
 		"wc -c \"$note_file\"",
 	}, "\n")
-	cmd := exec.Command("incus", "exec", instance, "--", "bash", "-lc", script, "note_append", file, text)
+	cmd := exec.CommandContext(ctx, "incus", "exec", instance, "--", "bash", "-lc", script, "note_append", file, text)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
@@ -537,15 +541,15 @@ func appendGuestNote(instance, noteFile, text string) ActionResult {
 	return ActionResult{Observation: "note_append 已向 /root/arena-notes/" + file + " 追加纯文本\n" + string(out), Activity: tokenledger.ActivityLightWork}
 }
 
-func executeNoteReplaceWithBackup(profile ResidentProfile, decision AgentDecision) ActionResult {
-	return replaceGuestNoteWithBackup(profile, decision, "note_replace_with_backup")
+func executeNoteReplaceWithBackup(ctx context.Context, profile ResidentProfile, decision AgentDecision) ActionResult {
+	return replaceGuestNoteWithBackup(ctx, profile, decision, "note_replace_with_backup")
 }
 
-func executeNoteSummarizeOrCompact(profile ResidentProfile, decision AgentDecision) ActionResult {
-	return replaceGuestNoteWithBackup(profile, decision, "note_summarize_or_compact")
+func executeNoteSummarizeOrCompact(ctx context.Context, profile ResidentProfile, decision AgentDecision) ActionResult {
+	return replaceGuestNoteWithBackup(ctx, profile, decision, "note_summarize_or_compact")
 }
 
-func replaceGuestNoteWithBackup(profile ResidentProfile, decision AgentDecision, action string) ActionResult {
+func replaceGuestNoteWithBackup(ctx context.Context, profile ResidentProfile, decision AgentDecision, action string) ActionResult {
 	file, err := safeNoteFile(decision.NoteFile)
 	if err != nil {
 		return actionError(action+" denied: "+err.Error(), "note_path_invalid", decision.NoteFile)
@@ -572,7 +576,7 @@ func replaceGuestNoteWithBackup(profile ResidentProfile, decision AgentDecision,
 		"if [ -n \"$backup_file\" ]; then backup_name=$(basename \"$backup_file\"); printf 'backup=%s\n' \"$backup_name\"; else printf 'backup=none\n'; fi",
 		"wc -c \"$note_file\"",
 	}, "\n")
-	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script, action, file, text)
+	cmd := exec.CommandContext(ctx, "incus", "exec", profile.Instance, "--", "bash", "-lc", script, action, file, text)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))
@@ -581,7 +585,7 @@ func replaceGuestNoteWithBackup(profile ResidentProfile, decision AgentDecision,
 	return ActionResult{Observation: action + " 已替换 /root/arena-notes/" + file + "\n" + string(out), Activity: tokenledger.ActivityLightWork}
 }
 
-func executeNoteRestoreBackup(profile ResidentProfile, decision AgentDecision) ActionResult {
+func executeNoteRestoreBackup(ctx context.Context, profile ResidentProfile, decision AgentDecision) ActionResult {
 	file, err := safeNoteFile(decision.NoteFile)
 	if err != nil {
 		return actionError("note_restore_backup denied: "+err.Error(), "note_path_invalid", decision.NoteFile)
@@ -601,7 +605,7 @@ func executeNoteRestoreBackup(profile ResidentProfile, decision AgentDecision) A
 		"cp \"$backup_file\" \"$note_file\"",
 		"wc -c \"$note_file\"",
 	}, "\n")
-	cmd := exec.Command("incus", "exec", profile.Instance, "--", "bash", "-lc", script, "note_restore", file, backup)
+	cmd := exec.CommandContext(ctx, "incus", "exec", profile.Instance, "--", "bash", "-lc", script, "note_restore", file, backup)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		raw := limitRawOutput(strings.TrimSpace(string(out)))

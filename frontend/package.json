@@ -12,6 +12,7 @@
     "test:formatting": "node scripts/run-formatting-tests.mjs",
     "test:api": "node scripts/run-api-contract-tests.mjs",
     "test:world-chat": "node scripts/run-world-chat-tests.mjs",
+    "test:polling": "node scripts/run-app-polling-tests.mjs",
     "typecheck": "tsc -b"
   },
   "dependencies": {

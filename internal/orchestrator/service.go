@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -162,6 +163,9 @@ type RunStatus struct {
 	TargetDurationSeconds int                 `json:"target_duration_seconds,omitempty"`
 	Events                []RunEvent          `json:"events,omitempty"`
 	OwnerPID              int                 `json:"owner_pid,omitempty"`
+	OwnerBootID           string              `json:"owner_boot_id,omitempty"`
+	OwnerStartTicks       uint64              `json:"owner_start_ticks,omitempty"`
+	OwnerExecutable       string              `json:"owner_executable,omitempty"`
 }
 
 type RunRecord struct {
@@ -438,6 +442,7 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 		CompactionProbeEveryRounds: input.CompactionProbeEveryRounds,
 		RequiredCompactionCycles:   input.RequiredCompactionCycles,
 	}
+	ownerBootID, ownerStartTicks, ownerExecutable, _ := readProcessIdentity(os.Getpid())
 	runStatus := RunStatus{
 		RunID:                 contract.RunID,
 		Status:                "running",
@@ -446,6 +451,9 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 		UpdatedAt:             started.Format(time.RFC3339),
 		TargetDurationSeconds: int(input.Duration.Seconds()),
 		OwnerPID:              os.Getpid(),
+		OwnerBootID:           ownerBootID,
+		OwnerStartTicks:       ownerStartTicks,
+		OwnerExecutable:       ownerExecutable,
 		Residents:             make([]ResidentRunStatus, 0, len(input.Residents)),
 		Events: []RunEvent{{
 			Type:    "started",
@@ -468,6 +476,9 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 		return RunSummary{}, err
 	}
 	runs := make([]ResidentRun, len(input.Residents))
+	for i, resident := range input.Residents {
+		runs[i] = ResidentRun{Resident: resident, Status: "pending"}
+	}
 	var statusMu sync.Mutex
 	switch input.Mode {
 	case RunModeSequential:
@@ -497,6 +508,16 @@ func (s *Service) runWithRetryOf(input RunInput, retryOf string) (RunSummary, er
 		wg.Wait()
 	default:
 		return RunSummary{}, fmt.Errorf("unsupported run mode %q", input.Mode)
+	}
+	if input.Context.Err() != nil {
+		for i := range runs {
+			if runs[i].Status != "pending" {
+				continue
+			}
+			runs[i].Status = "aborted"
+			runs[i].Error = "not started: host cancellation"
+			s.updateResidentStatus(&runStatus, &statusMu, runs[i].Resident, "aborted", runs[i].Error)
+		}
 	}
 
 	reports := make([]newborn.FinalReport, 0, len(runs))
@@ -924,7 +945,7 @@ func (s *Service) reconcileInterruptedRuns(now time.Time) error {
 		if err != nil {
 			continue
 		}
-		if status.OwnerPID > 0 && processAlive(status.OwnerPID) {
+		if processOwnsRun(status) {
 			return fmt.Errorf("run %s is still owned by live process %d", status.RunID, status.OwnerPID)
 		}
 		previous := status.Status
@@ -946,8 +967,61 @@ func (s *Service) reconcileInterruptedRuns(now time.Time) error {
 		if err := s.writeStatus(status); err != nil {
 			return err
 		}
+		agentRoot := filepath.Dir(s.stateRoot)
+		for _, resident := range status.Residents {
+			if err := newborn.ReconcileResidentRuntimeState(agentRoot, resident.Resident, now); err != nil {
+				return fmt.Errorf("reconcile stale run %s resident %s: %w", status.RunID, resident.Resident, err)
+			}
+		}
 	}
 	return nil
+}
+
+func processOwnsRun(status RunStatus) bool {
+	if status.OwnerPID <= 0 || !processAlive(status.OwnerPID) {
+		return false
+	}
+	bootID, startTicks, executable, err := readProcessIdentity(status.OwnerPID)
+	if err != nil {
+		return true
+	}
+	if status.OwnerBootID != "" && status.OwnerStartTicks > 0 {
+		return status.OwnerBootID == bootID && status.OwnerStartTicks == startTicks
+	}
+	if status.OwnerExecutable != "" {
+		return status.OwnerExecutable == executable
+	}
+	// Legacy statuses lack an owner token. Only block when the live PID still
+	// resolves to an orchestrator executable; unrelated PID reuse is stale.
+	return strings.Contains(strings.ToLower(filepath.Base(executable)), "arena-orchestrator")
+}
+
+func readProcessIdentity(pid int) (string, uint64, string, error) {
+	bootRaw, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return "", 0, "", err
+	}
+	statRaw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "", 0, "", err
+	}
+	closing := strings.LastIndexByte(string(statRaw), ')')
+	if closing < 0 {
+		return "", 0, "", fmt.Errorf("invalid process stat for pid %d", pid)
+	}
+	fields := strings.Fields(string(statRaw)[closing+1:])
+	if len(fields) <= 19 {
+		return "", 0, "", fmt.Errorf("short process stat for pid %d", pid)
+	}
+	startTicks, err := strconv.ParseUint(fields[19], 10, 64)
+	if err != nil {
+		return "", 0, "", err
+	}
+	executable, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	if err != nil {
+		return "", 0, "", err
+	}
+	return strings.TrimSpace(string(bootRaw)), startTicks, executable, nil
 }
 
 func processAlive(pid int) bool {

@@ -33,7 +33,13 @@ type fakeActionExecutor struct {
 	decisions *[]AgentDecision
 }
 
-func (f fakeActionExecutor) Execute(_ ResidentProfile, decision AgentDecision) ActionResult {
+type actionExecutorFunc func(stdcontext.Context, ResidentProfile, AgentDecision) ActionResult
+
+func (f actionExecutorFunc) Execute(ctx stdcontext.Context, profile ResidentProfile, decision AgentDecision) ActionResult {
+	return f(ctx, profile, decision)
+}
+
+func (f fakeActionExecutor) Execute(_ stdcontext.Context, _ ResidentProfile, decision AgentDecision) ActionResult {
 	if f.calls != nil {
 		*f.calls++
 	}
@@ -296,7 +302,7 @@ func TestClassifyGuestExecActivityNarrowProbe(t *testing.T) {
 
 func TestExecuteWriteNoteRejectsCommandOnlyDecisionWithRawOutput(t *testing.T) {
 	executor := &IncusActionExecutor{}
-	result := executor.Execute(ResidentProfile{Name: "onyx", Instance: "onyx"}, AgentDecision{
+	result := executor.Execute(stdcontext.Background(), ResidentProfile{Name: "onyx", Instance: "onyx"}, AgentDecision{
 		NextAction: "write_note",
 		Command:    "cat >> /root/arena-notes/boot-notes.md <<'EOF'\nunsafe\nEOF",
 		Reason:     "old malformed note style",
@@ -2101,6 +2107,179 @@ func TestRecoverablePreflightDenialParksWithoutFinalModelCall(t *testing.T) {
 	}
 }
 
+func TestRunnerDeniedPreflightSkipsDueCompaction(t *testing.T) {
+	dir := t.TempDir()
+	agentRoot := filepath.Join(dir, "agents")
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		body := renderSSECompleted(t, map[string]any{
+			"id":    fmt.Sprintf("resp-work-%d", requests),
+			"usage": map[string]any{"input_tokens": 100, "output_tokens": 20},
+			"output": []map[string]any{{
+				"type": "function_call", "name": "guest_exec",
+				"arguments": `{"situation":"probe","reason":"continue","command":"pwd"}`,
+			}},
+		})
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})}
+	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+	defer cancel()
+	store := brokerstate.New(filepath.Join(agentRoot, "brokerstate"))
+	actionCalls := 0
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.SetRunContext(ctx)
+	runner.SetRunOptions(RunOptions{CompactionProbeEveryRounds: 2})
+	runner.SetProgressSink(func(event ProgressEvent) {
+		if event.Phase == "recovery_wait" {
+			cancel()
+		}
+	})
+	runner.actions = actionExecutorFunc(func(_ stdcontext.Context, _ ResidentProfile, _ AgentDecision) ActionResult {
+		actionCalls++
+		if actionCalls == 2 {
+			snapshot, _, err := store.LoadResidentSnapshot("jade")
+			if err != nil {
+				t.Fatalf("load resident snapshot: %v", err)
+			}
+			snapshot.State.Fatigue = brokerstate.DefaultRuntimeConfig().FatigueCap + 10_000
+			if _, err := store.SaveResidentSnapshot("jade", snapshot); err != nil {
+				t.Fatalf("seed fatigue cap: %v", err)
+			}
+		}
+		return ActionResult{Observation: "probe complete", Activity: tokenledger.ActivityStatusCheck}
+	})
+	runner.budget = NewBudgetController(broker.New(agentRoot))
+	runner.world = NewWorldBridge(agentRoot)
+	runner.memories = memory.NewFileStore(filepath.Join(agentRoot, "memory"))
+
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if report.StoppedReason != "aborted_by_host" || report.Rounds != 2 {
+		t.Fatalf("unexpected parked report: %#v", report)
+	}
+	if requests != 2 || len(report.CompactionEvents) != 0 {
+		t.Fatalf("denied preflight made provider/compaction call: requests=%d events=%#v", requests, report.CompactionEvents)
+	}
+}
+
+func TestRunnerCancellationInterruptsActionAndFinalizes(t *testing.T) {
+	dir := t.TempDir()
+	requestStarted := make(chan struct{})
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body := renderSSECompleted(t, map[string]any{
+			"id":     "resp-action-before-cancel",
+			"usage":  map[string]any{"input_tokens": 100, "output_tokens": 20},
+			"output": []map[string]any{{"type": "function_call", "name": "guest_exec", "arguments": `{"situation":"probe","reason":"continue","command":"pwd"}`}},
+		})
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})}
+	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.SetRunContext(ctx)
+	runner.actions = actionExecutorFunc(func(ctx stdcontext.Context, _ ResidentProfile, _ AgentDecision) ActionResult {
+		close(requestStarted)
+		<-ctx.Done()
+		return ActionResult{Observation: ctx.Err().Error(), Error: true, ErrorKind: "cancelled"}
+	})
+	runner.budget = NewBudgetController(broker.New(filepath.Join(dir, "agents")))
+	runner.world = NewWorldBridge(filepath.Join(dir, "agents"))
+	runner.memories = memory.NewFileStore(filepath.Join(dir, "agents", "memory"))
+	done := make(chan FinalReport, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, time.Hour, filepath.Join(dir, "runs"), false, true)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		done <- report
+	}()
+	select {
+	case <-requestStarted:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("action did not start")
+	}
+	select {
+	case err := <-errCh:
+		t.Fatalf("cancelled action returned error: %v", err)
+	case report := <-done:
+		if report.StoppedReason != "aborted_by_host" || report.Rounds != 0 {
+			t.Fatalf("unexpected action cancellation report: %#v", report)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled action did not finalize")
+	}
+}
+
+func TestGuestCommandCancellationTerminatesSubprocess(t *testing.T) {
+	binDir := t.TempDir()
+	incusPath := filepath.Join(binDir, "incus")
+	if err := os.WriteFile(incusPath, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatalf("write fake incus: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+	done := make(chan ActionResult, 1)
+	go func() {
+		done <- guestCommand(ctx, "jade", "pwd", tokenledger.ActivityStatusCheck)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case result := <-done:
+		if !result.Error {
+			t.Fatalf("cancelled subprocess was reported successful: %#v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CommandContext did not terminate the action subprocess")
+	}
+}
+
+func TestRunnerFinalReflectionPreflightDenialUsesFallbackWithoutProviderCall(t *testing.T) {
+	dir := t.TempDir()
+	agentRoot := filepath.Join(dir, "agents")
+	requests := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		body := renderSSECompleted(t, map[string]any{
+			"id":     "resp-noop-at-cap",
+			"usage":  map[string]any{"input_tokens": 100, "output_tokens": 20},
+			"output": []map[string]any{{"type": "function_call", "name": "noop", "arguments": `{"situation":"done","reason":"stop"}`}},
+		})
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})}
+	store := brokerstate.New(filepath.Join(agentRoot, "brokerstate"))
+	runner := NewRunner(client, "http://example.test", "test-key")
+	runner.actions = actionExecutorFunc(func(_ stdcontext.Context, _ ResidentProfile, _ AgentDecision) ActionResult {
+		snapshot, _, err := store.LoadResidentSnapshot("jade")
+		if err != nil {
+			t.Fatalf("load resident snapshot: %v", err)
+		}
+		snapshot.State.Fatigue = brokerstate.DefaultRuntimeConfig().FatigueCap + 10_000
+		if _, err := store.SaveResidentSnapshot("jade", snapshot); err != nil {
+			t.Fatalf("seed fatigue cap: %v", err)
+		}
+		return ActionResult{Observation: "no operation executed", Activity: tokenledger.ActivityStatusCheck}
+	})
+	runner.budget = NewBudgetController(broker.New(agentRoot))
+	runner.world = NewWorldBridge(agentRoot)
+	runner.memories = memory.NewFileStore(filepath.Join(agentRoot, "memory"))
+	report, err := runner.Run(ResidentProfile{Name: "jade", Model: "gpt-5.4", Instance: "jade"}, 2*time.Minute, filepath.Join(dir, "runs"), false, true)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if requests != 1 || report.AcceptanceBroker == nil || !report.AcceptanceBroker.Denied {
+		t.Fatalf("final reflection denial was not handled before provider call: requests=%d report=%#v", requests, report)
+	}
+	if !strings.Contains(report.StoppedReason, "final_reflection_preflight_denied: fatigue_exhausted") {
+		t.Fatalf("unexpected stopped reason: %q", report.StoppedReason)
+	}
+}
+
 func TestScheduledCompactionDueUsesDeterministicCycle(t *testing.T) {
 	if scheduledCompactionDue(19, 20, 19) {
 		t.Fatal("probe fired before configured cycle")
@@ -2920,7 +3099,7 @@ func TestIncusActionExecutorMemoryReview(t *testing.T) {
 		t.Fatalf("upsert memory: %v", err)
 	}
 
-	result := exec.Execute(ResidentProfile{Name: "amber"}, AgentDecision{
+	result := exec.Execute(stdcontext.Background(), ResidentProfile{Name: "amber"}, AgentDecision{
 		NextAction:    "memory_review",
 		MemoryID:      "amber-short-legacy",
 		MemoryAction:  "rewrite",
@@ -2953,7 +3132,7 @@ func TestIncusActionExecutorSelfQuota(t *testing.T) {
 		memories: memory.NewFileStore(filepath.Join(dir, ".agents", "memory")),
 		broker:   app,
 	}
-	result := exec.Execute(ResidentProfile{Name: "jade"}, AgentDecision{
+	result := exec.Execute(stdcontext.Background(), ResidentProfile{Name: "jade"}, AgentDecision{
 		NextAction: "self_quota",
 		Reason:     "exact broker quota facts are more reliable than shell inference",
 	})

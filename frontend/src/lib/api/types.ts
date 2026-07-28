@@ -17,12 +17,12 @@ import type {
 } from "../../types/domain";
 
 export interface ArenaConsoleApi {
-  getSummary(): Promise<OperatorTelemetry>;
+  getSummary(signal?: AbortSignal): Promise<OperatorTelemetry>;
   listRuns(limit?: number): Promise<RunRecord[]>;
   getInbox(limit?: number): Promise<FollowupItem[]>;
-  getWorldThread(threadId: string): Promise<WorldVisibleThread>;
-  getWorldThreadPage(resident: ResidentId, before?: string, limit?: number): Promise<WorldThreadPage>;
-  listWorldThreads(): Promise<WorldVisibleThread[]>;
+  getWorldThread(threadId: string, signal?: AbortSignal): Promise<WorldVisibleThread>;
+  getWorldThreadPage(resident: ResidentId, before?: string, limit?: number, signal?: AbortSignal): Promise<WorldThreadPage>;
+  listWorldThreads(signal?: AbortSignal): Promise<WorldVisibleThread[]>;
   listAlerts(): Promise<AlertItem[]>;
   getResidentThreads(resident: ResidentId): Promise<WorldVisibleThread[]>;
   sendWorldChatReply(input: WorldChatReplyRequest): Promise<WorldMessage>;
