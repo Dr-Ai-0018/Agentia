@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -124,6 +125,58 @@ func TestNewRunReconcilesDeadOwnerAndWritesOperationalEvents(t *testing.T) {
 		if err != nil || len(raw) == 0 {
 			t.Fatalf("operational event log missing for %s: bytes=%d err=%v", runID, len(raw), err)
 		}
+	}
+}
+
+func TestInterruptedRunReconciliationRetriesAfterMidRosterFailure(t *testing.T) {
+	root := t.TempDir()
+	service := New(broker.New(root), &http.Client{}, "http://example.invalid", "key")
+	service.stateRoot = filepath.Join(root, "orchestrator-runs")
+	stale := RunStatus{
+		RunID: "retryable-stale", Status: "running", StartedAt: "2026-07-27T05:25:30Z", UpdatedAt: "2026-07-27T05:26:00Z", OwnerPID: 99_999_999,
+		Residents: []ResidentRunStatus{{Resident: "jade", Status: "running"}, {Resident: "amber", Status: "running"}, {Resident: "onyx", Status: "running"}},
+	}
+	if err := service.writeStatus(stale); err != nil {
+		t.Fatalf("seed stale status: %v", err)
+	}
+	firstCalls := []string{}
+	service.reconcileResidentState = func(_ string, resident string, _ time.Time) error {
+		firstCalls = append(firstCalls, resident)
+		if resident == "amber" {
+			return errors.New("injected reconciliation failure")
+		}
+		return nil
+	}
+	if err := service.reconcileInterruptedRuns(time.Now().UTC()); err == nil {
+		t.Fatal("expected injected reconciliation failure")
+	}
+	if strings.Join(firstCalls, ",") != "jade,amber" {
+		t.Fatalf("unexpected first attempt order: %#v", firstCalls)
+	}
+	afterFailure, err := service.ReadRunStatus(stale.RunID)
+	if err != nil {
+		t.Fatalf("read status after failure: %v", err)
+	}
+	if afterFailure.Status != "running" || afterFailure.FinishedAt != "" {
+		t.Fatalf("failed reconciliation became non-retryable: %#v", afterFailure)
+	}
+	secondCalls := []string{}
+	service.reconcileResidentState = func(_ string, resident string, _ time.Time) error {
+		secondCalls = append(secondCalls, resident)
+		return nil
+	}
+	if err := service.reconcileInterruptedRuns(time.Now().UTC()); err != nil {
+		t.Fatalf("retry reconciliation: %v", err)
+	}
+	if strings.Join(secondCalls, ",") != "jade,amber,onyx" {
+		t.Fatalf("retry did not cover full roster: %#v", secondCalls)
+	}
+	afterRetry, err := service.ReadRunStatus(stale.RunID)
+	if err != nil {
+		t.Fatalf("read status after retry: %v", err)
+	}
+	if afterRetry.Status != "interrupted" || afterRetry.FinishedAt == "" {
+		t.Fatalf("successful retry did not publish terminal state: %#v", afterRetry)
 	}
 }
 

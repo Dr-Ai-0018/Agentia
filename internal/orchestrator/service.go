@@ -198,22 +198,24 @@ type RunInput struct {
 }
 
 type Service struct {
-	app                   *broker.App
-	baseURL               string
-	apiKey                string
-	client                *http.Client
-	runnerFactory         RunnerFactory
-	endpointRunnerFactory EndpointRunnerFactory
-	stateRoot             string
+	app                    *broker.App
+	baseURL                string
+	apiKey                 string
+	client                 *http.Client
+	runnerFactory          RunnerFactory
+	endpointRunnerFactory  EndpointRunnerFactory
+	stateRoot              string
+	reconcileResidentState func(agentRoot, resident string, now time.Time) error
 }
 
 func New(app *broker.App, client *http.Client, baseURL, apiKey string) *Service {
 	return &Service{
-		app:       app,
-		client:    client,
-		baseURL:   strings.TrimSpace(baseURL),
-		apiKey:    strings.TrimSpace(apiKey),
-		stateRoot: ".agents/orchestrator-runs",
+		app:                    app,
+		client:                 client,
+		baseURL:                strings.TrimSpace(baseURL),
+		apiKey:                 strings.TrimSpace(apiKey),
+		stateRoot:              ".agents/orchestrator-runs",
+		reconcileResidentState: newborn.ReconcileResidentRuntimeState,
 		endpointRunnerFactory: func(client *http.Client, endpoints []openai.Endpoint, resident string) Runner {
 			if len(usableEndpoints(endpoints)) == 0 {
 				return errorRunner{err: fmt.Errorf("missing api key for resident: %s", strings.TrimSpace(resident))}
@@ -948,6 +950,16 @@ func (s *Service) reconcileInterruptedRuns(now time.Time) error {
 		if processOwnsRun(status) {
 			return fmt.Errorf("run %s is still owned by live process %d", status.RunID, status.OwnerPID)
 		}
+		agentRoot := filepath.Dir(s.stateRoot)
+		for _, resident := range status.Residents {
+			reconcile := s.reconcileResidentState
+			if reconcile == nil {
+				reconcile = newborn.ReconcileResidentRuntimeState
+			}
+			if err := reconcile(agentRoot, resident.Resident, now); err != nil {
+				return fmt.Errorf("reconcile stale run %s resident %s: %w", status.RunID, resident.Resident, err)
+			}
+		}
 		previous := status.Status
 		status.Status = "interrupted"
 		status.UpdatedAt = now.Format(time.RFC3339)
@@ -966,12 +978,6 @@ func (s *Service) reconcileInterruptedRuns(now time.Time) error {
 		}
 		if err := s.writeStatus(status); err != nil {
 			return err
-		}
-		agentRoot := filepath.Dir(s.stateRoot)
-		for _, resident := range status.Residents {
-			if err := newborn.ReconcileResidentRuntimeState(agentRoot, resident.Resident, now); err != nil {
-				return fmt.Errorf("reconcile stale run %s resident %s: %w", status.RunID, resident.Resident, err)
-			}
 		}
 	}
 	return nil
